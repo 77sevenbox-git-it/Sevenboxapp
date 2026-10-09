@@ -59,7 +59,7 @@
         btn.disabled = true;
         Promise.resolve().then(function () { return b.onClick(close); })
           .catch(function (err) { toast(err.message || String(err), 'bad'); })
-          .then(function () { btn.disabled = false; });
+          .then(function () { if (!btn.hasAttribute('data-locked')) btn.disabled = false; });
       });
       foot.appendChild(btn);
     });
@@ -78,25 +78,68 @@
     return { close: close, el: box };
   }
 
-  // Menecer PIN-i ilə təsdiq. Uğurlu olarsa təsdiqləyən istifadəçini qaytarır.
-  function approve(title, detail, perm) {
-    return new Promise(function (resolve) {
-      var input = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', autocomplete: 'off', id: 'appr-pin', maxlength: '8' });
-      var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
-        h('p', { style: 'margin:0' }, detail),
-        h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, 'Menecer PIN-i'), input),
-        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'İnternet varsa, menecer telefondakı tətbiqdən də təsdiqləyə bilər (növbəti mərhələ).'));
-      var done = false;
-      modal({
-        title: title, body: body, sticky: true,
-        onClose: function () { if (!done) resolve(null); },
-        buttons: [
-          { text: 'İmtina' },
-          { text: 'Təsdiqlə', kind: 'primary', submit: true, onClick: function (close) {
-            return root.Services.approveWithPin(input.value, perm).then(function (u) { done = true; close(); resolve(u); })
-              .catch(function (e) { input.value = ''; input.focus(); throw e; });
-          } }
-        ]
+  // Menecer təsdiqi: PIN ilə dərhal, və ya (server qoşulubsa) menecerin cihazına sorğu göndərməklə.
+  // req = {kind, summary} verilərsə "sorğu göndər" düyməsi çıxır. Uğurlu olarsa təsdiqləyən istifadəçini qaytarır, imtina olarsa null.
+  function approve(title, detail, perm, req) {
+    var S = root.Services, Sync = root.Sync;
+    var cfg = req && Sync ? Sync.endpoint() : Promise.resolve('');
+    return cfg.then(function (url) {
+      return new Promise(function (resolve) {
+        var canRequest = !!(req && url);
+        var input = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', autocomplete: 'off', id: 'appr-pin', maxlength: '8' });
+        var status = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status', id: 'appr-status' },
+          canRequest ? 'Menecer PIN-ini yazın və ya sorğu göndərin: menecer öz cihazında təsdiqləyəcək.' : 'Menecer PIN-ini yazın.');
+        var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+          h('p', { style: 'margin:0' }, detail),
+          h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, 'Menecer PIN-i'), input), status);
+        var done = false, pendingId = null, poll = null, sendBtn = null;
+
+        function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
+        function finish(user) { done = true; stopPoll(); resolve(user); }
+
+        function startPoll() {
+          Sync.fast(180000);
+          poll = setInterval(function () {
+            S.checkApproval(pendingId).then(function (c) {
+              if (done) return;
+              if (c.state === 'approved') { done = true; stopPoll(); m.close(); resolve(c.approver); }
+              else if (c.state === 'rejected') { done = true; stopPoll(); m.close(); toast('Menecer sorğunu rədd etdi', 'bad'); resolve(null); }
+              else if (c.state !== 'pending') { done = true; stopPoll(); m.close(); toast('Sorğunun vaxtı bitdi', 'bad'); resolve(null); }
+            });
+          }, 1000);
+        }
+
+        var buttons = [{ text: 'İmtina' }];
+        if (canRequest) {
+          buttons.push({ text: 'Menecerə sorğu göndər', onClick: function () {
+            if (pendingId) return;
+            if (root.navigator && root.navigator.onLine === false) throw new Error('Sorğu üçün internet lazımdır. Menecer PIN-i ilə təsdiqləyin');
+            return S.requestApproval(req.kind, perm, req.summary).then(function (rec) {
+              pendingId = rec.id;
+              if (sendBtn) { sendBtn.setAttribute('data-locked', '1'); sendBtn.disabled = true; sendBtn.textContent = 'Sorğu göndərildi'; }
+              status.textContent = 'Sorğu menecerə göndərildi. Cavab gözlənilir… (bu arada PIN də yaza bilərsiniz)';
+              startPoll();
+            });
+          } });
+        }
+        buttons.push({ text: 'Təsdiqlə', kind: 'primary', submit: true, onClick: function (close) {
+          return S.approveWithPin(input.value, perm).then(function (u) {
+            done = true; stopPoll();
+            if (pendingId) S.cancelApproval(pendingId);
+            close(); resolve(u);
+          }).catch(function (e) { input.value = ''; input.focus(); throw e; });
+        } });
+
+        var m = modal({
+          title: title, body: body, sticky: true, buttons: buttons,
+          onClose: function () {
+            if (done) return;
+            stopPoll();
+            if (pendingId) S.cancelApproval(pendingId);
+            resolve(null);
+          }
+        });
+        sendBtn = canRequest ? m.el.querySelectorAll('.foot button')[1] : null;
       });
     });
   }

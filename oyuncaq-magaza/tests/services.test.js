@@ -175,6 +175,80 @@ async function loginAs(role) {
     assert.ok((await S.outboxCount()) > 10);
   });
 
+  await t('nümunə istifadəçilərin id-ləri sabitdir (bütün brauzerlərdə eyni)', async () => {
+    const ids = (await S.listUsers()).map(u => u.id).sort();
+    assert.deepStrictEqual(ids, ['u_admin', 'u_kassir', 'u_menecer', 'u_muhasib1', 'u_muhasib2']);
+  });
+
+  await t('PIN dəyişmə qaydaları: köhnə ilə eyni, sadə, qısa PIN rədd olunur', async () => {
+    await loginAs('kassir');
+    await rejects(S.changePin('1111', '1111'), /köhnə PIN ilə eyni/);
+    await rejects(S.changePin('1111', '2222'), /sadə/);   // təkrarlanan rəqəmlər
+    await rejects(S.changePin('1111', '123'), /4–8 rəqəm/);
+    await rejects(S.changePin('1111', '4321'), /sadə/);
+    await rejects(S.changePin('1111', '9876'), /sadə/);
+    await rejects(S.changePin('0000', '4827'), /Köhnə PIN səhvdir/);
+  });
+
+  await t('PIN dəyişəndə mustChangePin silinir, "user.upserted" hadisəsi outbox-a düşür', async () => {
+    const before = (await DB.getAll('outbox')).length;
+    await S.changePin('1111', '4827');
+    const outbox = await DB.getAll('outbox');
+    assert.strictEqual(outbox.length, before + 1);
+    const ev = outbox.find(o => o.type === 'user.upserted' && o.data.reason === 'pin_changed');
+    assert.ok(ev && ev.data.user.pinHash && ev.data.user.salt && !ev.data.user.pin, 'hash və duz var, düz PIN yoxdur');
+    assert.strictEqual(ev.data.user.mustChangePin, false);
+    assert.strictEqual((await loginAs('kassir').catch(e => e)).message, 'PIN səhvdir');
+    const u = await S.login((await userByRole('kassir')).id, '4827');
+    assert.strictEqual(u.mustChangePin, false);
+  });
+
+  await t('PIN sıfırlama: yalnız admin; müvəqqəti PIN işləyir, köhnə PIN yox, yenidən dəyişmək tələb olunur', async () => {
+    await S.login((await userByRole('menecer')).id, '2222');
+    await rejects(S.resetPin((await userByRole('kassir')).id), /icazəniz yoxdur/);
+    await loginAs('admin');
+    const temp = await S.resetPin((await userByRole('kassir')).id);
+    assert.ok(/^\d{6}$/.test(temp));
+    await rejects(S.login((await userByRole('kassir')).id, '4827'), /PIN səhvdir/);
+    const u = await S.login((await userByRole('kassir')).id, temp);
+    assert.strictEqual(u.mustChangePin, true);
+  });
+
+  await t('nömrə aralığı: aralıqdan götürür, bitəndə aydın xəta verir (toqquşma əvəzinə)', async () => {
+    await loginAs('menecer');
+    await DB.put('meta', { key: 'block:productSeq', value: { ranges: [[500, 501]] } });
+    const a = (await S.createProduct({ name: 'B1', price: 100 })).product, b = (await S.createProduct({ name: 'B2', price: 100 })).product;
+    assert.strictEqual(a.storeBarcode, Barcode.storeBarcode(500)); assert.strictEqual(b.storeBarcode, Barcode.storeBarcode(501));
+    const e = await rejects(S.createProduct({ name: 'B3', price: 100 }), /Nömrə ehtiyatı bitib/);
+    assert.strictEqual(e.code, 'seq_exhausted');
+    assert.strictEqual((await S.listProducts()).filter(p => p.name === 'B3').length, 0, 'uğursuz yaratma heç nə yazmır');
+    await DB.put('meta', { key: 'block:productSeq', value: { ranges: [[900, 899], [700, 700]] } });   // boş aralıq atlanır
+    assert.strictEqual((await S.createProduct({ name: 'B4', price: 100 })).product.storeBarcode, Barcode.storeBarcode(700));
+  });
+
+  await t('iki açıq növbə (iki kassada eyni anda açılıb): ən əvvəl açılan cari sayılır', async () => {
+    await loginAs('menecer');
+    await DB.put('shifts', { id: 'sh_late', status: 'open', openedAt: '2030-01-01T10:00:05.000Z', openedBy: 'x', openedByName: 'x', openingCash: 0 });
+    await DB.put('shifts', { id: 'sh_early', status: 'open', openedAt: '2030-01-01T10:00:01.000Z', openedBy: 'x', openedByName: 'x', openingCash: 0 });
+    assert.strictEqual((await S.currentShift()).id, 'sh_early');
+    await rejects(S.openShift(0), /Artıq açıq növbə/);
+    for (const id of ['sh_late', 'sh_early']) { const sh = await DB.get('shifts', id); sh.status = 'closed'; await DB.put('shifts', sh); }
+    assert.strictEqual(await S.currentShift(), null);
+  });
+
+  await t('təsdiq sorğusu (lokal): yaradılır, öz sorğusunu təsdiqləmək olmur, vaxtı keçəndə düşür', async () => {
+    await loginAs('menecer');
+    // menecerin PIN-i hələ dəyişdirilməyib, amma təsdiq üçün bunun əhəmiyyəti yoxdur
+    const rq = await S.requestApproval('line_delete', 'pos.line.delete', 'sınaq');
+    assert.strictEqual((await S.listPendingApprovals()).length, 1);
+    await rejects(S.decideApproval(rq.id, 'approved'), /Öz sorğunuzu/);
+    const rec = await DB.get('approvals', rq.id);
+    rec.at = new Date(Date.now() - 11 * 60000).toISOString(); await DB.put('approvals', rec);
+    assert.strictEqual((await S.listPendingApprovals()).length, 0);
+    assert.strictEqual((await S.checkApproval(rq.id)).state, 'expired');
+    await rejects(S.decideApproval(rq.id, 'approved'), /Öz sorğunuzu|vaxtı bitib/);
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

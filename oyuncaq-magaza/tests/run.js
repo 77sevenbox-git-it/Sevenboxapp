@@ -34,6 +34,16 @@ t('çek barkodu → nömrə', () => assert.strictEqual(Barcode.receiptNoFromBarc
 t('kodlaşdırma 95 modul', () => assert.strictEqual(Barcode.encode('4006381333931').length, 95));
 t('SVG yaranır', () => assert.ok(Barcode.svg(Barcode.storeBarcode(5)).startsWith('<svg')));
 
+// Mal qəbulu (orta çəkili maya) — həm lokal, həm başqa cihazdan gələn hadisə üçün eyni funksiya
+t('mal qəbulu: orta maya', () => {
+  const r = Rules.applyReceipt({ stock: 4, avgCost: 900 }, 6, 1000);
+  assert.strictEqual(r.stock, 10); assert.strictEqual(r.avgCost, 960); assert.strictEqual(r.lastCost, 1000); assert.strictEqual(r.negSalesSinceReceipt, 0);
+});
+t('mal qəbulu: mənfi qalıq orta mayaya təsir etmir', () => {
+  const r = Rules.applyReceipt({ stock: -3, avgCost: 500 }, 10, 800);
+  assert.strictEqual(r.stock, 7); assert.strictEqual(r.avgCost, 800);
+});
+
 // Səbət və endirim
 const lines = [{ price: 1450, qty: 1 }, { price: 600, qty: 1 }, { price: 225, qty: 2 }];
 t('yekun 25,00', () => assert.strictEqual(Rules.cartTotals(lines).total, 2500));

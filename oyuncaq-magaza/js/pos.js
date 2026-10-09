@@ -1,11 +1,9 @@
 /* Kassa ekranı (variant A). Klaviatura: Enter = barkod/təsdiq, F1 Nağd, F2 Bank, F3 Qarışıq, F4 Endirim,
-   ↑/↓ sətir seçimi, + / − say, Del sətri sil, Esc çeki ləğv et. */
+   ↑/↓ sətir seçimi, + / − say (azaltmaq sərbəstdir, 1-dən aşağı yox), Del və ya zibil ikonu = sətri sil (menecer təsdiqi), Esc çeki ləğv et. */
 (function (root) {
   'use strict';
   var UI = root.UI, S = root.Services, M = root.Money, R = root.Rules;
   var h = UI.h;
-
-  var DELETE_LIMIT = 1000; // 10,00 ₼ və yuxarı sətrin silinməsi menecer PIN-i tələb edir (SEC-04)
 
   var st = null;
   function fresh() {
@@ -57,27 +55,41 @@
     });
   }
 
+  // Sayı azaltmaq kassirə sərbəstdir (1-ə qədər); sətri tam silmək isə yalnız menecer təsdiqi ilə (SEC-04)
   function changeQty(i, delta) {
     var line = st.cart[i]; if (!line) return;
     if (delta > 0) { line.qty += delta; st.sel = i; render(); return; }
-    removeQty(i, -delta);
+    if (line.qty <= 1) {
+      setMsg('Sayı 1-dən azaltmaq olmaz. Sətri silmək üçün zibil ikonuna basın (menecer təsdiqi lazımdır).', 'warn');
+      UI.beep(false); render(); return;
+    }
+    var from = line.qty;
+    line.qty = Math.max(1, line.qty + delta);
+    S.auditEvent('pos.qty_decreased', { productId: line.product.id, name: line.product.name, from: from, to: line.qty }).catch(function () { /* jurnal xətası satışı dayandırmasın */ });
+    render(); focusScan();
   }
 
-  function removeQty(i, n) {
+  // Sətir silmə: PIN ilə dərhal və ya menecerə sorğu ilə. Sorğu gözlənərkən səbət dəyişə bilər, ona görə məhsul id-si ilə tapılır.
+  function deleteLine(i) {
     var line = st.cart[i]; if (!line) return;
-    n = Math.min(n, line.qty);
-    var value = line.product.price * n;
-    var go = value >= DELETE_LIMIT
-      ? UI.approve('Sətir silinməsi', line.product.name + ' — ' + n + ' ədəd (' + M.format(value) + ' ₼) çekdən çıxarılır.', 'pos.line.delete')
-      : Promise.resolve({ id: null, name: '—' });
-    go.then(function (approver) {
-      if (!approver) return focusScan();
-      S.auditEvent('pos.line_removed', { productId: line.product.id, name: line.product.name, qty: n, value: value, approvedBy: approver.id });
-      line.qty -= n;
-      if (line.qty <= 0) { st.cart.splice(i, 1); st.sel = Math.min(i, st.cart.length - 1); }
-      resetPaymentIfEmpty();
-      render(); focusScan();
-    });
+    var pid = line.product.id;
+    var value = line.product.price * line.qty;
+    var summary = line.product.name + ' × ' + line.qty + ' = ' + M.format(value) + ' ₼';
+    var who = S.currentUser() ? S.currentUser().name : '';
+    UI.approve('Sətri çekdən sil', summary + ' çekdən çıxarılır.', 'pos.line.delete', { kind: 'line_delete', summary: who + ' sətir silmək istəyir: ' + summary })
+      .then(function (approver) {
+        if (!approver) return focusScan();
+        var idx = st.cart.findIndex(function (c) { return c.product.id === pid; });
+        if (idx === -1) return focusScan();
+        var l = st.cart[idx];
+        return S.auditEvent('pos.line_removed', { productId: pid, name: l.product.name, qty: l.qty, value: l.product.price * l.qty, approvedBy: approver.id, approvedByName: approver.name })
+          .then(function () {
+            st.cart.splice(idx, 1); st.sel = Math.min(idx, st.cart.length - 1);
+            resetPaymentIfEmpty();
+            setMsg('Sətir silindi (' + approver.name + ' təsdiqlədi)', '');
+            render(); focusScan();
+          });
+      }).catch(function (e) { UI.toast(e.message, 'bad'); });
   }
 
   function resetPaymentIfEmpty() { if (!st.cart.length) { st.method = null; st.discount = null; st.cash = ''; st.bank = ''; } }
@@ -85,7 +97,8 @@
   function cancelSale() {
     if (!st.cart.length) return;
     var value = totals().subtotal;
-    UI.approve('Çeki ləğv et', 'Bütün çek (' + M.format(value) + ' ₼) ləğv olunur.', 'pos.line.delete').then(function (a) {
+    UI.approve('Çeki ləğv et', 'Bütün çek (' + M.format(value) + ' ₼) ləğv olunur.', 'pos.line.delete',
+      { kind: 'sale_cancel', summary: (S.currentUser() ? S.currentUser().name : '') + ' çeki ləğv etmək istəyir: ' + M.format(value) + ' ₼' }).then(function (a) {
       if (!a) return focusScan();
       S.auditEvent('pos.sale_cancelled', { lines: st.cart.map(function (c) { return { productId: c.product.id, qty: c.qty }; }), value: value, approvedBy: a.id });
       st = fresh(); render(); focusScan();
@@ -106,7 +119,8 @@
           var v = R.validateDiscountPercent(pct); if (v) throw new Error(v);
           close();
           var t = R.cartTotals(st.cart.map(function (c) { return { price: c.product.price, qty: c.qty }; }), pct);
-          return UI.approve('Endirimi təsdiqlə', pct + '% endirim: ' + M.format(t.subtotal) + ' → ' + M.format(t.total) + ' ₼', 'pos.discount.approve').then(function (a) {
+          var dsum = pct + '% endirim: ' + M.format(t.subtotal) + ' → ' + M.format(t.total) + ' ₼';
+          return UI.approve('Endirimi təsdiqlə', dsum, 'pos.discount.approve', { kind: 'discount', summary: (S.currentUser() ? S.currentUser().name : '') + ' endirim istəyir: ' + dsum }).then(function (a) {
             S.auditEvent(a ? 'pos.discount_approved' : 'pos.discount_rejected', { percent: pct, subtotal: t.subtotal, approvedBy: a ? a.id : null });
             if (a) { st.discount = { percent: pct, approvedBy: a }; setMsg(pct + '% endirim təsdiqləndi (' + a.name + ')', ''); }
             else setMsg('Endirim təsdiqlənmədi', 'warn');
@@ -190,7 +204,7 @@
     // Cədvəl
     var tbody = UI.clear(refs.tbody);
     if (!st.cart.length) {
-      tbody.appendChild(h('tr', null, h('td', { colspan: '6', class: 'empty' }, 'Barkodu oxudun — məhsul burada görünəcək')));
+      tbody.appendChild(h('tr', null, h('td', { colspan: '7', class: 'empty' }, 'Barkodu oxudun — məhsul burada görünəcək')));
     }
     st.cart.forEach(function (c, i) {
       var chk = R.negativeStockCheck(c.product, c.qty);
@@ -201,11 +215,12 @@
         h('td', { class: 'mono muted', style: 'font-size:14px' }, c.product.storeBarcode),
         h('td', { class: 'num' },
           h('div', { style: 'display:inline-flex;align-items:center;gap:8px' },
-            h('button', { class: 'qty-btn', 'aria-label': 'Azalt', onclick: function (e) { e.stopPropagation(); changeQty(i, -1); } }, '−'),
+            h('button', { class: 'qty-btn', 'aria-label': 'Azalt', title: c.qty <= 1 ? 'Sətri silmək üçün zibil ikonu (menecer təsdiqi)' : 'Sayı azalt', disabled: c.qty <= 1, onclick: function (e) { e.stopPropagation(); changeQty(i, -1); } }, '−'),
             h('span', { style: 'min-width:24px;display:inline-block;text-align:center' }, String(c.qty)),
             h('button', { class: 'qty-btn', 'aria-label': 'Artır', onclick: function (e) { e.stopPropagation(); changeQty(i, 1); } }, '+'))),
         h('td', { class: 'num' }, M.format(c.product.price)),
-        h('td', { class: 'num', style: 'font-weight:600' }, M.format(c.product.price * c.qty)));
+        h('td', { class: 'num', style: 'font-weight:600' }, M.format(c.product.price * c.qty)),
+        h('td', { class: 'del' }, trashButton(i, c.product.name)));
       tbody.appendChild(tr);
     });
 
@@ -227,6 +242,13 @@
     var panel = UI.clear(refs.panel);
     refs.panel.classList.toggle('hidden', !st.method || !st.cart.length);
     if (st.method && st.cart.length) buildPanel(panel, t);
+  }
+
+  var TRASH = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
+  function trashButton(i, name) {
+    var b = h('button', { type: 'button', class: 'icon-btn', title: 'Sətri sil (menecer təsdiqi lazımdır)', 'aria-label': 'Sətri sil: ' + name, onclick: function (e) { e.stopPropagation(); deleteLine(i); } });
+    b.innerHTML = TRASH;
+    return b;
   }
 
   function buildPanel(panel, t) {
@@ -300,7 +322,7 @@
     refs.msg = h('div', { class: 'scan-msg', id: 'scan-msg', role: 'status' });
     refs.tbody = h('tbody');
     refs.table = h('div', { class: 'card table-wrap' }, h('table', null,
-      h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, 'Məhsul'), h('th', null, 'Mağaza barkodu'), h('th', { class: 'num' }, 'Say'), h('th', { class: 'num' }, 'Qiymət'), h('th', { class: 'num' }, 'Cəm'))),
+      h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, 'Məhsul'), h('th', null, 'Mağaza barkodu'), h('th', { class: 'num' }, 'Say'), h('th', { class: 'num' }, 'Qiymət'), h('th', { class: 'num' }, 'Cəm'), h('th', { class: 'del' }, h('span', { class: 'sr-only' }, 'Sil')))),
       refs.tbody));
 
     refs.subtotal = h('span'); refs.discount = h('span'); refs.total = h('b'); refs.count = h('span', { class: 'muted', style: 'font-size:14px' });
@@ -313,7 +335,7 @@
       h('section', { class: 'pos-main', 'aria-label': 'Çek' },
         h('div', { class: 'field' }, h('label', { for: 'scan' }, 'Mağaza barkodu'), refs.scan),
         refs.msg, refs.table,
-        h('div', { class: 'muted', style: 'font-size:14px' }, '↑/↓ sətir seçimi · + / − say · Del sətri sil. 10 ₼ və yuxarı silinmə menecer PIN-i ilə.')),
+        h('div', { class: 'muted', style: 'font-size:14px' }, '↑/↓ sətir seçimi · + / − say · Del və ya zibil ikonu: sətri silmək (menecer təsdiqi: PIN və ya sorğu).')),
       h('aside', { class: 'pos-side', 'aria-label': 'Ödəniş' },
         h('div', { class: 'card totals' },
           h('div', { class: 'line' }, h('span', null, 'Ara cəm'), refs.subtotal),
@@ -356,7 +378,7 @@
       else if (e.key === 'ArrowUp' && st.cart.length) { e.preventDefault(); st.sel = Math.max(st.sel - 1, 0); render(); }
       else if ((e.key === '+' || e.key === 'Add') && st.sel >= 0) { e.preventDefault(); changeQty(st.sel, 1); }
       else if ((e.key === '-' || e.key === 'Subtract') && st.sel >= 0) { e.preventDefault(); changeQty(st.sel, -1); }
-      else if (e.key === 'Delete' && st.sel >= 0) { e.preventDefault(); removeQty(st.sel, st.cart[st.sel].qty); }
+      else if (e.key === 'Delete' && st.sel >= 0) { e.preventDefault(); deleteLine(st.sel); }
     }
   }
   document.addEventListener('keydown', onKey);
@@ -370,5 +392,8 @@
     });
   }
 
-  root.POS = { mount: mount, _state: function () { return st; } };
+  // Başqa cihazdan qalıq dəyişəndə açıq çekdəki məhsulları yeniləyir (səbət toxunulmaz qalır)
+  function refresh() { return st && mountEl && refs.table ? refreshProducts() : Promise.resolve(); }
+
+  root.POS = { mount: mount, refresh: refresh, _state: function () { return st; } };
 })(window);

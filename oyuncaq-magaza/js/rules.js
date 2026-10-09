@@ -70,6 +70,14 @@
     };
   }
 
+  /* ---------- Mal qəbulu (FR-24): orta çəkili maya ---------- */
+  // Mənfi qalıq orta mayaya təsir etmir (yalnız mövcud mal çəkilir). Qaytarır: yeni sahələr.
+  function applyReceipt(product, qty, unitCost) {
+    var base = Math.max(product.stock, 0);
+    var avg = base + qty > 0 ? Math.round((base * product.avgCost + qty * unitCost) / (base + qty)) : unitCost;
+    return { stock: product.stock + qty, avgCost: avg, lastCost: unitCost, negSalesSinceReceipt: 0 };
+  }
+
   /* ---------- Ödəniş (FR-54, FR-55, BR-05, BR-06) ---------- */
   // p: {method: 'cash'|'bank'|'mixed', total, cashReceived, bankAmount, bankType: 'pos'|'transfer'}
   function validatePayment(p) {
@@ -149,7 +157,7 @@
   var Rules = {
     TZ: TZ, MAX_DISCOUNT_PERCENT: MAX_DISCOUNT_PERCENT, NEGATIVE_SALE_LIMIT: NEGATIVE_SALE_LIMIT, RETURN_DAYS: RETURN_DAYS,
     PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, ROLE_NAMES: ROLE_NAMES, can: can,
-    cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck,
+    cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
     validatePayment: validatePayment, localDate: localDate, returnWindow: returnWindow, returnableQty: returnableQty,
     refundAmount: refundAmount, expectedCash: expectedCash, shiftSummary: shiftSummary
   };

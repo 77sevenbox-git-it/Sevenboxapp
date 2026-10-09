@@ -4,10 +4,11 @@
   'use strict';
 
   var DB_NAME = 'magaza';
-  var VERSION = 1;
+  var VERSION = 2;
   var STORES = {
     products: { keyPath: 'id', indexes: [['storeBarcode', true], ['mfrBarcode', false]] },
-    sales: { keyPath: 'id', indexes: [['receiptNo', true], ['shiftId', false]] },
+    // receiptNo unikal deyil: fərqli kassalardan gələn çekin yazılması heç vaxt rədd olunmamalıdır (pul məlumatı itməsin)
+    sales: { keyPath: 'id', indexes: [['receiptNo', false], ['shiftId', false]] },
     returns: { keyPath: 'id', indexes: [['saleId', false], ['shiftId', false]] },
     shifts: { keyPath: 'id', indexes: [['status', false]] },
     users: { keyPath: 'id', indexes: [] },
@@ -16,6 +17,7 @@
     cashMoves: { keyPath: 'id', indexes: [['shiftId', false]] },
     audit: { keyPath: 'id', indexes: [] },
     outbox: { keyPath: 'id', indexes: [] },
+    approvals: { keyPath: 'id', indexes: [['status', false]] },
     meta: { keyPath: 'key', indexes: [] }
   };
 
@@ -27,15 +29,25 @@
     if (dbPromise) return dbPromise;
     dbPromise = new Promise(function (resolve, reject) {
       var req = idb().open(name || DB_NAME, VERSION);
-      req.onupgradeneeded = function () {
+      req.onupgradeneeded = function (ev) {
         var db = req.result;
         Object.keys(STORES).forEach(function (s) {
           if (db.objectStoreNames.contains(s)) return;
           var os = db.createObjectStore(s, { keyPath: STORES[s].keyPath });
           STORES[s].indexes.forEach(function (ix) { os.createIndex(ix[0], ix[0], { unique: ix[1] }); });
         });
+        // v1 → v2: sales.receiptNo indeksi unikal olmaqdan çıxır
+        if (ev.oldVersion === 1) {
+          var sales = req.transaction.objectStore('sales');
+          sales.deleteIndex('receiptNo');
+          sales.createIndex('receiptNo', 'receiptNo', { unique: false });
+        }
       };
-      req.onsuccess = function () { resolve(req.result); };
+      req.onsuccess = function () {
+        var d = req.result;
+        d.onversionchange = function () { d.close(); dbPromise = null; };   // köhnə tab yeni versiyanın qurulmasını bloklamasın
+        resolve(d);
+      };
       req.onerror = function () { reject(req.error); };
     });
     return dbPromise;
@@ -59,6 +71,7 @@
         var t = {
           get: function (s, k) { return wrap(tx.objectStore(s).get(k)); },
           put: function (s, v) { return wrap(tx.objectStore(s).put(v)); },
+          del: function (s, k) { return wrap(tx.objectStore(s).delete(k)); },
           getAll: function (s) { return wrap(tx.objectStore(s).getAll()); },
           byIndex: function (s, ix, v) { return wrap(tx.objectStore(s).index(ix).getAll(v)); },
           abort: function (err) { tx.__err = err; tx.abort(); }

@@ -12,12 +12,13 @@
     var chosen = null;
     var pin = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', id: 'pin', maxlength: '8', autocomplete: 'off', style: 'font-size:22px' });
     var list = h('div', { class: 'users', role: 'group', 'aria-label': 'İstifadəçi' });
+    var foot = h('div', { class: 'muted', style: 'font-size:13px' });
     var form = h('form', { class: 'card' },
       h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, 'Mağaza idarəetmə sistemi'), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, 'Daxil olun')),
       list,
       h('div', { class: 'field' }, h('label', { for: 'pin' }, 'PIN'), pin),
       h('button', { class: 'btn primary', type: 'submit' }, 'Daxil ol'),
-      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Sınaq PIN-ləri: Admin 1234 · Menecer 2222 · Kassir 1111 · Mühasib 3333. İlk girişdə PIN dəyişdirilməlidir.'));
+      foot);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       if (!chosen) return UI.toast('İstifadəçini seçin', 'bad');
@@ -31,28 +32,92 @@
         list.appendChild(b);
       });
     });
+    // Yeni cihaz: serverə qoşulub istifadəçiləri və məlumatı yükləmək. Qoşulubsa, dəyişmək yalnız Admin üçün (İcazələr bölməsi).
+    root.Sync.endpoint().then(function (url) {
+      if (url) { foot.textContent = 'Server qoşulub · istifadəçilər və məlumat avtomatik yenilənir'; return; }
+      foot.appendChild(h('button', { type: 'button', class: 'btn small', id: 'connect-btn', onclick: function () { connectForm(function () { login(el, onDone); }); } }, 'Bu cihazı serverə qoş'));
+      foot.appendChild(h('div', { style: 'margin-top:6px' }, 'Başqa cihazda artıq işləyirsinizsə, bunu edin: istifadəçilər, məhsullar və çeklər oradan yüklənəcək.'));
+    });
     el.appendChild(h('div', { class: 'login' }, form));
   }
 
-  function forcePinChange() {
-    return new Promise(function (resolve) {
-      var o = h('input', { class: 'input mono', type: 'password', id: 'op', inputmode: 'numeric' });
-      var n1 = h('input', { class: 'input mono', type: 'password', id: 'np1', inputmode: 'numeric' });
-      var n2 = h('input', { class: 'input mono', type: 'password', id: 'np2', inputmode: 'numeric' });
-      UI.modal({
-        title: 'PIN-i dəyişin', sticky: true,
-        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
-          h('p', { class: 'muted', style: 'margin:0' }, 'Sınaq PIN-i ilə işləmək olmaz. 4–8 rəqəmli yeni PIN seçin.'),
-          h('div', { class: 'field' }, h('label', { for: 'op' }, 'Hazırkı PIN'), o),
-          h('div', { class: 'field' }, h('label', { for: 'np1' }, 'Yeni PIN'), n1),
-          h('div', { class: 'field' }, h('label', { for: 'np2' }, 'Yeni PIN təkrar'), n2)),
-        onClose: resolve,
-        buttons: [{ text: 'Saxla', kind: 'primary', submit: true, onClick: function (close) {
-          if (n1.value !== n2.value) throw new Error('Yeni PIN-lər eyni deyil');
-          return S.changePin(o.value, n1.value).then(function () { UI.toast('PIN dəyişdirildi'); close(); });
-        } }]
-      });
+  function connectForm(done) {
+    var url = h('input', { class: 'input', id: 'c-url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off' });
+    var tok = h('input', { class: 'input', id: 'c-tok', type: 'password', autocomplete: 'off' });
+    var msg = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status' }, 'Ünvanı və açarı (SYNC_TOKEN) yazın. Məlumat serverdən yüklənəcək, bir neçə saniyə çəkə bilər.');
+    UI.modal({
+      title: 'Bu cihazı serverə qoş',
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'field' }, h('label', { for: 'c-url' }, 'Apps Script veb tətbiq ünvanı'), url),
+        h('div', { class: 'field' }, h('label', { for: 'c-tok' }, 'Sinxron açarı'), tok), msg),
+      buttons: [{ text: 'İmtina' }, { text: 'Qoş və yüklə', kind: 'primary', submit: true, onClick: function (close) {
+        msg.textContent = 'Yoxlanılır və yüklənir…';
+        return root.Sync.connect(url.value, tok.value).then(function (r) {
+          UI.toast('Qoşuldu · ' + r.received + ' qeyd yükləndi');
+          close(); done();
+        }).catch(function (e) { msg.textContent = e.message; throw e; });
+      } }]
     });
+  }
+
+  // İlk giriş: yeni PIN. Tam səhifədir, arxa fonda heç bir iş ekranı yoxdur. true = PIN dəyişdi, false = çıxış.
+  function forcePinChange(el) {
+    return new Promise(function (resolve) {
+      UI.clear(el);
+      var o = h('input', { class: 'input mono', type: 'password', id: 'op', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
+      var n1 = h('input', { class: 'input mono', type: 'password', id: 'np1', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
+      var n2 = h('input', { class: 'input mono', type: 'password', id: 'np2', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
+      var form = h('form', { class: 'card' },
+        h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, S.currentUser().name), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, 'Yeni PIN təyin edin')),
+        h('p', { class: 'muted', style: 'margin:0' }, 'İşə başlamazdan əvvəl yalnız sizə məlum olan 4–8 rəqəmli PIN seçin.'),
+        h('div', { class: 'field' }, h('label', { for: 'op' }, 'Hazırkı PIN'), o),
+        h('div', { class: 'field' }, h('label', { for: 'np1' }, 'Yeni PIN'), n1),
+        h('div', { class: 'field' }, h('label', { for: 'np2' }, 'Yeni PIN təkrar'), n2),
+        h('button', { class: 'btn primary', type: 'submit' }, 'Saxla və davam et'),
+        h('button', { class: 'btn', type: 'button', id: 'pin-logout', onclick: function () { S.logout(); resolve(false); } }, 'Çıxış'));
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        if (n1.value !== n2.value) return UI.toast('Yeni PIN-lər eyni deyil', 'bad');
+        S.changePin(o.value, n1.value).then(function () { UI.toast('PIN dəyişdirildi'); resolve(true); })
+          .catch(function (err) { UI.toast(err.message, 'bad'); });
+      });
+      el.appendChild(h('div', { class: 'login' }, form));
+      o.focus();
+    });
+  }
+
+  /* ================= Təsdiq sorğuları (menecer tərəfi) ================= */
+  // Bu istifadəçinin təsdiqləyə biləcəyi gözləyən sorğular
+  function pendingForMe() {
+    var u = S.currentUser();
+    if (!u) return Promise.resolve([]);
+    return S.listPendingApprovals().then(function (items) {
+      return items.filter(function (a) { return a.requestedBy.id !== u.id && can(a.perm); });
+    });
+  }
+
+  function approvalsModal(onChange) {
+    var list = h('div', { class: 'req-list' });
+    UI.modal({ title: 'Təsdiq sorğuları', body: list, buttons: [{ text: 'Bağla' }] });
+    function load() {
+      return pendingForMe().then(function (items) {
+        UI.clear(list);
+        if (!items.length) list.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Gözləyən sorğu yoxdur.'));
+        items.forEach(function (a) {
+          function decide(d) {
+            return S.decideApproval(a.id, d).then(function () { UI.toast(d === 'approved' ? 'Təsdiqləndi' : 'Rədd edildi'); if (onChange) onChange(); return load(); })
+              .catch(function (e) { UI.toast(e.message, 'bad'); return load(); });
+          }
+          list.appendChild(h('div', { class: 'req-item' },
+            h('div', null, h('b', null, a.summary)),
+            h('div', { class: 'muted', style: 'font-size:13px' }, a.requestedBy.name + ' · ' + UI.fmtDate(a.at)),
+            h('div', { class: 'row', style: 'justify-content:flex-end' },
+              h('button', { class: 'btn danger small', type: 'button', onclick: function () { decide('rejected'); } }, 'Rədd et'),
+              h('button', { class: 'btn primary small', type: 'button', onclick: function () { decide('approved'); } }, 'Təsdiqlə'))));
+        });
+      });
+    }
+    load();
   }
 
   /* ================= Məhsullar ================= */
@@ -87,6 +152,7 @@
     function load() {
       return S.listProducts().then(function (ps) { all = ps.map(function (p) { return S.sanitizeForRole(p, showCost); }); draw(); });
     }
+    root.Screens._refresh = load;     // başqa cihazdan dəyişiklik gələndə siyahı yenilənir
     q.addEventListener('input', draw);
 
     el.appendChild(h('div', { class: 'page' },
@@ -229,7 +295,8 @@
             var items = inputs.map(function (inp, i) { return { lineIndex: i, qty: parseInt(inp.value, 10) || 0 }; }).filter(function (x) { return x.qty > 0; });
             if (!items.length) return UI.toast('Qaytarılacaq say yazın', 'bad');
             var amount = R.refundAmount(items.map(function (it) { return { price: sale.lines[it.lineIndex].price, qty: it.qty }; }), sale.discount ? sale.discount.percent : 0);
-            UI.approve('Qaytarmanı təsdiqlə', 'Çek № ' + sale.receiptNo + ' üzrə ' + M.format(amount) + ' ₼ qaytarılır.', 'pos.return.approve').then(function (a) {
+            var rsum = 'Çek № ' + sale.receiptNo + ' üzrə ' + M.format(amount) + ' ₼ qaytarılır.';
+            UI.approve('Qaytarmanı təsdiqlə', rsum, 'pos.return.approve', { kind: 'return', summary: (S.currentUser() ? S.currentUser().name : '') + ' qaytarma istəyir. ' + rsum }).then(function (a) {
               if (!a) return;
               return S.createReturn(sale.id, items, a, reason.value).then(function (ret) {
                 return S.storeInfo().then(function (store) {
@@ -306,7 +373,8 @@
       body: h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'cm-a' }, 'Məbləğ, ₼'), amt), h('div', { class: 'field' }, h('label', { for: 'cm-r' }, 'Səbəb'), reason)),
       buttons: [{ text: 'İmtina' }, { text: 'Yadda saxla', kind: 'primary', submit: true, onClick: function (close) {
         var v = M.parse(amt.value); if (v == null) throw new Error('Məbləğ səhvdir');
-        var go = type === 'out' ? (close(), UI.approve('Məxarici təsdiqlə', M.format(v) + ' ₼ kassadan çıxarılır: ' + reason.value, 'pos.return.approve')) : Promise.resolve(null);
+        var go = type === 'out' ? (close(), UI.approve('Məxarici təsdiqlə', M.format(v) + ' ₼ kassadan çıxarılır: ' + reason.value, 'pos.return.approve',
+          { kind: 'cash_out', summary: (S.currentUser() ? S.currentUser().name : '') + ' kassadan məxaric istəyir: ' + M.format(v) + ' ₼ (' + reason.value + ')' })) : Promise.resolve(null);
         return go.then(function (a) {
           if (type === 'out' && !a) return;
           return S.cashMove(type, v, reason.value.trim(), a).then(function () { UI.toast('Qeydə alındı'); if (type === 'in') close(); done(); });
@@ -334,7 +402,10 @@
     var tb = h('tbody');
     el.appendChild(h('div', { class: 'page' }, h('h1', null, 'Çeklər'), h('div', { class: 'card table-wrap' }, h('table', null,
       h('thead', null, h('tr', null, h('th', null, '№'), h('th', null, 'Tarix'), h('th', null, 'Kassir'), h('th', null, 'Ödəniş'), h('th', { class: 'num' }, 'Yekun ₼'), h('th', null, ''), h('th', null, ''))), tb))));
-    S.recentSales(100).then(function (list) {
+    function loadList() { return S.recentSales(100).then(function (list) { UI.clear(tb); fill(list); }); }
+    root.Screens._refresh = loadList;
+    loadList();
+    function fill(list) {
       if (!list.length) tb.appendChild(h('tr', null, h('td', { colspan: '7', class: 'empty' }, 'Hələ satış yoxdur')));
       list.forEach(function (s) {
         tb.appendChild(h('tr', null, h('td', { class: 'mono' }, String(s.receiptNo).padStart(6, '0')), h('td', null, UI.fmtDate(s.at)), h('td', null, s.cashierName),
@@ -349,7 +420,7 @@
             });
           } }, 'Dublikat'))));
       });
-    });
+    }
   }
 
   /* ================= Admin ================= */
@@ -380,6 +451,7 @@
         h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: function () {
           S.setMatrix(m).then(function () { root.App.matrix = m; UI.toast('İcazələr yadda saxlanıldı'); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, 'Yadda saxla')),
+        can('admin.users') ? usersCard() : null,
         settingsCard(r[1])));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
   }
@@ -389,12 +461,34 @@
     var name = f('s-name', 'Mağaza adı', store.name), voen = f('s-voen', 'VÖEN', store.voen), addr = f('s-addr', 'Ünvan', store.address), reg = f('s-reg', 'Kassa adı', store.registerName);
     var url = f('s-url', 'Apps Script veb tətbiq ünvanı', '', { placeholder: 'https://script.google.com/macros/s/…/exec' });
     var tok = f('s-tok', 'Sinxron açarı (SYNC_TOKEN)', '', { type: 'password', autocomplete: 'off', placeholder: 'Dəyişmək üçün yazın' });
+    var info = h('div', { class: 'muted', style: 'font-size:13px', id: 's-info', role: 'status' });
+    var conflicts = h('ul', { class: 'conflicts' });
     root.Sync.endpoint().then(function (u) { url.i.value = u; });
     root.DB.get('meta', 'syncToken').then(function (t) { if (t && t.value) tok.i.placeholder = 'Saxlanılıb · dəyişmək üçün yazın'; });
+
+    function refreshInfo() {
+      return Promise.all([root.Sync.endpoint(), S.outboxCount(), S.listConflicts()]).then(function (r) {
+        var st = root.Sync.status();
+        UI.clear(info);
+        info.appendChild(document.createTextNode('Cihaz: ' + String(S.deviceId() || '').slice(-8) + ' · ' + (r[0] ? 'server qoşulub' : 'server qoşulmayıb (yalnız bu cihaz)') +
+          (r[1] ? ' · göndərilməmiş: ' + r[1] : '') + (st.lastOk ? ' · son sinxron: ' + UI.fmtDate(st.lastOk).split(', ').pop() : '')));
+        if (st.error) info.appendChild(h('div', { class: 'sync-err', style: 'color:var(--bad)' }, 'Son xəta: ' + st.error));
+        UI.clear(conflicts);
+        r[2].slice(-5).forEach(function (c) { conflicts.appendChild(h('li', null, c.message)); });
+      });
+    }
+    refreshInfo();
+
+    function report(r) {
+      UI.toast(r.error ? 'Sinxron alınmadı: ' + r.error : r.skipped ? 'Ünvan yoxdur və ya oflayn' : r.sent + ' qeyd göndərildi, ' + r.received + ' qeyd alındı', r.error ? 'bad' : '');
+      root.App.refreshStatus(); return refreshInfo();
+    }
+
     return h('div', { class: 'card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
       h('h2', { style: 'margin:0;font-size:18px' }, 'Mağaza və server'),
       h('div', { class: 'grid2' }, name.el, voen.el, addr.el, reg.el, url.el, tok.el),
-      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Ünvan boşdursa, sistem yalnız bu kompyuterdə işləyir və qeydlər sinxron üçün növbədə qalır.'),
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Ünvan boşdursa, sistem yalnız bu kompyuterdə işləyir. Hər yeni brauzer/cihaz bir dəfə qoşulmalıdır (giriş ekranında "Bu cihazı serverə qoş").'),
+      info, conflicts,
       h('div', { class: 'row' },
         h('button', { class: 'btn primary', onclick: function () {
           var u = url.i.value.trim();
@@ -402,19 +496,49 @@
           if (bad) return UI.toast(bad, 'bad');
           S.setStoreInfo({ name: name.i.value.trim(), voen: voen.i.value.trim(), address: addr.i.value.trim(), registerName: reg.i.value.trim() })
             .then(function () { return root.Sync.setEndpoint(u, tok.i.value); })
-            .then(function () { tok.i.value = ''; UI.toast('Yadda saxlanıldı'); root.App.refreshStatus(); })
+            .then(function () { tok.i.value = ''; UI.toast('Yadda saxlanıldı'); return root.Sync.cycle(); })
+            .then(report)
             .catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, 'Yadda saxla'),
         h('button', { class: 'btn', onclick: function () {
           root.Sync.test().then(function (msg) { UI.toast(msg); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, 'Bağlantını yoxla'),
-        h('button', { class: 'btn', onclick: function () {
-          root.Sync.flush().then(function (r) {
-            UI.toast(r.error ? 'Sinxron alınmadı: ' + r.error : r.skipped ? 'Ünvan yoxdur və ya oflayn' : r.sent + ' qeyd göndərildi', r.error ? 'bad' : '');
-            root.App.refreshStatus();
-          });
-        } }, 'İndi sinxronlaşdır')));
+        h('button', { class: 'btn', onclick: function () { root.Sync.cycle().then(report); } }, 'İndi sinxronlaşdır')));
   }
 
-  root.Screens = { login: login, forcePinChange: forcePinChange, products: products, returns: returns, shift: shift, sales: sales, admin: admin };
+  // Admin: istifadəçilər və PIN-in sıfırlanması (unudulmuş PIN üçün)
+  function usersCard() {
+    var tb = h('tbody');
+    function load() {
+      return S.listAllUsers().then(function (users) {
+        UI.clear(tb);
+        users.forEach(function (u) {
+          tb.appendChild(h('tr', null, h('td', null, u.name), h('td', null, R.ROLE_NAMES[u.role]),
+            h('td', null, u.mustChangePin ? h('span', { class: 'badge' }, 'PIN dəyişməlidir') : h('span', { class: 'badge ok' }, 'Aktiv')),
+            h('td', { style: 'text-align:right' }, h('button', { class: 'btn small', type: 'button', onclick: function () { resetPin(u); } }, 'PIN-i sıfırla'))));
+        });
+      });
+    }
+    function resetPin(u) {
+      UI.modal({
+        title: 'PIN-i sıfırla — ' + u.name,
+        body: h('p', { style: 'margin:0' }, 'Müvəqqəti PIN yaradılacaq. İstifadəçi ilk girişdə özünün yeni PIN-ini seçəcək. Köhnə PIN dərhal etibarsız olur.'),
+        buttons: [{ text: 'İmtina' }, { text: 'Sıfırla', kind: 'danger', submit: true, onClick: function (close) {
+          return S.resetPin(u.id).then(function (temp) {
+            close();
+            UI.modal({ title: 'Müvəqqəti PIN', body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+              h('div', { class: 'pin-reset' }, temp), h('p', { class: 'muted', style: 'margin:0' }, u.name + ' üçün bir dəfə göstərilir. İndi ötürün.')) });
+            load();
+          });
+        } }]
+      });
+    }
+    load();
+    return h('div', { class: 'card table-wrap', style: 'margin-top:24px' },
+      h('div', { style: 'padding:16px 20px 0' }, h('h2', { style: 'margin:0;font-size:18px' }, 'İstifadəçilər')),
+      h('table', null, h('thead', null, h('tr', null, h('th', null, 'Ad'), h('th', null, 'Rol'), h('th', null, 'Vəziyyət'), h('th', null, ''))), tb));
+  }
+
+  root.Screens = { login: login, forcePinChange: forcePinChange, products: products, returns: returns, shift: shift, sales: sales, admin: admin,
+    pendingForMe: pendingForMe, approvalsModal: approvalsModal, _refresh: null };
 })(window);

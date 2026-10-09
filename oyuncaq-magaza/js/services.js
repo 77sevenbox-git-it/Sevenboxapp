@@ -28,45 +28,106 @@
     });
   }
 
-  // Audit və outbox eyni tranzaksiyada yazılır ki, biri olub digəri olmasın
-  function log(t, type, data, user) {
-    var ts = now();
+  var EPOCH = '1970-01-01T00:00:00.000Z';
+  var device = null;        // bu brauzerin/cihazın sabit nömrəsi (hadisələrin mənşəyini göstərir)
+  var evCounter = 0;
+
+  // Audit və outbox eyni tranzaksiyada yazılır ki, biri olub digəri olmasın.
+  // Outbox id-si: vaxt + artan say + audit id → eyni millisaniyədə də sıra pozulmur (məs. məhsul → mal qəbulu).
+  function log(t, type, data, user, at) {
+    var ts = at || now();
     var entry = { id: DB.uid('a'), at: ts, type: type, userId: user ? user.id : null, userName: user ? user.name : null, data: data };
+    evCounter = (evCounter + 1) % 1000000;
+    var eid = ts + '_' + String(evCounter).padStart(6, '0') + '_' + entry.id;
     return t.put('audit', entry).then(function () {
-      return t.put('outbox', { id: ts + '_' + entry.id, at: ts, type: type, data: data, userId: entry.userId });
-    });
+      return t.put('outbox', { id: eid, at: ts, type: type, data: data, userId: entry.userId, device: device });
+    }).then(function () { if (root.Sync && root.Sync.kick) root.Sync.kick(); });
   }
 
+  // Nömrə aralıqları: server cihazlara ayrı-ayrı aralıq verir ki, iki kassada eyni barkod/çek nömrəsi olmasın.
+  // Aralıq heç vaxt alınmayıbsa (server qoşulmayıb) lokal sayğac işləyir.
   function nextSeq(t, key) {
-    return t.get('meta', key).then(function (m) {
-      var v = (m ? m.value : 0) + 1;
-      return t.put('meta', { key: key, value: v }).then(function () { return v; });
+    return t.get('meta', 'block:' + key).then(function (b) {
+      var ranges = b && b.value && b.value.ranges ? b.value.ranges : null;
+      if (ranges) {
+        while (ranges.length && ranges[0][0] > ranges[0][1]) ranges.shift();
+        if (ranges.length) {
+          var v = ranges[0][0]++;
+          return t.put('meta', { key: 'block:' + key, value: { ranges: ranges } }).then(function () { return v; });
+        }
+        throw err('Nömrə ehtiyatı bitib. İnternetə qoşulun və bir neçə saniyə gözləyin', 'seq_exhausted');
+      }
+      return t.get('meta', key).then(function (m) {
+        var v2 = (m ? m.value : 0) + 1;
+        return t.put('meta', { key: key, value: v2 }).then(function () { return v2; });
+      });
     });
   }
 
   /* ---------- İlkin quraşdırma ---------- */
+  // Sabit id-lər: bütün brauzerlərdə eyni istifadəçi eyni id-yə malikdir, ona görə PIN dəyişikliyi serverdən düzgün yayılır
   var DEMO_USERS = [
-    { name: 'Admin', role: 'admin', pin: '1234' },
-    { name: 'Menecer', role: 'menecer', pin: '2222' },
-    { name: 'Kassir', role: 'kassir', pin: '1111' },
-    { name: 'Mühasib 1', role: 'muhasib', pin: '3333' },
-    { name: 'Mühasib 2', role: 'muhasib', pin: '4444' }
+    { id: 'u_admin', name: 'Admin', role: 'admin', pin: '1234' },
+    { id: 'u_menecer', name: 'Menecer', role: 'menecer', pin: '2222' },
+    { id: 'u_kassir', name: 'Kassir', role: 'kassir', pin: '1111' },
+    { id: 'u_muhasib1', name: 'Mühasib 1', role: 'muhasib', pin: '3333' },
+    { id: 'u_muhasib2', name: 'Mühasib 2', role: 'muhasib', pin: '4444' }
   ];
+
+  function loadDevice() {
+    return DB.get('meta', 'deviceId').then(function (m) {
+      if (m) { device = m.value; return; }
+      device = DB.uid('d');
+      return DB.put('meta', { key: 'deviceId', value: device });
+    });
+  }
+
+  // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
+  function migrate() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 2) return;
+      return DB.getAll('users').then(function (users) {
+        var byName = {}; DEMO_USERS.forEach(function (d) { byName[d.name] = d; });
+        var ts = now();
+        return DB.atomic(['users', 'meta', 'audit', 'outbox'], function (t) {
+          var ops = [];
+          users.forEach(function (u) {
+            var d = byName[u.name];
+            var nu = Object.assign({}, u, { id: d ? d.id : u.id, updatedAt: u.mustChangePin ? EPOCH : ts });
+            if (nu.id !== u.id) ops.push(t.del('users', u.id));
+            ops.push(t.put('users', nu));
+            ops.push(log(t, 'user.upserted', { user: nu, reason: 'migrate' }, null));
+          });
+          ops.push(t.get('meta', 'matrixAt').then(function (x) { if (!x) return t.put('meta', { key: 'matrixAt', value: EPOCH }); }));
+          ops.push(t.get('meta', 'storeAt').then(function (x) { if (!x) return t.put('meta', { key: 'storeAt', value: EPOCH }); }));
+          ops.push(t.put('meta', { key: 'schema', value: 2 }));
+          return Promise.all(ops);
+        });
+      });
+    });
+  }
 
   function init() {
     return DB.open().then(function () { return DB.get('meta', 'initialized'); }).then(function (done) {
-      if (done) return;
-      return Promise.all(DEMO_USERS.map(function (u) {
-        var salt = newSalt();
-        return hashPin(u.pin, salt).then(function (h) {
-          return { id: DB.uid('u'), name: u.name, role: u.role, salt: salt, pinHash: h, active: true, mustChangePin: true };
-        });
-      })).then(function (users) {
-        return DB.atomic(['users', 'meta'], function (t) {
-          return Promise.all(users.map(function (u) { return t.put('users', u); })).then(function () {
+      if (done) return loadDevice().then(migrate);
+      return loadDevice().then(function () {
+        return Promise.all(DEMO_USERS.map(function (u) {
+          var salt = newSalt();
+          return hashPin(u.pin, salt).then(function (h) {
+            return { id: u.id, name: u.name, role: u.role, salt: salt, pinHash: h, active: true, mustChangePin: true, updatedAt: EPOCH };
+          });
+        }));
+      }).then(function (users) {
+        return DB.atomic(['users', 'meta', 'audit', 'outbox'], function (t) {
+          return Promise.all(users.map(function (u) {
+            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'seed' }, null); });
+          })).then(function () {
             return Promise.all([
               t.put('meta', { key: 'matrix', value: Rules.DEFAULT_MATRIX }),
+              t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
+              t.put('meta', { key: 'storeAt', value: EPOCH }),
+              t.put('meta', { key: 'schema', value: 2 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -76,6 +137,7 @@
   }
 
   function storeInfo() { return DB.get('meta', 'store').then(function (m) { return m.value; }); }
+  function deviceId() { return device; }
 
   /* ---------- Giriş ---------- */
   function listUsers() {
@@ -84,44 +146,85 @@
     });
   }
 
+  function verifyPin(userId, pin) {
+    return DB.get('users', userId).then(function (u) {
+      if (!u || !u.active) throw err('İstifadəçi tapılmadı');
+      return hashPin(pin, u.salt).then(function (h) { return { u: u, ok: h === u.pinHash }; });
+    });
+  }
+
   var failed = {};
   function login(userId, pin) {
     var f = failed[userId] || { n: 0, until: 0 };
     if (Date.now() < f.until) return Promise.reject(err('Çox səhv cəhd. ' + Math.ceil((f.until - Date.now()) / 60000) + ' dəqiqə gözləyin', 'locked'));
-    return DB.get('users', userId).then(function (u) {
-      if (!u || !u.active) throw err('İstifadəçi tapılmadı');
-      return hashPin(pin, u.salt).then(function (h) {
-        if (h !== u.pinHash) {
-          f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } // SEC-06
-          failed[userId] = f;
-          return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.failed', { userId: userId }, null); })
-            .then(function () { throw err('PIN səhvdir'); });
-        }
-        failed[userId] = { n: 0, until: 0 };
-        session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
-        return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.login', {}, session.user); }).then(function () { return session.user; });
-      });
+    return verifyPin(userId, pin).then(function (r) {
+      if (r.ok) return r;
+      // PIN başqa cihazda dəyişdirilmiş ola bilər: istifadəçiləri serverdən yeniləyib bir də yoxlayırıq
+      var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(6000) : Promise.resolve();
+      return pull.then(function () { return verifyPin(userId, pin); });
+    }).then(function (r) {
+      var u = r.u;
+      if (!r.ok) {
+        f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } // SEC-06
+        failed[userId] = f;
+        return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.failed', { userId: userId }, null); })
+          .then(function () { throw err('PIN səhvdir'); });
+      }
+      failed[userId] = { n: 0, until: 0 };
+      session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
+      return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.login', {}, session.user); }).then(function () { return session.user; });
     });
   }
 
   function logout() { session.user = null; }
   function currentUser() { return session.user; }
 
+  function validateNewPin(newPin, oldPin) {
+    if (!/^\d{4,8}$/.test(newPin)) return 'PIN 4–8 rəqəm olmalıdır';
+    if (newPin === oldPin) return 'Yeni PIN köhnə PIN ilə eyni ola bilməz';
+    if (/^(\d)\1+$/.test(newPin) || '0123456789'.indexOf(newPin) !== -1 || '9876543210'.indexOf(newPin) !== -1) return 'Çox sadə PIN seçməyin';
+    return null;
+  }
+
+  // PIN dəyişəndə "user.upserted" hadisəsi (duz + hash) serverə gedir və "Users" vərəqində yenilənir
   function changePin(oldPin, newPin) {
-    if (!/^\d{4,8}$/.test(newPin)) return Promise.reject(err('PIN 4–8 rəqəm olmalıdır'));
-    if (/^(\d)\1+$/.test(newPin) || '0123456789'.indexOf(newPin) !== -1) return Promise.reject(err('Çox sadə PIN seçməyin'));
+    var bad = validateNewPin(newPin, oldPin); if (bad) return Promise.reject(err(bad));
     var me = session.user;
+    if (!me) return Promise.reject(err('Daxil olun', 'auth'));
     return DB.get('users', me.id).then(function (u) {
       return hashPin(oldPin, u.salt).then(function (h) {
         if (h !== u.pinHash) throw err('Köhnə PIN səhvdir');
         var salt = newSalt();
         return hashPin(newPin, salt).then(function (nh) {
-          u.salt = salt; u.pinHash = nh; u.mustChangePin = false;
+          u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = now();
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
-            return t.put('users', u).then(function () { return log(t, 'auth.pin_changed', {}, me); });
+            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_changed' }, me, u.updatedAt); });
           }).then(function () { me.mustChangePin = false; });
         });
       });
+    });
+  }
+
+  // Admin: unudulmuş PIN üçün müvəqqəti PIN verir (istifadəçi ilk girişdə yenisini seçir)
+  function resetPin(userId) {
+    return requirePerm('admin.users').then(function (admin) {
+      return DB.get('users', userId).then(function (u) {
+        if (!u) throw err('İstifadəçi tapılmadı');
+        var temp = String(Math.floor(100000 + Math.random() * 900000));
+        var salt = newSalt();
+        return hashPin(temp, salt).then(function (h) {
+          u.salt = salt; u.pinHash = h; u.mustChangePin = true; u.updatedAt = now();
+          return DB.atomic(['users', 'audit', 'outbox'], function (t) {
+            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_reset' }, admin, u.updatedAt); });
+          }).then(function () { return temp; });
+        });
+      });
+    });
+  }
+
+  function listAllUsers() {
+    return requirePerm('admin.users').then(function () {
+      return DB.getAll('users').then(function (us) { return us.map(function (u) { return { id: u.id, name: u.name, role: u.role, active: u.active, mustChangePin: u.mustChangePin }; }); });
     });
   }
 
@@ -178,6 +281,7 @@
               price: d.price, lastCost: d.cost || 0, avgCost: d.cost || 0, stock: 0, negSalesSinceReceipt: 0,
               minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id
             };
+            p.updatedAt = p.createdAt;
             return t.put('products', p)
               .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'sale', old: null, new: p.price, userId: user.id, at: now() }); })
               .then(function () { return log(t, 'product.created', { product: p }, user); })
@@ -204,6 +308,7 @@
               next.price = changes.price;
             }
             var v = validateProductInput(next); if (v) throw err(v);
+            next.updatedAt = now();
             var chk = next.mfrBarcode && next.mfrBarcode !== p.mfrBarcode ? t.byIndex('products', 'mfrBarcode', next.mfrBarcode) : Promise.resolve([]);
             return chk.then(function (dups) {
               if (dups.length) warnings.push('Bu istehsalçı barkodu artıq var: ' + dups.map(function (x) { return x.name; }).join(', '));
@@ -226,10 +331,8 @@
       return DB.atomic(['products', 'stockMoves', 'priceHistory', 'audit', 'outbox'], function (t) {
         return t.get('products', productId).then(function (p) {
           if (!p) throw err('Məhsul tapılmadı');
-          var base = Math.max(p.stock, 0);
-          var avg = base + qty > 0 ? Math.round((base * p.avgCost + qty * unitCost) / (base + qty)) : unitCost;
           var before = p.stock;
-          p.stock += qty; p.avgCost = avg; p.lastCost = unitCost; p.negSalesSinceReceipt = 0;
+          Object.assign(p, Rules.applyReceipt(p, qty, unitCost));
           return t.put('products', p)
             .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: qty, before: before, after: p.stock, unitCost: unitCost, note: note || '', at: now(), userId: user.id }); })
             .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: now() }); })
@@ -255,7 +358,11 @@
 
   /* ---------- Növbə ---------- */
   function currentShift() {
-    return DB.byIndex('shifts', 'status', 'open').then(function (s) { return s[0] || null; });
+    // Bir neçə cihazda eyni anda növbə açılıbsa, ən əvvəl açılan cari sayılır; digəri onun ardınca ayrıca bağlanır
+    return DB.byIndex('shifts', 'status', 'open').then(function (s) {
+      s.sort(function (a, b) { return a.openedAt < b.openedAt ? -1 : a.openedAt > b.openedAt ? 1 : a.id < b.id ? -1 : 1; });
+      return s[0] || null;
+    });
   }
 
   function openShift(openingCash) {
@@ -303,7 +410,9 @@
 
   function closeShift(countedCash, note) {
     return requirePerm('shift.open_close').then(function (user) {
-      return currentShift().then(function (s) {
+      // Digər kassaların bu növbədəki satışları da hesabata düşsün: bağlamazdan əvvəl serverdən yeniləyirik (oflayndırsa atlanır)
+      var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(8000) : Promise.resolve();
+      return pull.then(currentShift).then(function (s) {
         if (!s) throw err('Açıq növbə yoxdur');
         return Promise.all([shiftReport(s), DB.getAll('outbox')]).then(function (r) {
           var rep = r[0];
@@ -451,9 +560,11 @@
     return requirePerm('admin.permissions').then(function (user) {
       // Admin özünü icazə idarəsindən kənarlaşdıra bilməz
       if (m.admin.indexOf('admin.permissions') === -1) throw err('Admin icazə idarəsini özündən götürə bilməz');
+      var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
         return t.get('meta', 'matrix').then(function (old) {
-          return t.put('meta', { key: 'matrix', value: m }).then(function () { return log(t, 'admin.matrix_changed', { before: old && old.value, after: m }, user); });
+          return t.put('meta', { key: 'matrix', value: m }).then(function () { return t.put('meta', { key: 'matrixAt', value: at }); })
+            .then(function () { return log(t, 'admin.matrix_changed', { before: old && old.value, after: m }, user, at); });
         });
       });
     });
@@ -461,14 +572,81 @@
 
   function setStoreInfo(info) {
     return requirePerm('admin.users').then(function (user) {
+      var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
-        return t.put('meta', { key: 'store', value: info }).then(function () { return log(t, 'admin.store_changed', { store: info }, user); });
+        return t.put('meta', { key: 'store', value: info }).then(function () { return t.put('meta', { key: 'storeAt', value: at }); })
+          .then(function () { return log(t, 'admin.store_changed', { store: info }, user, at); });
       });
     });
   }
 
+  /* ---------- Təsdiq sorğuları (kassir → menecer, serverlə) ---------- */
+  var APPROVAL_TTL = 10 * 60000;
+  function isFresh(a) { return Date.now() - Date.parse(a.at) < APPROVAL_TTL; }
+
+  // kind: 'line_delete' | 'sale_cancel' | 'discount' | ..., perm: təsdiq üçün lazım olan icazə, summary: menecerə göstərilən mətn
+  function requestApproval(kind, perm, summary) {
+    var me = session.user;
+    if (!me) return Promise.reject(err('Daxil olun', 'auth'));
+    var rec = { id: DB.uid('ap'), kind: kind, perm: perm, summary: summary, requestedBy: { id: me.id, name: me.name, role: me.role }, at: now(), status: 'pending', device: device };
+    return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
+      return t.put('approvals', rec).then(function () { return log(t, 'approval.requested', { approval: rec }, me, rec.at); }).then(function () { return rec; });
+    });
+  }
+
+  function listPendingApprovals() {
+    return DB.getAll('approvals').then(function (all) {
+      return all.filter(function (a) { return a.status === 'pending' && isFresh(a); }).sort(function (a, b) { return a.at < b.at ? -1 : 1; });
+    });
+  }
+
+  function decideApproval(id, decision) {
+    if (decision !== 'approved' && decision !== 'rejected') return Promise.reject(err('Qərar səhvdir'));
+    return DB.get('approvals', id).then(function (a) {
+      if (!a) throw err('Sorğu tapılmadı');
+      return requirePerm(a.perm).then(function (me) {
+        if (a.requestedBy.id === me.id) throw err('Öz sorğunuzu təsdiqləyə bilməzsiniz');
+        if (a.status !== 'pending') throw err('Sorğuya artıq cavab verilib');
+        if (!isFresh(a)) throw err('Sorğunun vaxtı bitib');
+        var at = now();
+        return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
+          a.status = decision; a.decidedBy = { id: me.id, name: me.name, role: me.role }; a.decidedAt = at;
+          return t.put('approvals', a).then(function () { return log(t, 'approval.decided', { id: a.id, decision: decision, by: a.decidedBy, decidedAt: at }, me, at); }).then(function () { return a; });
+        });
+      });
+    });
+  }
+
+  function cancelApproval(id) {
+    var me = session.user;
+    return DB.get('approvals', id).then(function (a) {
+      if (!a || a.status !== 'pending' || !me || a.requestedBy.id !== me.id) return null;
+      var at = now();
+      return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
+        a.status = 'cancelled'; a.decidedAt = at;
+        return t.put('approvals', a).then(function () { return log(t, 'approval.decided', { id: a.id, decision: 'cancelled', by: null, decidedAt: at }, me, at); }).then(function () { return a; });
+      });
+    });
+  }
+
+  // Kassirin gözlədiyi sorğunun vəziyyəti. Təsdiq yalnız səlahiyyətli aktiv istifadəçidən gəlibsə qəbul edilir.
+  function checkApproval(id) {
+    return DB.get('approvals', id).then(function (a) {
+      if (!a) return { state: 'missing' };
+      if (a.status === 'pending') return { state: isFresh(a) ? 'pending' : 'expired' };
+      if (a.status !== 'approved') return { state: a.status };
+      return Promise.all([DB.get('users', a.decidedBy.id), matrix()]).then(function (r) {
+        var u = r[0];
+        if (!u || !u.active || !Rules.can(r[1], u.role, a.perm)) return { state: 'rejected', reason: 'invalid_approver' };
+        return { state: 'approved', approver: { id: u.id, name: u.name, role: u.role } };
+      });
+    });
+  }
+
+  function listConflicts() { return DB.get('meta', 'conflicts').then(function (m) { return m ? m.value : []; }); }
+
   function recentSales(limit) {
-    return DB.getAll('sales').then(function (s) { return s.sort(function (a, b) { return b.receiptNo - a.receiptNo; }).slice(0, limit || 50); });
+    return DB.getAll('sales').then(function (s) { return s.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : b.receiptNo - a.receiptNo; }).slice(0, limit || 50); });
   }
   function outboxCount() { return DB.getAll('outbox').then(function (o) { return o.length; }); }
 
@@ -494,7 +672,9 @@
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn,
-    recentSales: recentSales, outboxCount: outboxCount, _session: session
+    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listAllUsers: listAllUsers, validateNewPin: validateNewPin,
+    requestApproval: requestApproval, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
+    checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, _session: session
   };
   root.Services = Services;
   if (typeof module !== 'undefined') module.exports = Services;

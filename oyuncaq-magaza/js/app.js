@@ -23,6 +23,7 @@
     var r = list.find(function (x) { return x.id === id; }) || list[0];
     if (!r) { UI.clear(main).appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, 'Bu rol üçün açıq ekran yoxdur.'))); return; }
     app.route = r.id;
+    root.Screens._refresh = null;
     if (location.hash !== '#' + r.id) history.replaceState(null, '', '#' + r.id);
     renderNav();
     UI.clear(main);
@@ -36,27 +37,61 @@
     });
   }
 
+  var seenRequests = null;   // artıq görülmüş təsdiq sorğularının id-ləri (yenisi gələndə xəbərdarlıq üçün)
+
   function refreshStatus() {
-    if (!statusEl) return;
-    Promise.all([S.currentShift(), S.outboxCount(), S.storeInfo()]).then(function (r) {
-      var online = navigator.onLine;
+    if (!statusEl || !S.currentUser()) return;
+    Promise.all([S.currentShift(), S.outboxCount(), S.storeInfo(), root.Screens.pendingForMe()]).then(function (r) {
       var u = S.currentUser();
+      if (!u || !statusEl) return;
+      var online = navigator.onLine;
+      var sy = root.Sync.status();
       UI.clear(statusEl);
       statusEl.appendChild(h('span', null, h('span', { class: 'dot' + (online ? '' : ' off') }), online ? 'Onlayn' : 'Oflayn'));
       if (r[1]) statusEl.appendChild(h('span', { class: 'badge', title: 'Serverə göndərilməmiş qeydlər' }, r[1] + ' sinxron gözləyir'));
+      if (sy.ok === false) statusEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, 'Sinxron xətası'));
+      if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, 'Sorğular (' + r[3].length + ')'));
       statusEl.appendChild(h('span', null, r[0] ? 'Növbə açıq · ' + UI.fmtDate(r[0].openedAt).split(', ').pop() : 'Növbə bağlı'));
       statusEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
       statusEl.appendChild(h('button', { class: 'btn small', onclick: logout }, 'Çıxış'));
       document.querySelector('.brand b').textContent = r[2].name;
       document.querySelector('.brand .muted').textContent = r[2].registerName;
+
+      // Yeni təsdiq sorğusu gələndə səs + bildiriş
+      var ids = {}; r[3].forEach(function (a) { ids[a.id] = a; });
+      if (seenRequests) {
+        var fresh = r[3].filter(function (a) { return !seenRequests[a.id]; });
+        if (fresh.length) { UI.toast('Yeni təsdiq sorğusu: ' + fresh[0].summary); UI.beep(true); }
+      }
+      seenRequests = ids;
     });
   }
 
   function logout() { S.logout(); start(); }
 
+  // Başqa cihazdan gələn dəyişikliklər: icazələr, qalıq, çeklər, sorğular
+  function onApplied(t) {
+    if (!S.currentUser()) return;
+    var chain = Promise.resolve();
+    if (t.matrix) {
+      chain = S.getMatrix().then(function (m) {
+        app.matrix = m;
+        renderNav();
+        if (!allowed().some(function (r) { return r.id === app.route; })) go('');
+      });
+    }
+    chain.then(function () {
+      refreshStatus();
+      if (document.querySelector('.modal-back')) return;       // açıq pəncərəni pozmuruq
+      if ((t.products || t.sales) && app.route === 'pos') root.POS.refresh();
+      else if ((t.products || t.sales) && root.Screens._refresh) root.Screens._refresh();
+    });
+  }
+
   function startShell() {
     shell = document.getElementById('app');
     UI.clear(shell);
+    seenRequests = null;
     nav = h('nav', { class: 'nav', 'aria-label': 'Bölmələr' });
     statusEl = h('div', { class: 'status' });
     main = h('main', { id: 'main' });
@@ -68,11 +103,15 @@
 
   function start() {
     var el = document.getElementById('app');
+    statusEl = null;
     root.Screens.login(el, function (user) {
       S.getMatrix().then(function (m) {
         app.matrix = m;
+        // İlk giriş: yalnız yeni PIN səhifəsi görünür, kassa ekranı PIN dəyişənə qədər qurulmur
+        if (user.mustChangePin) {
+          return root.Screens.forcePinChange(el).then(function (ok) { if (ok) startShell(); else start(); });
+        }
         startShell();
-        if (user.mustChangePin) root.Screens.forcePinChange();
       });
     });
   }
@@ -82,9 +121,10 @@
 
   addEventListener('online', refreshStatus);
   addEventListener('offline', refreshStatus);
-  setInterval(function () { if (S.currentUser()) root.Sync.flush().then(refreshStatus); }, 30000);
+  setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)
+  root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else refreshStatus(); });
 
-  S.init().then(start).catch(function (e) {
+  S.init().then(function () { root.Sync.start(); start(); }).catch(function (e) {
     document.getElementById('app').textContent = 'Başlatma xətası: ' + e.message;
   });
 

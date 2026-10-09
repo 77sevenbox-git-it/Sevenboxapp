@@ -1,7 +1,7 @@
 /* Service worker: tətbiq fayllarını keşdə saxlayır ki, internet olmadan açılsın (FR-100). */
-var CACHE = 'magaza-v2';
+var CACHE = 'magaza-v3';
 var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/db.js',
-  'js/services.js', 'js/sync.js', 'js/ui.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg'];
+  'js/services.js', 'js/replica.js', 'js/sync.js', 'js/ui.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

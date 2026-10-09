@@ -48,7 +48,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 
 /* Cədvəl */
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-size: 13px; font-weight: 600; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 td { padding: 12px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
@@ -129,3 +129,17 @@ tr.neg td { background: var(--warn-soft); }
 .label .n { font-size: 11px; line-height: 1.2; max-height: 2.4em; overflow: hidden; }
 .label .p { font-size: 16px; font-weight: 700; }
 .label svg { width: 100%; height: auto; max-height: 20mm; }
+
+/* Sətir silmə, təsdiq sorğuları, sinxron vəziyyəti */
+.qty-btn:disabled { opacity: .35; cursor: not-allowed; }
+td.del, th.del { width: 44px; text-align: center; padding-left: 4px; padding-right: 8px; }
+.icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--control); border-radius: 6px; background: var(--surface); color: var(--bad); cursor: pointer; }
+.icon-btn:hover { background: var(--bad-soft); border-color: #E2B4B4; }
+.icon-btn:focus-visible { outline: 3px solid rgba(31, 95, 173, .35); outline-offset: 1px; }
+.badge.bad { background: var(--bad-soft); color: var(--bad); }
+.status .sync-err { color: var(--bad); font-weight: 600; }
+.req-list { display: flex; flex-direction: column; gap: 10px; max-height: 50vh; overflow: auto; }
+.req-item { border: 1px solid var(--line-2); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.req-item .row { gap: 8px; }
+.conflicts { margin: 0; padding-left: 18px; color: var(--bad); font-size: 14px; }
+.pin-reset { font-family: var(--mono); font-size: 34px; letter-spacing: 6px; text-align: center; padding: 12px; background: var(--ground); border-radius: 10px; }
