@@ -8,7 +8,8 @@
   "scripts": {
     "test": "node tests/run.js && node tests/services.test.js && node tests/sync.test.js && node tests/migrate.test.js",
     "start": "python3 -m http.server 8000",
-    "test:e2e": "python3 tests/e2e.py && python3 tests/e2e_sync.py"
+    "test:e2e": "python3 tests/e2e.py && python3 tests/e2e_sync.py && python3 tests/e2e_latency.py",
+    "test:fuzz": "node tests/fuzz.test.js 40"
   },
   "author": "",
   "license": "ISC",

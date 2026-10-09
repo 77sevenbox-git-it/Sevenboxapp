@@ -82,6 +82,18 @@ async function loginAs(role) {
     await rejects(S.receiveStock(x.id, 1, -5), /Alış qiyməti səhvdir/);
   });
 
+  await t('mağaza məlumatı dəyişməyibsə hadisə yaranmır (təzə cihaz ilkin mətnləri bütün cihazlara yazmasın)', async () => {
+    await loginAs('admin');
+    const cur = await S.storeInfo();
+    const before = await S.outboxCount();
+    await S.setStoreInfo(Object.assign({}, cur));
+    assert.strictEqual(await S.outboxCount(), before);
+    await S.setStoreInfo(Object.assign({}, cur, { name: '7BOXES' }));
+    assert.strictEqual(await S.outboxCount(), before + 1);
+    assert.strictEqual((await S.storeInfo()).name, '7BOXES');
+    await loginAs('menecer');
+  });
+
   await t('növbə olmadan satış olmur', async () => {
     await loginAs('kassir');
     await rejects(S.checkout([{ productId: magnet.id, qty: 1 }], null, { method: 'cash', cashReceived: 1000 }), /növbəni açın/);
@@ -268,6 +280,78 @@ async function loginAs(role) {
     assert.strictEqual((await S.listPendingApprovals()).length, 0);
     assert.strictEqual((await S.checkApproval(rq.id)).state, 'expired');
     await rejects(S.decideApproval(rq.id, 'approved'), /Öz sorğunuzu|vaxtı bitib/);
+  });
+
+  await t('növbə: bağlama fərqi izahsız dərhal rədd olunur, qalıqla açılış', async () => {
+    await loginAs('menecer');
+    const s1 = await S.openShift(5000, 'ilkin');
+    const t0 = Date.now();
+    await rejects(S.closeShift(4000, ''), /Kassa fərqi var.*İzah yazın/);
+    assert.ok(Date.now() - t0 < 500, 'server qoşulmayıbsa dərhal xəta');
+    const closed = await S.closeShift(4000, 'Yoxdur: 10 ₼ çatmır');
+    assert.strictEqual(closed.countedCash, 4000);
+    assert.strictEqual((await S.lastClosedShift()).id, s1.id);
+    await rejects(S.openShift(5000, ''), /Əvvəlki növbədən qalıq 40,00 ₼ idi.*izah/);    // 50,00 ≠ 40,00 → izah məcburi
+    const s2 = await S.openShift(4000, '');                                              // eyni qalıq: izahsız olar
+    assert.strictEqual(s2.prevCash, 4000); assert.strictEqual(s2.openingDiff, 0);
+    await S.closeShift(4000, '');
+    const s3 = await S.openShift(4500, 'kassada 5 ₼ artıq tapıldı');
+    assert.strictEqual(s3.openingDiff, 500); assert.strictEqual(s3.openingNote, 'kassada 5 ₼ artıq tapıldı');
+    await S.closeShift(4500, '');
+  });
+
+  await t('istehsalçı barkodunda uzunluq/format limiti yoxdur; öz barkodlarımız və boşluq rədd olunur', async () => {
+    await loginAs('menecer');
+    await DB.put('meta', { key: 'block:productSeq', value: { ranges: [[3000, 3100]] } });
+    for (const code of ['12345', 'ABC-123_xyz', '1234567890123456789012345678901234567890', '4006381333931']) {
+      const r = await S.createProduct({ name: 'M ' + code.slice(0, 8), price: 100, mfrBarcode: code });
+      assert.strictEqual(r.product.mfrBarcode, code);
+    }
+    await rejects(S.createProduct({ name: 'X', price: 100, mfrBarcode: 'a b' }), /boşluq/);
+    const own = (await S.listProducts())[0].storeBarcode;
+    await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: own }), /mağaza və ya çek barkodudur/);
+    const p = (await S.listProducts()).find(x => x.mfrBarcode === 'ABC-123_xyz');
+    const found = await S.lookupForPos('ABC-123_xyz');
+    assert.strictEqual(found.kind, 'mfr'); assert.strictEqual(found.products[0].id, p.id);
+  });
+
+  await t('qaytarma sayı menecer təsdiqindən ƏVVƏL yoxlanılır (satılandan çox olmaz)', async () => {
+    await loginAs('menecer');
+    await S.openShift(0, 'x');
+    const p = (await S.listProducts()).find(x => x.name === 'Maqnit');
+    const sale = await S.checkout([{ productId: p.id, qty: 2 }], null, { method: 'bank', bankType: 'pos' });
+    await rejects(S.validateReturn(sale.id, [{ lineIndex: 0, qty: 3 }]), /satılıb 2.*ən çox 2/);
+    await rejects(S.validateReturn(sale.id, [{ lineIndex: 0, qty: 0 }]), /Qaytarılacaq say/);
+    await rejects(S.validateReturn(sale.id, [{ lineIndex: 0, qty: 1.5 }]), /tam müsbət/);
+    assert.strictEqual(await S.validateReturn(sale.id, [{ lineIndex: 0, qty: 2 }]), true);
+    const mgr = await userByRole('menecer');
+    await S.createReturn(sale.id, [{ lineIndex: 0, qty: 1 }], { id: mgr.id, name: mgr.name });
+    await rejects(S.validateReturn(sale.id, [{ lineIndex: 0, qty: 2 }]), /əvvəl qaytarılıb 1.*ən çox 1/);
+    assert.strictEqual(await S.validateReturn(sale.id, [{ lineIndex: 0, qty: 1 }]), true);
+  });
+
+  await t('sessiya yeniləmədən sonra qalır; PIN dəyişəndə, çıxışda və 12 saatdan sonra silinir', async () => {
+    const mem = {}; globalThis.sessionStorage = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+    S._session.user = null;
+    const mgr = await userByRole('menecer');
+    const u0 = await DB.get('users', mgr.id); u0.mustChangePin = false; await DB.put('users', u0);   // ilk giriş PIN-i dəyişilməyibsə sessiya saxlanmır
+    await S.login(mgr.id, '2222');
+    assert.ok(mem['mag.session'], 'giriş sessiyanı yazır');
+    S._session.user = null;                                  // səhifə yeniləndi: yaddaşdakı sessiya itdi
+    const u = await S.restoreSession();
+    assert.ok(u && u.id === mgr.id && S.currentUser().id === mgr.id, 'sessiya bərpa olundu');
+    // PIN başqa cihazda dəyişdi → köhnə sessiya etibarsızdır
+    const rec = await DB.get('users', mgr.id); const keep = rec.pinHash; rec.pinHash = 'f'.repeat(64); await DB.put('users', rec);
+    S._session.user = null;
+    assert.strictEqual(await S.restoreSession(), null); assert.strictEqual(mem['mag.session'], undefined, 'etibarsız sessiya silinir');
+    rec.pinHash = keep; await DB.put('users', rec);
+    await S.login(mgr.id, '2222'); S.logout();
+    assert.strictEqual(mem['mag.session'], undefined, 'çıxış sessiyanı silir');
+    await S.login(mgr.id, '2222');
+    const old = JSON.parse(mem['mag.session']); old.at = Date.now() - 13 * 3600000; mem['mag.session'] = JSON.stringify(old);
+    S._session.user = null;
+    assert.strictEqual(await S.restoreSession(), null, '12 saatdan köhnə sessiya qəbul olunmur');
+    delete globalThis.sessionStorage;
   });
 
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);

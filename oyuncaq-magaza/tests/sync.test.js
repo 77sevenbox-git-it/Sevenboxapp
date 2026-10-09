@@ -13,7 +13,7 @@ const JS = path.join(__dirname, '..', 'js');
 
 function makeDevice(backend, idb) {
   const ctx = {
-    console, setTimeout, clearTimeout, TextEncoder, DOMException,
+    console, setTimeout, clearTimeout, TextEncoder, DOMException, AbortController,
     crypto: require('crypto').webcrypto, indexedDB: idb || new IDBFactory(), IDBKeyRange,
     navigator: { onLine: true }, fetch: backend.fetch()
   };
@@ -250,6 +250,20 @@ async function t(name, fn) {
     await rejects(A.Services.decideApproval(r2.id, 'approved'), /artıq cavab/);
   });
 
+  await t('iki menecer eyni sorğuya eyni anda fərqli cavab verir → bütün cihazlarda eyni nəticə (ilk cavab)', async () => {
+    await loginAs(B, 'Kassir', '1111');
+    const rq = await B.Services.requestApproval('line_delete', 'pos.line.delete', 'iki menecer');
+    await B.Sync.cycle(); await A.Sync.cycle();
+    const C = await boot(be);
+    await loginAs(A, 'Menecer', '7342'); await loginAs(C, 'Menecer', '7342');
+    await A.Services.decideApproval(rq.id, 'approved');
+    await new Promise(r => setTimeout(r, 8));
+    await C.Services.decideApproval(rq.id, 'rejected');       // C hələ A-nın cavabını almayıb
+    for (let i = 0; i < 2; i++) { await A.Sync.cycle(); await C.Sync.cycle(); await B.Sync.cycle(); }
+    const st = await Promise.all([A, B, C].map(async d => (await d.DB.get('approvals', rq.id)).status));
+    assert.deepStrictEqual(st, ['approved', 'approved', 'approved'], 'üç cihaz: ' + st.join(','));
+  });
+
   await t('saxta təsdiq: səlahiyyəti olmayan şəxsin "təsdiqi" qəbul olunmur', async () => {
     await loginAs(B, 'Kassir', '1111');
     const r = await B.Services.requestApproval('line_delete', 'pos.line.delete', 'z');
@@ -423,6 +437,19 @@ async function t(name, fn) {
     await rejects(B1.Services.checkout([{ productId: p.id, qty: 1 }], null, { method: 'cash', cashReceived: 1000 }), /növbəni açın/);
   });
 
+  await t('məhsul yaradılması ilə dəyişmə arasında saat fərqi: geridə qalan cihazın dəyişməsi itmir', async () => {
+    const be3 = makeBackend({ token: TOKEN });
+    const A3 = await boot(be3), B3 = await boot(be3);
+    await loginAs(A3, 'Menecer', '2222');
+    const p = (await A3.Services.createProduct({ name: 'Saat fərqi', price: 500, cost: 100 })).product;
+    await A3.Sync.cycle(); await B3.Sync.cycle();
+    // B cihazının saatı geridədir: dəyişmə hadisəsinin vaxtı məhsulun yaradılma vaxtından əvvəldir. Yenə də tətbiq olunmalıdır (yaradılma müqayisədə iştirak etmir)
+    const cur = await B3.Replica.cursor();
+    const ev = { seq: cur + 1, id: '2001-01-01T00:00:00.000Z_000001_a_late', at: '2001-01-01T00:00:00.000Z', type: 'product.updated', device: 'd_late', data: { id: p.id, after: Object.assign({}, p, { price: 777 }) } };
+    await B3.Replica.apply([ev], cur + 1);
+    assert.strictEqual((await B3.DB.get('products', p.id)).price, 777);
+  });
+
   await t('cədvəl təmizlənibsə (kursor serverdən böyük) sinxron ilişmir', async () => {
     const be4 = makeBackend({ token: TOKEN });
     const X = await boot(be4);
@@ -472,6 +499,151 @@ async function t(name, fn) {
     await X.Services.createProduct({ name: 'Tez', price: 100 });
     await new Promise(r => setTimeout(r, 900));
     assert.ok(be7.rows('Products').some(r => r[1] === 'Tez'), '1 saniyə ərzində göndərilməyib');
+  });
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  await t('qoşulma: yalnız ping + sync + GET (nömrə aralığı əlavə sorğusuz gəlir)', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const actions = [];
+    const X = await boot(b, false);
+    const inner = X.fetch;
+    X.fetch = (url, o) => { actions.push(o && o.method === 'POST' ? JSON.parse(o.body).action : 'GET'); return inner(url, o); };
+    await X.Sync.connect(URL_OK, TOKEN);
+    assert.deepStrictEqual(actions.slice().sort(), ['GET', 'ping', 'sync']);
+    const pr = (await X.DB.get('meta', 'block:productSeq')).value.ranges, rc = (await X.DB.get('meta', 'block:receiptSeq')).value.ranges;
+    assert.strictEqual(pr.length, 1); assert.strictEqual(rc.length, 1);
+  });
+
+  await t('köhnə server (v3, "blocks" yoxdur): aralıq ayrıca "allocate" ilə alınır', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const actions = [];
+    const X = await boot(b, false);
+    const inner = X.fetch;
+    X.fetch = (url, o) => {
+      let init = o;
+      if (o && o.method === 'POST') {
+        const body = JSON.parse(o.body); actions.push(body.action);
+        if (body.action === 'sync') { delete body.alloc; init = Object.assign({}, o, { body: JSON.stringify(body) }); }
+      }
+      return inner(url, init).then(r => ({ ok: r.ok, status: r.status, json: () => r.json().then(j => { delete j.blocks; return j; }) }));
+    };
+    await X.Sync.connect(URL_OK, TOKEN);
+    assert.strictEqual(actions.filter(a => a === 'allocate').length, 2);
+    assert.ok((await X.DB.get('meta', 'block:productSeq')).value.ranges.length === 1);
+  });
+
+  await t('ilişmiş sorğu: zaman həddindən sonra xəta verir, növbəti dövr normal işləyir (sinxron ilişmir)', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b);
+    const good = X.fetch;
+    X.Sync.timing.timeout = 80;
+    X.fetch = () => new Promise(() => {});          // heç vaxt cavab vermir
+    const t0 = Date.now();
+    const r = await X.Sync.cycle();
+    assert.ok(r.error && /cavab vermədi/.test(r.error), r.error);
+    assert.ok(Date.now() - t0 < 1500);
+    assert.strictEqual(X.Sync.status().ok, false);
+    X.fetch = good;
+    assert.ok(!(await X.Sync.cycle()).error);
+    assert.strictEqual(X.Sync.status().ok, true);
+  });
+
+  await t('yazı yoxlama sorğusunu gözləmir: gedən boş yoxlama dayandırılır, hadisə dərhal göndərilir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b);
+    const good = X.fetch;
+    let pollStarted = 0, pollAborted = 0;
+    X.fetch = (url, o) => {
+      const body = o && o.method === 'POST' ? JSON.parse(o.body) : null;
+      if (body && body.action === 'sync' && !body.items.length && !body.alloc) {
+        pollStarted++;
+        return new Promise((res, rej) => { o.signal.addEventListener('abort', () => { pollAborted++; rej(Object.assign(new Error('aborted'), { name: 'AbortError' })); }); });   // ilişib qalan yoxlama
+      }
+      return good(url, o);
+    };
+    const poll = X.Sync.cycle();
+    await sleep(30);
+    assert.strictEqual(pollStarted, 1);
+    await loginAs(X, 'Menecer', '2222');
+    await X.Services.createProduct({ name: 'Boru', price: 100 });
+    const t0 = Date.now();
+    await X.Sync.cycle({ push: true });
+    await poll;
+    assert.ok(Date.now() - t0 < 800, 'yazı yoxlamanı gözləyib');
+    assert.strictEqual(pollAborted, 1);
+    assert.ok(b.rows('Products').some(r => r[1] === 'Boru'));
+    assert.notStrictEqual(X.Sync.status().ok, false, 'dayandırılmış yoxlama xəta sayılmamalıdır');
+    assert.strictEqual(await X.Services.outboxCount(), 0);
+  });
+
+  await t('gedən sorğu YAZI daşıyırsa dayandırılmır (təkrar göndəriş riski yoxdur)', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b);
+    await loginAs(X, 'Menecer', '2222');
+    await X.Services.createProduct({ name: 'Yazi', price: 100 });
+    const good = X.fetch;
+    let aborted = 0, release;
+    X.fetch = (url, o) => {
+      const body = o && o.method === 'POST' ? JSON.parse(o.body) : null;
+      if (body && body.action === 'sync' && body.items.length) {
+        o.signal.addEventListener('abort', () => aborted++);
+        return new Promise(res => { release = () => res(good(url, o)); });
+      }
+      return good(url, o);
+    };
+    const first = X.Sync.cycle();
+    await sleep(30);
+    X.Sync.cycle({ push: true });                     // ikinci kick
+    await sleep(30);
+    assert.strictEqual(aborted, 0);
+    release(); await first;
+    assert.strictEqual(await X.Services.outboxCount(), 0);
+    assert.strictEqual(b.rows('Products').filter(r => r[1] === 'Yazi').length, 1);
+  });
+
+  await t('Admin PIN-i unudulubsa: Apps Script-də resetAdminPin() müvəqqəti PIN yaradır, bütün cihazlar alır', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const D1 = await boot(b), D2 = await boot(b);
+    await loginAs(D1, 'Admin', '1234'); await D1.Services.changePin('1234', '5821'); await D1.Sync.cycle(); await D2.Sync.cycle();
+    await loginAs(D2, 'Admin', '5821');                              // hər iki cihazda Admin PIN-i 5821
+    const pin = b.sandbox.resetAdminPin();
+    assert.ok(/^\d{6}$/.test(pin));
+    assert.ok(b.logs.some(l => l.includes(pin)));
+    await D2.Sync.cycle();
+    await rejects(loginAs(D2, 'Admin', '5821'), /PIN səhvdir/);
+    const u = await loginAs(D2, 'Admin', pin);
+    assert.strictEqual(u.mustChangePin, true);
+    await D1.Sync.cycle();
+    assert.strictEqual((await loginAs(D1, 'Admin', pin)).role, 'admin');
+    const row = b.rows('Users').find(r => r[0] === 'u_admin');
+    assert.strictEqual(row[4], true);
+    assert.ok(!b.rows('Audit').some(r => /pinHash|"salt"/.test(r[3])), 'Audit-də hash olmamalıdır');
+    assert.ok(b.rows('Events').some(r => r[2] === 'user.upserted' && /break_glass/.test(r[5])));
+  });
+
+  await t('server keşi: yazan sorğu onu düzgün təyin edir; köhnəlmiş (aşağı) keş başqa cihazın sorğusu ilə düzəlir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b);
+    await loginAs(X, 'Menecer', '2222'); await X.Services.createProduct({ name: 'Keş', price: 100 }); await X.Sync.cycle();
+    const total = b.rows('Events').length;
+    assert.strictEqual(Number(b.store.cache.evTotal), total);
+    const poll = (since, device) => b.post({ action: 'sync', token: TOKEN, device: device, since: since, items: [], limit: 500 });
+    b.store.cache.evTotal = String(total - 2);                       // yarış nəticəsində köhnəlmiş dəyər
+    assert.strictEqual(poll(total - 2, 'z1').events.length, 0, 'köhnəlmiş keş yenilik görməyə mane olur (TTL 90 san və ya başqa sorğu düzəldir)');
+    assert.strictEqual(poll(0, 'z2').events.length, total);          // başqa cihaz tam yoxlama aparır → keş yuxarı düzəlir
+    assert.strictEqual(Number(b.store.cache.evTotal), total);
+    assert.strictEqual(poll(total - 2, 'z1').events.length, 2, 'ilişmiş cihaz yeniliyi alır');
+    b.store.cache.evTotal = String(total + 50);                      // oxuyan sorğu keşi AŞAĞI salmır
+    poll(0, 'z3');
+    assert.strictEqual(Number(b.store.cache.evTotal), total + 50);
+  });
+
+  await t('Apps Script v4: iki cihaz eyni anda qoşulur → aralıqlar fərqlidir və kəsişmir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    const rx = (await X.DB.get('meta', 'block:productSeq')).value.ranges[0], ry = (await Y.DB.get('meta', 'block:productSeq')).value.ranges[0];
+    assert.ok(rx[1] < ry[0] || ry[1] < rx[0], JSON.stringify([rx, ry]));
   });
 
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);

@@ -116,9 +116,30 @@ try:
         check(p1.get_by_role('button', name='Qəbul').count() == 0 and p1.get_by_role('button', name='Yeni məhsul').count() == 0,
               'kassir "Məhsullar"da "Qəbul" və "Yeni məhsul" düymələrini görmür')
         check(p1.get_by_role('button', name='Etiket').count() == 5, 'kassir etiket çap edə bilir')
+        # Növbə iki cihazda eyni anda açılmasın: 2-ci cihaz "Növbə bağlıdır" ekranında qalıb (yeniliyi almayıb), 1-ci cihaz növbə açır,
+        # sonra 2-ci cihazda "aç" basılır → əvvəl serverə baxır və ikinci növbə YARATMIR
+        p2.get_by_role('navigation').get_by_role('button', name='Kassa').click()
+        p2.wait_for_selector('#open-cash')
+        wait_until(lambda: p2.evaluate("() => DB.getAll('outbox').then(x => x.length)") == 0, 15)
+        p2.evaluate("() => Sync.stop()")
         p1.get_by_role('navigation').get_by_role('button', name='Kassa').click()
         p1.fill('#open-cash', '20,00'); p1.get_by_role('button', name='Növbəni aç').click()
         p1.wait_for_selector('#scan')
+        check(wait_until(lambda: len(rows('Shifts')) == 1, 15) is not None, '1-ci cihazın növbəsi bazaya yazıldı')
+        stale = p2.evaluate("() => DB.byIndex('shifts', 'status', 'open').then(x => x.length)") == 0
+        if stale:
+            p2.fill('#open-cash', '5,00'); p2.get_by_role('button', name='Növbəni aç').click()
+            try:
+                p2.wait_for_selector('.toast.bad:has-text("Artıq açıq növbə")', timeout=10000); shown = True
+            except Exception:
+                shown = False; print('   toast mətni:', repr(p2.inner_text('.toast-host')) if p2.locator('.toast-host').count() else '(yoxdur)')
+            check(shown, '2-ci cihaz növbəni açmağa çalışanda "Artıq açıq növbə var" deyilir')
+            check(wait_until(lambda: p2.locator('#scan').count() == 1, 8) is not None, '2-ci cihaz açıq növbənin kassa ekranına keçdi')
+            p2.wait_for_timeout(3000)
+            check(len(rows('Shifts')) == 1, 'bazada yalnız 1 növbə var (ikinci açılmadı)')
+        else:
+            print('   (2-ci cihaz arxa fonda yeniliyi artıq almışdı: pull-first yoxlaması buraxıldı)')
+        p2.evaluate("() => Sync.start()")
         magnet = [x for x in rows('Products') if x[1].startswith('Maqnit')][0][5]
         p1.fill('#scan', magnet); p1.keyboard.press('Enter'); p1.wait_for_timeout(200)
         p1.fill('#scan', magnet); p1.keyboard.press('Enter'); p1.wait_for_timeout(200)
@@ -145,7 +166,10 @@ try:
         check(p1.get_by_role('button', name='Menecerə sorğu göndər').count() == 1, 'server qoşulubdursa "Menecerə sorğu göndər" düyməsi var')
         t_send = time.time()
         p1.get_by_role('button', name='Menecerə sorğu göndər').click()
-        p1.wait_for_selector('text=Sorğu menecerə göndərildi')
+        p1.wait_for_selector('.pending')
+        check(p1.locator('.modal-back').count() == 0, '"Sorğu göndər"-dən sonra pəncərə bağlanır (tab ekranda qalmır)')
+        check('Sorğu menecerə göndərildi' in p1.inner_text('.pending-host'), 'yerinə "Sorğu menecerə göndərildi" zolağı görünür')
+        check(p1.locator('tbody tr', has_text='Maqnit').get_by_role('button', name='Sətri sil').is_disabled(), 'sorğu gözlənərkən həmin sətrin sil düyməsi söndürülüb (təkrar sorğu olmur)')
         p1.screenshot(path=f'{OUT}/s2-request-waiting.png')
         lat = wait_until(lambda: p2.get_by_role('button', name='Sorğular (1)').count() == 1, 25)
         check(lat is not None, f'menecerin ekranında "Sorğular (1)" çıxır ({lat:.1f} san)' if lat else 'menecerin ekranında "Sorğular (1)" çıxmadı')
@@ -158,9 +182,10 @@ try:
         p2.get_by_role('button', name='Təsdiqlə', exact=True).click()
         p2.wait_for_selector('text=Gözləyən sorğu yoxdur')
         p2.get_by_role('button', name='Bağla').click()
-        lat2 = wait_until(lambda: p1.locator('.modal-back').count() == 0, 25)
-        check(lat2 is not None, f'təsdiqdən sonra kassirin pəncərəsi bağlanır ({lat2:.1f} san)' if lat2 else 'kassir cavab almadı')
-        if lat2: print(f'   gecikmə: menecer təsdiqi → kassir {lat2:.1f} san')
+        lat2 = wait_until(lambda: p1.locator('tbody tr', has_text='Maqnit').count() == 0, 25)
+        check(lat2 is not None, f'menecer təsdiqindən sonra sətir avtomatik silinir ({lat2:.1f} san)' if lat2 else 'kassir cavab almadı')
+        if lat2: print(f'   gecikmə: menecer təsdiqi → kassirdə sətir silindi {lat2:.1f} san')
+        check(p1.locator('.pending').count() == 0, 'təsdiqdən sonra gözləmə zolağı yox olur')
         check(p1.locator('tbody tr', has_text='Maqnit').count() == 0, 'menecer təsdiqindən sonra sətir silinib')
         check('Menecer təsdiqlədi' in p1.inner_text('#scan-msg'), 'kassirə kim təsdiqlədiyi göstərilir')
         approved = p1.evaluate("() => DB.getAll('audit').then(a => a.filter(x => x.type === 'pos.line_removed').map(x => x.data.approvedByName))")
@@ -171,14 +196,21 @@ try:
         p1.locator('tbody tr', has_text='Maqnit').get_by_role('button', name='Sətri sil').click()
         p1.wait_for_selector('#appr-pin')
         p1.get_by_role('button', name='Menecerə sorğu göndər').click()
-        p1.wait_for_selector('text=Sorğu menecerə göndərildi')
+        p1.wait_for_selector('.pending')
         check(wait_until(lambda: p2.get_by_role('button', name='Sorğular (1)').count() == 1, 25) is not None, 'ikinci sorğu menecerə çatır')
         p2.get_by_role('button', name='Sorğular (1)').click()
         p2.wait_for_selector('.req-item')
         p2.get_by_role('button', name='Rədd et').click()
-        check(wait_until(lambda: p1.locator('.modal-back').count() == 0, 25) is not None, 'rədd cavabı kassirə çatır')
+        check(wait_until(lambda: p1.locator('.pending').count() == 0, 25) is not None, 'rədd cavabı kassirə çatır (zolaq yox olur)')
+        check('rədd etdi' in p1.inner_text('.toast-host'), 'kassirə "rədd etdi" mesajı göstərilir')
         check(p1.locator('tbody tr', has_text='Maqnit').count() == 1, 'rədd olunanda sətir qalır')
         p2.get_by_role('button', name='Bağla').click()
+
+        # Yeniləmə: giriş və yarımçıq çek qalır (əvvəl hər yeniləmədə çıxış verirdi)
+        p1.reload(); p1.wait_for_selector('nav')
+        check(p1.locator('.users button').count() == 0 and 'Kassir' in p1.inner_text('.status'), 'yeniləmədən sonra giriş saxlanılır (çıxış vermir)')
+        p1.wait_for_selector('tbody tr .mono')
+        check(p1.locator('tbody tr', has_text='Maqnit').count() == 1, 'yeniləmədən sonra yarımçıq çek bərpa olunur')
 
         # ---------- Satış 1-ci brauzerdə → 2-ci brauzerin "Çeklər" siyahısında canlı görünür ----------
         p2.get_by_role('navigation').get_by_role('button', name='Çeklər').click()
@@ -198,6 +230,15 @@ try:
         users = {r[1]: r for r in rows('Users')}
         check(users['Kassir'][4] is False and users['Menecer'][4] is False and users['Admin'][4] is False, 'üç istifadəçinin PIN dəyişikliyi bazadadır')
         check(len(rows('Sales')) == 1 and len(rows('SaleLines')) == 1, 'çek bazada (Sales, SaleLines)')
+
+        # Çıxışda gözləyən sorğu ləğv olunur: başqa istifadəçinin ekranında əməliyyat tətbiq olunmasın, menecerin siyahısında qalmasın
+        p1.fill('#scan', magnet); p1.keyboard.press('Enter'); p1.wait_for_selector('tbody tr .mono')
+        p1.locator('tbody tr', has_text='Maqnit').get_by_role('button', name='Sətri sil').click()
+        p1.wait_for_selector('#appr-pin'); p1.get_by_role('button', name='Menecerə sorğu göndər').click(); p1.wait_for_selector('.pending')
+        check(wait_until(lambda: p2.locator('#req-btn').count() == 1, 25) is not None, 'gözləyən sorğu menecerə çatdı')
+        logout(p1)
+        check(p1.locator('.pending').count() == 0, 'çıxışdan sonra gözləmə zolağı yoxdur')
+        check(wait_until(lambda: p2.locator('#req-btn').count() == 0, 25) is not None, 'çıxışda gözləyən sorğu ləğv olundu: menecerin siyahısından düşdü')
         b.close()
 finally:
     web.terminate(); gas.terminate()

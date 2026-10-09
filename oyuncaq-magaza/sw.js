@@ -1,5 +1,5 @@
 /* Service worker: tətbiq fayllarını keşdə saxlayır ki, internet olmadan açılsın (FR-100). */
-var CACHE = 'magaza-v4';
+var CACHE = 'magaza-v6';
 var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/db.js',
   'js/services.js', 'js/replica.js', 'js/sync.js', 'js/ui.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg'];
 
@@ -19,7 +19,7 @@ self.addEventListener('fetch', function (e) {
   var url = new URL(req.url);
   if (url.origin === location.origin) {
     // Öz fayllarımız: əvvəl şəbəkə (yenilik üçün), olmasa keş
-    e.respondWith(fetch(req).then(function (res) {
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then(function (res) {   // no-cache: GitHub Pages-in 10 dəq HTTP keşi köhnə kodu saxlamasın (ETag ilə yoxlanır, dəyişməyibsə 304)
       var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); return res;
     }).catch(function () { return caches.match(req).then(function (r) { return r || caches.match('index.html'); }); }));
   } else if (url.hostname.indexOf('fonts.') !== -1) {

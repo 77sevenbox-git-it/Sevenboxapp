@@ -3,6 +3,7 @@
   'use strict';
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
+  var BUILD = '2026.10.10-1';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: 'Kassa', perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -48,6 +49,8 @@
       var sy = root.Sync.status();
       UI.clear(statusEl);
       statusEl.appendChild(h('span', null, h('span', { class: 'dot' + (online ? '' : ' off') }), online ? 'Onlayn' : 'Oflayn'));
+      if (online && sy.rttAvg) statusEl.appendChild(h('span', { class: 'muted', title: 'Google Apps Script serverinin orta cavab müddəti. Cihazlar arasında yenilik təxminən bunun 2–3 qatı qədər gecikir' }, 'Server ' + (sy.rttAvg / 1000).toFixed(1) + ' san'));
+      statusEl.appendChild(h('span', { class: 'muted', title: 'Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın' }, 'v' + BUILD));
       if (r[1]) statusEl.appendChild(h('span', { class: 'badge', title: 'Serverə göndərilməmiş qeydlər' }, r[1] + ' sinxron gözləyir'));
       if (sy.ok === false) statusEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, 'Sinxron xətası'));
       if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, 'Sorğular (' + r[3].length + ')'));
@@ -67,7 +70,7 @@
     });
   }
 
-  function logout() { S.logout(); start(); }
+  function logout() { UI.abortPending(); S.logout(); root.POS.reset(); start(); }
 
   // Başqa cihazdan gələn dəyişikliklər: icazələr, qalıq, çeklər, sorğular
   function onApplied(t) {
@@ -124,7 +127,14 @@
   setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)
   root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else refreshStatus(); });
 
-  S.init().then(function () { root.Sync.start(); start(); }).catch(function (e) {
+  S.init().then(function () {
+    root.Sync.start();
+    // Yeniləmə çıxış etdirməsin: sessiya hələ etibarlıdırsa birbaşa işçi ekrana qayıdırıq
+    return S.restoreSession().then(function (u) {
+      if (!u) return start();
+      return S.getMatrix().then(function (m) { app.matrix = m; startShell(); });
+    });
+  }).catch(function (e) {
     document.getElementById('app').textContent = 'Başlatma xətası: ' + e.message;
   });
 

@@ -113,8 +113,10 @@
       if (!(p.bankAmount > 0)) return { ok: false, error: 'Bank hissəsini yazın' };
       if (p.bankAmount >= total) return { ok: false, error: 'Bank hissəsi yekundan az olmalıdır, əks halda "Bank" seçin' };
       var cashPart = total - p.bankAmount;
-      if (p.cashReceived == null || p.cashReceived < cashPart) return { ok: false, error: 'Nağd alınan məbləğ nağd hissədən azdır' };
-      return { ok: true, cashPart: cashPart, bankPart: p.bankAmount, cashReceived: p.cashReceived, change: p.cashReceived - cashPart };
+      // Alınan nağd yazılmayıbsa, nağd hissə dəqiq alınıb sayılır (qalıq verilmir)
+      var recv = p.cashReceived == null ? cashPart : p.cashReceived;
+      if (recv < cashPart) return { ok: false, error: 'Nağd alınan məbləğ nağd hissədən azdır' };
+      return { ok: true, cashPart: cashPart, bankPart: p.bankAmount, cashReceived: recv, change: recv - cashPart };
     }
     return { ok: false, error: 'Ödəniş üsulu seçilməyib' };
   }

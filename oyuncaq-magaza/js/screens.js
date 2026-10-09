@@ -13,16 +13,20 @@
     var pin = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', id: 'pin', maxlength: '8', autocomplete: 'off', style: 'font-size:22px' });
     var list = h('div', { class: 'users', role: 'group', 'aria-label': 'İstifadəçi' });
     var foot = h('div', { class: 'muted', style: 'font-size:13px' });
+    var submitBtn = h('button', { class: 'btn primary', type: 'submit' }, 'Daxil ol');
     var form = h('form', { class: 'card' },
       h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, 'Mağaza idarəetmə sistemi'), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, 'Daxil olun')),
       list,
       h('div', { class: 'field' }, h('label', { for: 'pin' }, 'PIN'), pin),
-      h('button', { class: 'btn primary', type: 'submit' }, 'Daxil ol'),
+      submitBtn,
       foot);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       if (!chosen) return UI.toast('İstifadəçini seçin', 'bad');
-      S.login(chosen, pin.value).then(function (u) { pin.value = ''; onDone(u); }).catch(function (err) { pin.value = ''; pin.focus(); UI.toast(err.message, 'bad'); });
+      // Səhv PIN-də PIN-in başqa cihazda dəyişib-dəyişmədiyi serverdən yoxlanılır (2–3 san): bu müddətdə düymə "Yoxlanılır…" göstərir
+      submitBtn.disabled = true; submitBtn.textContent = 'Yoxlanılır…';
+      function ready() { submitBtn.disabled = false; submitBtn.textContent = 'Daxil ol'; }
+      S.login(chosen, pin.value).then(function (u) { pin.value = ''; ready(); onDone(u); }).catch(function (err) { ready(); pin.value = ''; pin.focus(); UI.toast(err.message, 'bad'); });
     });
     S.listUsers().then(function (users) {
       users.forEach(function (u) {
@@ -127,8 +131,15 @@
     var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: 'Ad, mağaza və ya istehsalçı barkodu', style: 'min-width:280px' });
     var body = h('tbody');
     var all = [];
+    // Nümunə məhsullar yalnız siyahı boş olanda təklif olunur (təkrar basanda dublikat yaranırdı)
+    var seedBtn = h('button', { class: 'btn small', onclick: function () {
+      seedBtn.disabled = true;
+      S.seedDemoProducts().then(function () { UI.toast('Nümunə məhsullar əlavə olundu'); return load(); }).catch(function (e) { UI.toast(e.message, 'bad'); seedBtn.disabled = false; });
+    } }, 'Sınaq üçün nümunə məhsullar əlavə et');
+    var seedBox = h('div', { style: 'margin-top:12px;display:none' }, seedBtn);
 
     function draw() {
+      seedBox.style.display = all.length ? 'none' : '';
       var s = q.value.trim().toLowerCase();
       UI.clear(body);
       var list = all.filter(function (p) { return !s || p.name.toLowerCase().indexOf(s) !== -1 || p.storeBarcode.indexOf(s) !== -1 || (p.mfrBarcode || '').indexOf(s) !== -1; });
@@ -165,9 +176,7 @@
         h('thead', null, h('tr', null, h('th', null, 'Məhsul'), h('th', null, 'Mağaza barkodu'), h('th', null, 'İstehsalçı barkodu'), h('th', { class: 'num' }, 'Satış ₼'),
           showCost ? h('th', { class: 'num' }, 'Orta maya ₼') : null, h('th', { class: 'num' }, 'Qalıq'), h('th', null, 'Status'), h('th', null, ''))),
         body)),
-      can('product.edit') && can('stock.receive') ? h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn small', onclick: function () {
-        S.seedDemoProducts().then(function () { UI.toast('Nümunə məhsullar əlavə olundu'); load(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
-      } }, 'Sınaq üçün nümunə məhsullar əlavə et')) : null));
+      can('product.edit') && can('stock.receive') ? seedBox : null));
     load().then(function () { q.focus(); });
   }
 
@@ -183,7 +192,7 @@
       category: inp('f-cat', 'Kateqoriya', p && p.category, { list: 'cats' }),
       brand: inp('f-brand', 'Brend', p && p.brand),
       age: inp('f-age', 'Yaş qrupu', p && p.ageGroup, { placeholder: 'məs. 3+' }),
-      mfr: inp('f-mfr', 'İstehsalçı barkodu (nəzarət üçün)', p && p.mfrBarcode, { class: 'input mono', inputmode: 'numeric' }),
+      mfr: inp('f-mfr', 'İstehsalçı barkodu (nəzarət üçün, uzunluq məhdud deyil)', p && p.mfrBarcode, { class: 'input mono', autocomplete: 'off' }),
       price: inp('f-price', 'Satış qiyməti, ₼ *', p ? M.format(p.price).replace(/\s/g, '') : '', { class: 'input mono', inputmode: 'decimal', disabled: !canPrice }),
       cost: isNew && can('product.cost.view') ? inp('f-cost', 'Alış qiyməti, ₼', '', { class: 'input mono', inputmode: 'decimal' }) : null,
       min: inp('f-min', 'Minimum qalıq', p ? p.minStock : 0, { type: 'number', min: '0' })
@@ -277,11 +286,20 @@
             'Çekin qaytarma müddəti bitib: ' + win.daysPassed + ' gün keçib (limit ' + R.RETURN_DAYS + ' gün).'));
           return;
         }
-        var inputs = [];
+        var inputs = [], maxes = [];
         var tb = h('tbody');
+        var errBox = h('div', { class: 'modal-err', role: 'alert', hidden: true });
+        function showErr(msg) { errBox.textContent = msg; errBox.hidden = false; UI.toast(msg, 'bad'); UI.beep(false); }
         sale.lines.forEach(function (l, i) {
           var max = R.returnableQty(l.qty, prev.map[i]);
+          maxes.push(max);
           var inp = h('input', { class: 'input', type: 'number', min: '0', max: String(max), value: '0', style: 'width:90px', disabled: !max, 'aria-label': 'Qaytarılan say: ' + l.name });
+          // Yazanda yuxarı hədd (satılan − əvvəl qaytarılan) aşılırsa dərhal xəbərdarlıq
+          inp.addEventListener('input', function () {
+            var v = parseInt(inp.value, 10) || 0;
+            if (v > max) { inp.value = String(max); showErr('"' + l.name + '": ən çox ' + max + ' ədəd qaytarmaq olar (satılıb ' + l.qty + ')'); }
+            else if (v < 0) inp.value = '0';
+          });
           inputs.push(inp);
           tb.appendChild(h('tr', null, h('td', null, l.name), h('td', { class: 'num' }, String(l.qty)), h('td', { class: 'num muted' }, String(prev.map[i] || 0)),
             h('td', { class: 'num' }, M.format(l.price)), h('td', { class: 'num' }, inp)));
@@ -293,10 +311,18 @@
           h('div', { class: 'field', style: 'flex:1 1 280px' }, h('label', { for: 'rreason' }, 'Səbəb'), reason),
           h('button', { class: 'btn primary', onclick: function () {
             var items = inputs.map(function (inp, i) { return { lineIndex: i, qty: parseInt(inp.value, 10) || 0 }; }).filter(function (x) { return x.qty > 0; });
-            if (!items.length) return UI.toast('Qaytarılacaq say yazın', 'bad');
+            if (!items.length) return showErr('Qaytarılacaq say yazın');
+            // Sayı menecer təsdiqindən ƏVVƏL yoxlanır: satılandan (və əvvəl qaytarılandan) çox olmasın
+            for (var k = 0; k < items.length; k++) {
+              var mx = maxes[items[k].lineIndex], ln = sale.lines[items[k].lineIndex];
+              if (items[k].qty > mx) { inputs[items[k].lineIndex].focus(); return showErr('"' + ln.name + '": satılıb ' + ln.qty + ', əvvəl qaytarılıb ' + (prev.map[items[k].lineIndex] || 0) + ' — ən çox ' + mx + ' ədəd qaytarmaq olar'); }
+            }
+            errBox.hidden = true;
             var amount = R.refundAmount(items.map(function (it) { return { price: sale.lines[it.lineIndex].price, qty: it.qty }; }), sale.discount ? sale.discount.percent : 0);
             var rsum = 'Çek № ' + sale.receiptNo + ' üzrə ' + M.format(amount) + ' ₼ qaytarılır.';
-            UI.approve('Qaytarmanı təsdiqlə', rsum, 'pos.return.approve', { kind: 'return', summary: (S.currentUser() ? S.currentUser().name : '') + ' qaytarma istəyir. ' + rsum }).then(function (a) {
+            S.validateReturn(sale.id, items).then(function () {
+              return UI.approve('Qaytarmanı təsdiqlə', rsum, 'pos.return.approve', { kind: 'return', summary: (S.currentUser() ? S.currentUser().name : '') + ' qaytarma istəyir. ' + rsum });
+            }).then(function (a) {
               if (!a) return;
               return S.createReturn(sale.id, items, a, reason.value).then(function (ret) {
                 return S.storeInfo().then(function (store) {
@@ -306,8 +332,9 @@
                   return S.findSaleByCode(String(sale.receiptNo)).then(show);
                 });
               });
-            }).catch(function (e) { UI.toast(e.message, 'bad'); });
+            }).catch(function (e) { showErr(e.message); });
           } }, 'Qaytar')));
+        out.appendChild(errBox);
       });
     }
 
@@ -336,6 +363,23 @@
         function line(label, v, strong) { return h('div', { style: 'display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-2)' + (strong ? ';font-weight:700' : '') }, h('span', null, label), h('span', { class: 'mono' }, v)); }
         var counted = h('input', { class: 'input mono', id: 'counted', inputmode: 'decimal', style: 'font-size:22px' });
         var note = h('input', { class: 'input', id: 'cnote' });
+        var closeErr = h('div', { class: 'modal-err', role: 'alert', hidden: true });
+        var closeBtn = h('button', { class: 'btn dark', id: 'close-shift', onclick: function () {
+          var v = M.parse(counted.value);
+          closeErr.hidden = true;
+          if (v == null) { closeErr.textContent = 'Sayılmış məbləği yazın'; closeErr.hidden = false; return; }
+          if (closeBtn.disabled) return;
+          // Server yoxlaması bir neçə saniyə çəkə bilər: düymə dayanır və gözləmə göstərilir
+          closeBtn.disabled = true; closeBtn.innerHTML = ''; closeBtn.appendChild(h('span', { class: 'spin', 'aria-hidden': 'true' })); closeBtn.appendChild(document.createTextNode(' Növbə yoxlanılır və bağlanır…'));
+          S.closeShift(v, note.value.trim()).then(function (closed) {
+            UI.toast('Növbə bağlandı. Fərq: ' + M.format(closed.diff) + ' ₼');
+            printZ(closed); root.App.refreshStatus(); shift(el);
+          }).catch(function (e) {
+            closeErr.textContent = e.message; closeErr.hidden = false; UI.toast(e.message, 'bad');
+            closeBtn.disabled = false; closeBtn.textContent = 'Bağla və Z hesabatı çap et';
+            if (/izah/i.test(e.message)) note.focus();
+          });
+        } }, 'Bağla və Z hesabatı çap et');
         el.appendChild(h('div', { class: 'page', style: 'max-width:900px' },
           h('h1', null, 'Növbə'),
           h('div', { class: 'grid2', style: 'align-items:start' },
@@ -350,14 +394,8 @@
               h('div', { class: 'field' }, h('label', { for: 'counted' }, 'Sayılmış nağd, ₼'), counted),
               h('div', { class: 'field' }, h('label', { for: 'cnote' }, 'Fərq varsa izah'), note),
               h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Bank cəmlərini (POS və köçürmə) gün sonu bank çıxarışı ilə tutuşdurun.'),
-              h('button', { class: 'btn dark', onclick: function () {
-                var v = M.parse(counted.value);
-                if (v == null) return UI.toast('Sayılmış məbləği yazın', 'bad');
-                S.closeShift(v, note.value.trim()).then(function (closed) {
-                  UI.toast('Növbə bağlandı. Fərq: ' + M.format(closed.diff));
-                  printZ(closed); root.App.refreshStatus(); shift(el);
-                }).catch(function (e) { UI.toast(e.message, 'bad'); });
-              } }, 'Bağla və Z hesabatı çap et'),
+              closeErr,
+              closeBtn,
               h('div', { class: 'row' },
                 h('button', { class: 'btn small', onclick: function () { cashMoveForm('in', function () { shift(el); }); } }, 'Kassaya mədaxil'),
                 h('button', { class: 'btn small', onclick: function () { cashMoveForm('out', function () { shift(el); }); } }, 'Kassadan məxaric'))))));
@@ -377,7 +415,7 @@
           { kind: 'cash_out', summary: (S.currentUser() ? S.currentUser().name : '') + ' kassadan məxaric istəyir: ' + M.format(v) + ' ₼ (' + reason.value + ')' })) : Promise.resolve(null);
         return go.then(function (a) {
           if (type === 'out' && !a) return;
-          return S.cashMove(type, v, reason.value.trim(), a).then(function () { UI.toast('Qeydə alındı'); if (type === 'in') close(); done(); });
+          return S.cashMove(type, v, reason.value.trim(), a).then(function () { UI.toast('Qeydə alındı'); if (type === 'in') close(); if (!root.App || root.App.route === 'shift') done(); });
         });
       } }]
     });
@@ -386,13 +424,19 @@
   function printZ(s) {
     var r = s.report;
     S.storeInfo().then(function (store) {
-      function row(a, b) { return '<div class="r"><span>' + a + '</span><span>' + b + '</span></div>'; }
-      UI.printHtml('<div class="receipt"><h3>' + UI.esc(store.name) + '</h3><div class="c"><b>Z HESABATI</b></div><hr>' +
-        row('Açılış', UI.fmtDate(s.openedAt)) + row('Bağlanış', UI.fmtDate(s.closedAt)) + '<hr>' +
-        row('Çek sayı', r.count) + row('Satış', M.format(r.gross)) + row('Endirim', M.format(r.discount)) + row('Nağd', M.format(r.cash)) +
-        row('POS kart', M.format(r.pos)) + row('Köçürmə', M.format(r.transfer)) + row('Qaytarma', M.format(r.returns)) + '<hr>' +
-        row('Gözlənilən nağd', M.format(s.expectedCash)) + row('Sayılmış nağd', M.format(s.countedCash)) + row('Fərq', M.format(s.diff)) +
-        (s.note ? '<div>İzah: ' + UI.esc(s.note) + '</div>' : '') + '</div>');
+      var out = '';
+      function row(a, b) { out += '<div class="r"><span>' + a + '</span><span>' + b + '</span></div>'; }
+      function rowNZ(a, v) { if (v) row(a, M.format(v)); }          // sıfır olan sətirlər çekdə görünmür
+      out += '<div class="r"><span>Açılış</span><span>' + UI.fmtDate(s.openedAt) + '</span></div><div class="r"><span>Bağlanış</span><span>' + UI.fmtDate(s.closedAt) + '</span></div><hr>';
+      row('Çek sayı', String(r.count));
+      rowNZ('Satış', r.gross); rowNZ('Endirim', r.discount); rowNZ('Nağd', r.cash); rowNZ('POS kart', r.pos); rowNZ('Köçürmə', r.transfer); rowNZ('Qaytarma', r.returns);
+      rowNZ('Kassaya mədaxil', r.cashIn); rowNZ('Kassadan məxaric', r.cashOut);
+      out += '<hr>';
+      rowNZ('Başlanğıc nağd', s.openingCash);
+      row('Gözlənilən nağd', M.format(s.expectedCash)); row('Sayılmış nağd', M.format(s.countedCash));
+      if (s.diff) row('Fərq', M.format(s.diff));
+      if (s.note) out += '<div>İzah: ' + UI.esc(s.note) + '</div>';
+      UI.printHtml('<div class="receipt"><h3>' + UI.esc(store.name) + '</h3><div class="c"><b>Z HESABATI</b></div><hr>' + out + '</div>');
     });
   }
 

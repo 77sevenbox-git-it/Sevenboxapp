@@ -29,12 +29,18 @@
     return list.reduce(function (chain, x, i) { return chain.then(function () { return fn(x, i); }); }, Promise.resolve());
   }
 
+  // "Son yazan qalib": yeni dəyər cari dəyərdən sonradır? Vaxt eynidirsə (eyni millisaniyədə iki cihaz) məzmun həkəmdir ki, bütün cihazlar eyni nəticəyə gəlsin
+  function newer(atNew, vNew, atCur, vCur) {
+    if (atNew !== atCur) return atNew > atCur;
+    return JSON.stringify(vNew) > JSON.stringify(vCur);
+  }
+
   var H = {};
 
   H['user.upserted'] = function (t, ev, d, sum) {
     var nu = d.user; if (!nu || !nu.id) return;
     return t.get('users', nu.id).then(function (cur) {
-      if (cur && (cur.updatedAt || EPOCH) >= (nu.updatedAt || EPOCH)) return;
+      if (cur && !newer(nu.updatedAt || EPOCH, nu, cur.updatedAt || EPOCH, cur)) return;
       sum.touched.users = true;
       return t.put('users', nu);
     });
@@ -44,8 +50,9 @@
     if (!d.after) return;
     // köhnə versiyalı cihazdan gələn matris yeni "stock.receive" icazəsini bilmir: eyni qaydayla yenilənir
     var after = d.v >= Rules.MATRIX_VERSION ? d.after : Rules.upgradeMatrix(d.after);
-    return t.get('meta', 'matrixAt').then(function (m) {
-      if (m && m.value >= ev.at) return;
+    return Promise.all([t.get('meta', 'matrixAt'), t.get('meta', 'matrix')]).then(function (r) {
+      var m = r[0];
+      if (m && !newer(ev.at, after, m.value, r[1] && r[1].value)) return;
       sum.touched.matrix = true;
       return t.put('meta', { key: 'matrix', value: after }).then(function () { return t.put('meta', { key: 'matrixAt', value: ev.at }); });
     });
@@ -53,8 +60,9 @@
 
   H['admin.store_changed'] = function (t, ev, d, sum) {
     if (!d.store) return;
-    return t.get('meta', 'storeAt').then(function (m) {
-      if (m && m.value >= ev.at) return;
+    return Promise.all([t.get('meta', 'storeAt'), t.get('meta', 'store')]).then(function (r) {
+      var m = r[0];
+      if (m && !newer(ev.at, d.store, m.value, r[1] && r[1].value)) return;
       sum.touched.store = true;
       return t.put('meta', { key: 'store', value: d.store }).then(function () { return t.put('meta', { key: 'storeAt', value: ev.at }); });
     });
@@ -78,9 +86,10 @@
   H['product.updated'] = function (t, ev, d, sum) {
     var after = d.after, id = d.id || (after && after.id); if (!after || !id) return;
     return t.get('products', id).then(function (cur) {
-      if (!cur || (cur.updatedAt || '') > ev.at) return;
+      // "Son yazan qalib": vaxt eynidirsə cihaz nömrəsi həkəmdir ki, bütün cihazlar eyni nəticəyə gəlsin
+      if (!cur || (cur.updatedAt || '') + '|' + (cur.updatedDev || '') > ev.at + '|' + (ev.device || '')) return;
       MASTER_FIELDS.forEach(function (k) { if (k in after) cur[k] = after[k]; });
-      cur.updatedAt = ev.at;
+      cur.updatedAt = ev.at; cur.updatedDev = ev.device || '';
       sum.touched.products = true;
       return t.put('products', cur);
     });
@@ -140,7 +149,8 @@
   function shiftHandler(t, ev, d, sum) {
     var sh = d.shift; if (!sh || !sh.id) return;
     return t.get('shifts', sh.id).then(function (cur) {
-      if (cur && cur.status === 'closed') return;   // bağlanmış növbə yenidən açılmır
+      // Bağlanmış növbə yenidən açılmır; iki cihaz eyni növbəni bağlayıbsa ilk bağlama hər yerdə qalır
+      if (cur && cur.status === 'closed' && (sh.status !== 'closed' || (cur.closedAt || '') <= (sh.closedAt || ''))) return;
       sum.touched.shifts = true;
       return t.put('shifts', sh);
     });
@@ -166,8 +176,11 @@
 
   H['approval.decided'] = function (t, ev, d, sum) {
     return t.get('approvals', d.id).then(function (a) {
-      if (!a || a.status !== 'pending') return;      // ilk cavab qalib gəlir
-      a.status = d.decision; a.decidedBy = d.by || null; a.decidedAt = d.decidedAt || ev.at;
+      if (!a) return;
+      var at = d.decidedAt || ev.at, by = (d.by && d.by.id) || '';
+      // İlk cavab qalib gəlir. İki cihaz eyni anda fərqli cavab veribsə, vaxtı erkən olan (bərabərdirsə id-si kiçik olan) hər yerdə qalır
+      if (a.status !== 'pending' && (a.decidedAt || '') + '|' + ((a.decidedBy && a.decidedBy.id) || '') <= at + '|' + by) return;
+      a.status = d.decision; a.decidedBy = d.by || null; a.decidedAt = at;
       sum.touched.approvals = true;
       return t.put('approvals', a);
     });

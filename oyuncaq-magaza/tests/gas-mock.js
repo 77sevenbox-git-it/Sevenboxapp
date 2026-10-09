@@ -4,10 +4,12 @@
 const vm = require('vm');
 const fs = require('fs');
 const path = require('path');
+const nodeCrypto = require('crypto');
 
 function makeBackend(opts) {
   opts = opts || {};
   const calls = { sheetApi: 0, openById: 0, requests: 0 };
+  const logs = [];
   const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, sheets: {} };
 
   class Range {
@@ -75,7 +77,12 @@ function makeBackend(opts) {
 
   const sandbox = {
     console, JSON, Date, Math, String, Number, Object, Array, parseInt, parseFloat, isNaN, RegExp, Error,
-    Logger: { log() {} },
+    Logger: { log(m) { logs.push(String(m)); } },
+    Utilities: {
+      DigestAlgorithm: { SHA_256: 'SHA_256' }, Charset: { UTF_8: 'UTF_8' },
+      computeDigest: (alg, text) => Array.from(nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest()).map(b => b > 127 ? b - 256 : b),   // Apps Script işarəli bayt qaytarır
+      getUuid: () => nodeCrypto.randomUUID()
+    },
     SpreadsheetApp: { getActiveSpreadsheet: () => null, openById: () => { calls.openById++; return ss; } },
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => (k in store.props ? store.props[k] : null), setProperty: (k, v) => { store.props[k] = v; } }) },
     CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = v; }, remove: k => { delete store.cache[k]; } }) },
@@ -87,7 +94,7 @@ function makeBackend(opts) {
   sandbox.setup();
 
   return {
-    calls, store, sandbox,
+    calls, store, sandbox, logs,
     get: () => JSON.parse(sandbox.doGet().text),
     post(body) { calls.requests++; return JSON.parse(sandbox.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text); },
     rows(name) { const sh = store.sheets[name]; return sh ? sh.rows.slice(1).filter(r => r.some(v => v !== '' && v !== undefined)) : []; },

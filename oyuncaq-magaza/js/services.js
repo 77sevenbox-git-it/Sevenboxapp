@@ -5,7 +5,9 @@
   var DB = root.DB, Rules = root.Rules, Money = root.Money, Barcode = root.Barcode;
 
   function err(msg, code) { var e = new Error(msg); e.code = code || 'error'; return e; }
-  function now() { return new Date().toISOString(); }
+  // Hər çağırış əvvəlkindən ciddi böyük vaxt qaytarır: eyni cihazın iki ardıcıl yazısı eyni millisaniyəyə düşməsin (son yazan qalib qaydası üçün)
+  var lastNow = 0;
+  function now() { var t = Date.now(); if (t <= lastNow) t = lastNow + 1; lastNow = t; return new Date(t).toISOString(); }
 
   /* ---------- Təhlükəsizlik ---------- */
   function toHex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, '0'); }).join(''); }
@@ -189,11 +191,32 @@
       }
       failed[userId] = { n: 0, until: 0 };
       session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
+      if (!u.mustChangePin) persistSession(u);
       return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.login', {}, session.user); }).then(function () { return session.user; });
     });
   }
 
-  function logout() { session.user = null; }
+  // Sessiya brauzer tabında saxlanılır (yeniləmə / SW yenilənməsi çıxış etdirməsin). Tab bağlananda silinir, 12 saatdan sonra və PIN/rol dəyişəndə etibarsızdır.
+  var SESSION_KEY = 'mag.session', SESSION_TTL = 12 * 3600000;
+  function sessionStore() { try { return root.sessionStorage || null; } catch (e) { return null; } }
+  function fingerprint(u) { return String(u.pinHash || '').slice(0, 16) + '|' + u.role; }
+  function persistSession(u) {
+    var ss = sessionStore(); if (!ss) return;
+    try { if (!u) ss.removeItem(SESSION_KEY); else ss.setItem(SESSION_KEY, JSON.stringify({ id: u.id, fp: fingerprint(u), at: Date.now() })); } catch (e) { /* yaddaş bağlıdırsa davam */ }
+  }
+  function restoreSession() {
+    var ss = sessionStore(); if (!ss) return Promise.resolve(null);
+    var raw = null;
+    try { raw = JSON.parse(ss.getItem(SESSION_KEY) || 'null'); } catch (e) { raw = null; }
+    if (!raw || !raw.id || Date.now() - raw.at > SESSION_TTL) { persistSession(null); return Promise.resolve(null); }
+    return DB.get('users', raw.id).then(function (u) {
+      if (!u || !u.active || u.mustChangePin || fingerprint(u) !== raw.fp) { persistSession(null); return null; }
+      session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: false };
+      return session.user;
+    });
+  }
+
+  function logout() { session.user = null; persistSession(null); }
   function currentUser() { return session.user; }
 
   function validateNewPin(newPin, oldPin) {
@@ -216,7 +239,7 @@
           u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = now();
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
             return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_changed' }, me, u.updatedAt); });
-          }).then(function () { me.mustChangePin = false; });
+          }).then(function () { me.mustChangePin = false; persistSession(u); });
         });
       });
     });
@@ -273,7 +296,8 @@
     if (!d.name || !String(d.name).trim()) return 'Məhsulun adı boşdur';
     if (d.price == null || d.price <= 0) return 'Satış qiyməti 0-dan böyük olmalıdır';
     if (d.mfrBarcode) {
-      if (!/^\d{8,14}$/.test(d.mfrBarcode)) return 'İstehsalçı barkodu 8–14 rəqəm olmalıdır';
+      // İstehsalçı barkodunun uzunluğu/formatı məhdudlaşdırılmır (EAN, UPC, Code128, hərf-rəqəm). Yalnız öz barkodlarımızla qarışmasın.
+      if (/\s/.test(d.mfrBarcode)) return 'İstehsalçı barkodunda boşluq ola bilməz';
       if (Barcode.isStoreBarcode(d.mfrBarcode) || Barcode.isReceiptBarcode(d.mfrBarcode)) return 'Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil';
     }
     return null;
@@ -298,7 +322,7 @@
               price: d.price, lastCost: d.cost || 0, avgCost: d.cost || 0, stock: 0, negSalesSinceReceipt: 0,
               minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id
             };
-            p.updatedAt = p.createdAt;
+            p.updatedAt = EPOCH; p.updatedDev = '';       // yaradılma "son yazan qalib" müqayisəsində iştirak etmir: istənilən dəyişiklik ondan sonra gəlir (cihaz saatları fərqli olsa da)
             return t.put('products', p)
               .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'sale', old: null, new: p.price, userId: user.id, at: now() }); })
               .then(function () { return log(t, 'product.created', { product: p }, user); })
@@ -325,14 +349,15 @@
               next.price = changes.price;
             }
             var v = validateProductInput(next); if (v) throw err(v);
-            next.updatedAt = now();
+            var at = now();                       // yenilənmə vaxtı hadisənin vaxtı ilə eynidir: bütün cihazlar eyni "son yazan"ı seçir
+            next.updatedAt = at; next.updatedDev = device;
             var chk = next.mfrBarcode && next.mfrBarcode !== p.mfrBarcode ? t.byIndex('products', 'mfrBarcode', next.mfrBarcode) : Promise.resolve([]);
             return chk.then(function (dups) {
               if (dups.length) warnings.push('Bu istehsalçı barkodu artıq var: ' + dups.map(function (x) { return x.name; }).join(', '));
               return t.put('products', next);
             }).then(function () {
               if (next.price !== p.price) return t.put('priceHistory', { id: DB.uid('ph'), productId: id, type: 'sale', old: p.price, new: next.price, userId: user.id, at: now() });
-            }).then(function () { return log(t, 'product.updated', { id: id, before: p, after: next }, user); })
+            }).then(function () { return log(t, 'product.updated', { id: id, before: p, after: next }, user, at); })
               .then(function () { return { product: next, warnings: warnings }; });
           });
         });
@@ -384,14 +409,34 @@
     });
   }
 
-  function openShift(openingCash) {
+  // Ən son bağlanmış növbə: yeni növbə onun sayılmış nağdı ilə başlayır
+  function lastClosedShift() {
+    return DB.byIndex('shifts', 'status', 'closed').then(function (list) {
+      list.sort(function (a, b) { return (a.closedAt || '') < (b.closedAt || '') ? 1 : -1; });
+      return list[0] || null;
+    });
+  }
+
+  // openingNote: başlanğıc nağd əvvəlki növbənin qalığından fərqlidirsə izah məcburidir (fərq auditdə qalır)
+  function openShift(openingCash, openingNote) {
     return requirePerm('shift.open_close').then(function (user) {
       if (!(openingCash >= 0)) throw err('Başlanğıc nağdı yazın');
-      return DB.atomic(['shifts', 'audit', 'outbox'], function (t) {
-        return t.byIndex('shifts', 'status', 'open').then(function (open) {
-          if (open.length) throw err('Artıq açıq növbə var');
-          var s = { id: DB.uid('sh'), status: 'open', openedAt: now(), openedBy: user.id, openedByName: user.name, openingCash: openingCash };
-          return t.put('shifts', s).then(function () { return log(t, 'shift.opened', { shift: s }, user); }).then(function () { return s; });
+      return currentShift().then(function (cur) {
+        if (cur) throw err('Artıq açıq növbə var');
+        return lastClosedShift();
+      }).then(function (prev) {
+        var expected = prev && prev.countedCash != null ? prev.countedCash : null;
+        var diff = expected == null ? 0 : openingCash - expected;
+        if (diff !== 0 && !(openingNote && String(openingNote).trim())) {
+          throw err('Əvvəlki növbədən qalıq ' + Money.format(expected) + ' ₼ idi. Fərqli məbləğ üçün izah yazın');
+        }
+        return DB.atomic(['shifts', 'audit', 'outbox'], function (t) {
+          return t.byIndex('shifts', 'status', 'open').then(function (open) {
+            if (open.length) throw err('Artıq açıq növbə var');
+            var s = { id: DB.uid('sh'), status: 'open', openedAt: now(), openedBy: user.id, openedByName: user.name, openingCash: openingCash };
+            if (expected != null) { s.prevShiftId = prev.id; s.prevCash = expected; s.openingDiff = diff; if (diff !== 0) s.openingNote = String(openingNote).trim(); }
+            return t.put('shifts', s).then(function () { return log(t, 'shift.opened', { shift: s }, user); }).then(function () { return s; });
+          });
         });
       });
     });
@@ -429,17 +474,24 @@
 
   function closeShift(countedCash, note) {
     return requirePerm('shift.open_close').then(function (user) {
-      // Digər kassaların bu növbədəki satışları da hesabata düşsün: bağlamazdan əvvəl serverdən yeniləyirik (oflayndırsa atlanır)
+      function diffCheck(s) {
+        return shiftReport(s).then(function (rep) {
+          var diff = countedCash - rep.expectedCash;
+          if (diff !== 0 && !note) throw err('Kassa fərqi var (' + Money.format(diff) + ' ₼). İzah yazın');
+          return rep;
+        });
+      }
+      // Digər kassaların bu növbədəki satışları da hesabata düşsün: həmişə əvvəlcə serverdən yenilənir (hesabat bağlandıqdan sonra düzəlmir).
+      // Oflayndırsa gözləmə olmur; internet yavaşdırsa ekranda "yoxlanılır" göstəricisi var.
       var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(8000) : Promise.resolve();
       return pull.then(currentShift).then(function (s) {
         if (!s) throw err('Açıq növbə yoxdur');
-        return Promise.all([shiftReport(s), DB.getAll('outbox')]).then(function (r) {
+        return Promise.all([diffCheck(s), DB.getAll('outbox')]).then(function (r) {
           var rep = r[0];
           if (r[1].length && root.navigator && root.navigator.onLine === false) {
             throw err('Sinxronlaşmamış ' + r[1].length + ' qeyd var. İnternet qayıdana qədər növbə bağlanmır (FR-104)');
           }
           var diff = countedCash - rep.expectedCash;
-          if (diff !== 0 && !note) throw err('Kassa fərqi var (' + Money.format(diff) + '). İzah yazın');
           s.status = 'closed'; s.closedAt = now(); s.closedBy = user.id; s.countedCash = countedCash; s.expectedCash = rep.expectedCash; s.diff = diff; s.note = note || ''; s.report = rep;
           return DB.atomic(['shifts', 'audit', 'outbox'], function (t) {
             return t.put('shifts', s).then(function () { return log(t, 'shift.closed', { shift: s }, user); }).then(function () { return s; });
@@ -528,6 +580,28 @@
   }
 
   // items: [{lineIndex, qty}]
+  // Qaytarma sayının yoxlanması (menecer təsdiqindən ƏVVƏL çağırılır): satılandan və əvvəl qaytarılandan çox ola bilməz
+  function validateReturn(saleId, items) {
+    return Promise.all([DB.get('sales', saleId), returnedQtyBySale(saleId)]).then(function (r) {
+      var sale = r[0], prev = r[1];
+      if (!sale) throw err('Çek tapılmadı');
+      var win = Rules.returnWindow(sale.at, now());
+      if (win.expired) throw err('Çekin qaytarma müddəti bitib (' + win.daysPassed + ' gün keçib, limit ' + Rules.RETURN_DAYS + ' gün)', 'expired');
+      var any = false;
+      items.forEach(function (it) {
+        if (!it.qty) return;
+        var l = sale.lines[it.lineIndex];
+        if (!l) throw err('Sətir tapılmadı');
+        if (!(it.qty > 0) || Math.floor(it.qty) !== it.qty) throw err('"' + l.name + '": say tam müsbət ədəd olmalıdır');
+        var can = Rules.returnableQty(l.qty, prev.map[it.lineIndex]);
+        if (it.qty > can) throw err('"' + l.name + '": satılıb ' + l.qty + ', əvvəl qaytarılıb ' + (prev.map[it.lineIndex] || 0) + ' — ən çox ' + can + ' ədəd qaytarmaq olar');
+        any = true;
+      });
+      if (!any) throw err('Qaytarılacaq say yazın');
+      return true;
+    });
+  }
+
   function createReturn(saleId, items, approver, reason) {
     return requirePerm('pos.return.request').then(function (user) {
       if (!approver) throw err('Qaytarma menecer təsdiqi tələb edir');
@@ -593,8 +667,12 @@
     return requirePerm('admin.users').then(function (user) {
       var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
-        return t.put('meta', { key: 'store', value: info }).then(function () { return t.put('meta', { key: 'storeAt', value: at }); })
-          .then(function () { return log(t, 'admin.store_changed', { store: info }, user, at); });
+        return t.get('meta', 'store').then(function (cur) {
+          // Dəyişiklik yoxdursa hadisə yaranmır: yoxsa təzə qoşulan cihaz ilkin mətnləri bütün cihazlara yazıb mağaza adını silərdi
+          if (cur && JSON.stringify(cur.value) === JSON.stringify(info)) return { unchanged: true };
+          return t.put('meta', { key: 'store', value: info }).then(function () { return t.put('meta', { key: 'storeAt', value: at }); })
+            .then(function () { return log(t, 'admin.store_changed', { store: info }, user, at); });
+        });
       });
     });
   }
@@ -689,11 +767,11 @@
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct,
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
-    currentShift: currentShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
-    checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn,
+    currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
+    checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
     recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listAllUsers: listAllUsers, validateNewPin: validateNewPin,
     requestApproval: requestApproval, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
-    checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, _session: session
+    checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
   };
   root.Services = Services;
   if (typeof module !== 'undefined') module.exports = Services;

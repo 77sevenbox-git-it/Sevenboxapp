@@ -27,9 +27,21 @@
   function toast(msg, kind) {
     var host = document.querySelector('.toast-host');
     if (!host) { host = h('div', { class: 'toast-host', role: 'status', 'aria-live': 'polite' }); document.body.appendChild(host); }
-    var t = h('div', { class: 'toast ' + (kind || '') }, msg);
+    var t = h('div', { class: 'toast ' + (kind || ''), role: kind === 'bad' ? 'alert' : null }, msg);
     host.appendChild(t);
-    setTimeout(function () { t.remove(); }, kind === 'bad' ? 6000 : 3500);
+    while (host.children.length > 3) host.removeChild(host.firstChild);      // köhnələr yığılıb ekranı örtməsin
+    // Xəta mesajı yuxarıda göstərilir (ekran klaviaturası aşağını örtür); xətalar uzun qalır
+    setTimeout(function () { t.remove(); }, kind === 'bad' ? 7000 : 3500);
+  }
+
+  // Gözləyən təsdiq sorğuları üçün daimi zolaq (pəncərə bağlansa da görünür). Qaytarır: {remove}
+  function pendingBanner(text, onCancel) {
+    var host = document.querySelector('.pending-host');
+    if (!host) { host = h('div', { class: 'pending-host', role: 'status', 'aria-live': 'polite' }); document.body.appendChild(host); }
+    var cancel = onCancel ? h('button', { class: 'btn small', type: 'button', onclick: function () { onCancel(); } }, 'Ləğv et') : null;
+    var el = h('div', { class: 'pending' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), h('span', { class: 'grow' }, text), cancel);
+    host.appendChild(el);
+    return { remove: function () { el.remove(); } };
   }
 
   // Sadə səs siqnalı (barkod tapılmadıqda və s.)
@@ -51,19 +63,24 @@
     function close() { back.remove(); document.removeEventListener('keydown', onKey, true); if (prevFocus && prevFocus.focus) prevFocus.focus(); if (opts.onClose) opts.onClose(); }
     function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } }
     var foot = h('div', { class: 'foot' });
+    var errBox = h('div', { class: 'modal-err', role: 'alert', hidden: true });
     (opts.buttons || [{ text: 'Bağla' }]).forEach(function (b) {
       var btn = h('button', { class: 'btn ' + (b.kind || ''), type: b.submit ? 'submit' : 'button' }, b.text);
       btn.addEventListener('click', function (e) {
         e.preventDefault();
         if (!b.onClick) return close();
-        btn.disabled = true;
+        btn.disabled = true; errBox.hidden = true;
         Promise.resolve().then(function () { return b.onClick(close); })
-          .catch(function (err) { toast(err.message || String(err), 'bad'); })
+          .catch(function (err) {
+            // Xəta pəncərənin İÇİNDƏ (düymələrin yanında) göstərilir: klaviatura toast-u örtsə də görünsün
+            errBox.textContent = err.message || String(err); errBox.hidden = false;
+            toast(err.message || String(err), 'bad');
+          })
           .then(function () { if (!btn.hasAttribute('data-locked')) btn.disabled = false; });
       });
       foot.appendChild(btn);
     });
-    var form = h('form', { style: 'display:flex;flex-direction:column;gap:14px' }, h('h2', null, opts.title), opts.body, foot);
+    var form = h('form', { style: 'display:flex;flex-direction:column;gap:14px' }, h('h2', null, opts.title), opts.body, errBox, foot);
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var primary = foot.querySelector('button[type=submit]') || foot.lastChild;
@@ -78,8 +95,13 @@
     return { close: close, el: box };
   }
 
+  // Gözləyən sorğular: çıxışda (istifadəçi dəyişəndə) hamısı ləğv olunur ki, başqasının ekranında əməliyyat tətbiq olunmasın
+  var pendingHandles = [];
+  function abortPending() { pendingHandles.slice().forEach(function (hd) { hd.abort(); }); }
+
   // Menecer təsdiqi: PIN ilə dərhal, və ya (server qoşulubsa) menecerin cihazına sorğu göndərməklə.
   // req = {kind, summary} verilərsə "sorğu göndər" düyməsi çıxır. Uğurlu olarsa təsdiqləyən istifadəçini qaytarır, imtina olarsa null.
+  // Sorğu göndəriləndə pəncərə BAĞLANIR, yuxarıda "gözlənilir" zolağı qalır; cavab gələndə qaytarılan söz yerinə yetir (çağıran əməliyyatı davam etdirir).
   function approve(title, detail, perm, req) {
     var S = root.Services, Sync = root.Sync;
     var cfg = req && Sync ? Sync.endpoint() : Promise.resolve('');
@@ -92,20 +114,29 @@
         var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
           h('p', { style: 'margin:0' }, detail),
           h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, 'Menecer PIN-i'), input), status);
-        var done = false, pendingId = null, poll = null, sendBtn = null;
+        var done = false, detached = false, pendingId = null, poll = null, banner = null, m = null;
+        var handle = { abort: function () { if (pendingId && !done) S.cancelApproval(pendingId); end(null, null); } };
 
         function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
-        function finish(user) { done = true; stopPoll(); resolve(user); }
+        function end(user, msg, kind) {
+          if (done) return; done = true; stopPoll();
+          var at = pendingHandles.indexOf(handle); if (at !== -1) pendingHandles.splice(at, 1);
+          if (banner) { banner.remove(); banner = null; }
+          if (!detached && m) m.close();
+          if (msg) toast(msg, kind === undefined ? 'bad' : kind);
+          resolve(user);
+        }
 
         function startPoll() {
-          Sync.fast(180000);
+          Sync.fast(300000);
           poll = setInterval(function () {
             S.checkApproval(pendingId).then(function (c) {
               if (done) return;
-              if (c.state === 'approved') { done = true; stopPoll(); m.close(); resolve(c.approver); }
-              else if (c.state === 'rejected') { done = true; stopPoll(); m.close(); toast('Menecer sorğunu rədd etdi', 'bad'); resolve(null); }
-              else if (c.state !== 'pending') { done = true; stopPoll(); m.close(); toast('Sorğunun vaxtı bitdi', 'bad'); resolve(null); }
-            });
+              if (c.state === 'approved') end(c.approver, 'Menecer təsdiqlədi', '');
+              else if (c.state === 'rejected') end(null, 'Menecer sorğunu rədd etdi', 'bad');
+              else if (c.state === 'cancelled') end(null, null);
+              else if (c.state !== 'pending') end(null, 'Sorğunun vaxtı bitdi', 'bad');
+            }).catch(function () { /* şəbəkə xətası: növbəti yoxlamada təkrar */ });
           }, 1000);
         }
 
@@ -116,8 +147,12 @@
             if (root.navigator && root.navigator.onLine === false) throw new Error('Sorğu üçün internet lazımdır. Menecer PIN-i ilə təsdiqləyin');
             return S.requestApproval(req.kind, perm, req.summary).then(function (rec) {
               pendingId = rec.id;
-              if (sendBtn) { sendBtn.setAttribute('data-locked', '1'); sendBtn.disabled = true; sendBtn.textContent = 'Sorğu göndərildi'; }
-              status.textContent = 'Sorğu menecerə göndərildi. Cavab gözlənilir… (bu arada PIN də yaza bilərsiniz)';
+              detached = true; pendingHandles.push(handle);
+              m.close();                                   // pəncərə getsin, yerinə "göndərildi" mesajı və gözləmə zolağı
+              banner = pendingBanner('Sorğu menecerə göndərildi, cavab gözlənilir: ' + req.summary, function () {
+                S.cancelApproval(pendingId); end(null, 'Sorğu ləğv edildi', '');
+              });
+              toast('Sorğu menecerə göndərildi', '');
               startPoll();
             });
           } });
@@ -130,16 +165,14 @@
           }).catch(function (e) { input.value = ''; input.focus(); throw e; });
         } });
 
-        var m = modal({
+        m = modal({
           title: title, body: body, sticky: true, buttons: buttons,
           onClose: function () {
-            if (done) return;
+            if (done || detached) return;
             stopPoll();
-            if (pendingId) S.cancelApproval(pendingId);
-            resolve(null);
+            resolve(null); done = true;
           }
         });
-        sendBtn = canRequest ? m.el.querySelectorAll('.foot button')[1] : null;
       });
     });
   }
@@ -208,6 +241,6 @@
     return out + '</div>';
   }
 
-  root.UI = { h: h, clear: clear, toast: toast, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate,
+  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate,
     receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);

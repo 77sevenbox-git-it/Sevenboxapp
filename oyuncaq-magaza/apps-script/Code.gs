@@ -1,5 +1,5 @@
 /**
- * Mağaza İS — Google Apps Script backend (v3).
+ * Mağaza İS — Google Apps Script backend (v4).
  * Kassaların hadisələrini (outbox) qəbul edib Google Sheets-ə yazır və digər cihazların hadisələrini geri verir (pull).
  *
  * Quraşdırma / yeniləmə:
@@ -18,7 +18,7 @@
 // Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
-var VERSION = 3;
+var VERSION = 4;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -141,10 +141,17 @@ function Batch(ss) { this.ss = ss; this.tables = {}; }
 Batch.prototype.table = function (name) { return this.tables[name] || (this.tables[name] = new Table(this.ss, name)); };
 Batch.prototype.flush = function () { for (var k in this.tables) this.tables[k].flush(); };
 
+// Events sətir sayının keşi (sürətli "yenilik yoxdur" cavabı üçün). Yalnız yazan sorğu (kilid altında) onu təyin edir;
+// oxuyan sorğu keşi yalnız YUXARI düzəldə bilər (köhnəlmiş aşağı dəyər cihazı "yenilik yoxdur" cavabında ilişdirərdi).
+// Keş qısa ömürlüdür: hər hansı pozuntu ən çox 90 san-də özü sağalır.
 function cacheTotal(set) {
   var c = CacheService.getScriptCache();
   if (set === undefined) { var v = c.get('evTotal'); return v === null || v === undefined ? null : Number(v); }
-  c.put('evTotal', String(set), 21600);
+  c.put('evTotal', String(set), 90);
+}
+function cacheRaise(total) {
+  var cur = cacheTotal();
+  if (cur === null || total > cur) cacheTotal(total);
 }
 
 /* ---------- Giriş nöqtəsi ---------- */
@@ -173,11 +180,12 @@ function handleSync(body) {
   var since = Math.max(0, Number(body.since) || 0);
   var limit = Math.min(Math.max(Number(body.limit) || 300, 1), 500);
   var device = String(body.device || '');
+  var wantAlloc = body.alloc && body.alloc.length ? body.alloc : null;
   if (items.length > MAX_ITEMS) return { ok: false, error: 'Bir sorğuda ən çox ' + MAX_ITEMS + ' hadisə' };
 
-  var acked = [];
+  var acked = [], blocks = [];
   var total, ss;
-  if (!items.length) {
+  if (!items.length && !wantAlloc) {
     // Sürətli yol: yeni hadisə yoxdursa cədvəl açılmır (təxminən 0,1–0,3 san)
     var cached = cacheTotal();
     if (cached !== null && cached === since) return { ok: true, acked: [], events: [], next: since, more: false, now: new Date().toISOString() };
@@ -186,7 +194,11 @@ function handleSync(body) {
     if (!lock.tryLock(25000)) return { ok: false, error: 'Server məşğuldur, sonra təkrar olunacaq' };
     try {
       ss = db();
-      total = appendItems(ss, items, acked, device);
+      if (items.length) {
+        total = appendItems(ss, items, acked, device);
+        cacheTotal(total);                       // kilid altında: sonrakı yazı bunu ancaq irəli apara bilər
+      }
+      if (wantAlloc) blocks = allocateBlocks(ss, wantAlloc);
     } finally {
       lock.releaseLock();
     }
@@ -195,10 +207,11 @@ function handleSync(body) {
   ss = ss || db();
   var events = sheet(ss, 'Events');
   if (total === undefined) total = Math.max(events.getLastRow() - 1, 0);
-  cacheTotal(total);
+  else total = Math.max(total, 0);
 
   // Müştərinin kursoru serverdən irəlidədirsə (cədvəl təmizlənibsə), kursor geri qaytarılır
-  if (since > total) return { ok: true, acked: acked, events: [], next: total, more: false, rewind: true, now: new Date().toISOString() };
+  if (since > total) { cacheTotal(total); return { ok: true, acked: acked, events: [], next: total, more: false, rewind: true, blocks: blocks, now: new Date().toISOString() }; }
+  cacheRaise(total);
 
   var out = [], next = since;
   if (total > since) {
@@ -213,7 +226,7 @@ function handleSync(body) {
       out.push({ seq: next, id: rid(r[0]), at: iso(r[1]), type: String(r[2]), userId: String(r[3] || ''), device: String(r[6] || ''), data: data });
     }
   }
-  return { ok: true, acked: acked, events: out, next: next, more: total > next, now: new Date().toISOString() };
+  return { ok: true, acked: acked, events: out, next: next, more: total > next, blocks: blocks, now: new Date().toISOString() };
 }
 
 // Hadisələri yazır (kilid altında çağırılır). Qaytarır: Events-də yeni sətir sayı
@@ -262,21 +275,35 @@ function existsOlder(sh, firstWindowRow, id) {
 }
 
 /* ---------- Nömrə aralığı ---------- */
-// Hər kassa üçün ayrı aralıq verilir ki, iki cihazda eyni barkod / çek nömrəsi olmasın
-function handleAllocate(body) {
-  var key = body.key;
-  if (key !== 'productSeq' && key !== 'receiptSeq') return { ok: false, error: 'Naməlum açar' };
-  var count = Math.min(Math.max(parseInt(body.count, 10) || 0, 1), BLOCK_MAX);
-  var min = Math.max(parseInt(body.min, 10) || 0, 0);
+// Hər kassa üçün ayrı aralıq verilir ki, iki cihazda eyni barkod / çek nömrəsi olmasın.
+// Yeni müştəri aralığı "sync" sorğusunun içində istəyir (əlavə sorğu yoxdur); "allocate" köhnə müştərilər üçün saxlanılıb.
+function allocateOne(ss, key, count, min) {
+  if (key !== 'productSeq' && key !== 'receiptSeq') return null;
+  count = Math.min(Math.max(parseInt(count, 10) || 0, 1), BLOCK_MAX);
+  min = Math.max(parseInt(min, 10) || 0, 0);
+  var props = PropertiesService.getScriptProperties();
+  var cur = parseInt(props.getProperty(key), 10) || 0;
+  var base = Math.max(cur, min, derivedMax(ss, key));   // cədvəldə artıq olan ən böyük nömrədən də yuxarı
+  props.setProperty(key, String(base + count));
+  return { key: key, from: base + 1, to: base + count };
+}
 
+function allocateBlocks(ss, reqs) {
+  var out = [];
+  for (var i = 0; i < reqs.length && i < 4; i++) {
+    var b = allocateOne(ss, reqs[i].key, reqs[i].count, reqs[i].min);
+    if (b) out.push(b);
+  }
+  return out;
+}
+
+function handleAllocate(body) {
+  if (body.key !== 'productSeq' && body.key !== 'receiptSeq') return { ok: false, error: 'Naməlum açar' };
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) return { ok: false, error: 'Server məşğuldur, sonra təkrar olunacaq' };
   try {
-    var props = PropertiesService.getScriptProperties();
-    var cur = parseInt(props.getProperty(key), 10) || 0;
-    var base = Math.max(cur, min, derivedMax(db(), key));   // cədvəldə artıq olan ən böyük nömrədən də yuxarı
-    props.setProperty(key, String(base + count));
-    return { ok: true, from: base + 1, to: base + count };
+    var b = allocateOne(db(), body.key, body.count, body.min);
+    return { ok: true, from: b.from, to: b.to };
   } finally {
     lock.releaseLock();
   }
@@ -353,6 +380,31 @@ function project(batch, it) {
       batch.table('Settings').upsert(['store', JSON.stringify(d.store), it.at]);
       break;
   }
+}
+
+/* ---------- Təcili bərpa: Admin PIN-i unudulubsa ---------- */
+// Apps Script redaktorunda bu funksiyanı seçib "Run" basın. Admin üçün müvəqqəti 6 rəqəmli PIN yaradılır
+// (Execution log-da görünür), bütün cihazlar onu növbəti sinxronda alır, Admin ilk girişdə yeni PIN seçir.
+// Bunu yalnız bu Google hesabının sahibi edə bilər: cədvələ və skriptə giriş bunun təhlükəsizlik sərhəddidir.
+function hexSha256(text) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { b = b < 0 ? b + 256 : b; return (b < 16 ? '0' : '') + b.toString(16); }).join('');
+}
+function resetAdminPin() {
+  var pin = String(100000 + Math.floor(Math.random() * 900000));
+  var salt = Utilities.getUuid().replace(/-/g, '');
+  var at = new Date().toISOString();
+  var user = { id: 'u_admin', name: 'Admin', role: 'admin', salt: salt, pinHash: hexSha256(salt + ':' + pin), active: true, mustChangePin: true, updatedAt: at };
+  var item = { id: at + '_000000_a_bg_' + Utilities.getUuid(), at: at, type: 'user.upserted', userId: '', device: 'server', data: { user: user, reason: 'break_glass' } };
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error('Server məşğuldur, bir az sonra təkrar edin');
+  try {
+    cacheTotal(appendItems(db(), [item], [], 'server'));
+  } finally {
+    lock.releaseLock();
+  }
+  Logger.log('Admin üçün müvəqqəti PIN: ' + pin + '  (cihazlar bir neçə saniyəyə alır; Admin girişdən sonra yeni PIN seçməlidir)');
+  return pin;
 }
 
 // Audit jurnalına hash və duz düşməsin
