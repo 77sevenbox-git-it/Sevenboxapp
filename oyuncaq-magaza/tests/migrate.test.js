@@ -15,7 +15,7 @@ const sha = (salt, pin) => nodeCrypto.createHash('sha256').update(salt + ':' + p
 function load(backend, idb) {
   const ctx = { console, setTimeout, clearTimeout, TextEncoder, DOMException, crypto: nodeCrypto.webcrypto, indexedDB: idb, IDBKeyRange, navigator: { onLine: true }, fetch: backend.fetch() };
   ctx.window = ctx; ctx.globalThis = ctx; vm.createContext(ctx);
-  ['money', 'barcode', 'rules', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx));
+  ['money', 'barcode', 'rules', 'fifo', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx));
   ctx.Sync.kick = () => {};
   return ctx;
 }
@@ -73,13 +73,13 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     assert.notStrictEqual(admin.updatedAt, A.Services.EPOCH, 'dəyişdirilmiş PIN yenilik sayılır');
     assert.strictEqual(users.find(u => u.id === 'u_menecer').updatedAt, A.Services.EPOCH, 'toxunulmamış istifadəçi sınaq vəziyyətindədir');
     assert.strictEqual((await A.DB.getAll('sales')).length, 1);
-    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 3);
+    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 4);
     assert.ok(A.Services.deviceId());
   });
 
   await t('köhnə (özəlləşdirilmiş) icazə matrisi: product.edit olan rola "stock.receive" verilir, Kassirə verilmir, qalanı toxunulmaz', async () => {
     const m = (await A.DB.get('meta', 'matrix')).value;
-    assert.deepStrictEqual(Array.from(m.menecer).sort(), ['pos.sell', 'product.edit', 'stock.receive']);
+    assert.deepStrictEqual(Array.from(m.menecer).sort(), ['pos.sell', 'product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);
     assert.deepStrictEqual(Array.from(m.kassir), ['pos.sell']);
     assert.deepStrictEqual(Array.from(m.admin), ['admin.permissions']);
     assert.deepStrictEqual(Array.from(m.muhasib), []);

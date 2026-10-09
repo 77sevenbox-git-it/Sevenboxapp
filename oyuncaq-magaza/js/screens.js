@@ -130,7 +130,7 @@
     var showCost = can('product.cost.view');
     var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: 'Ad, mağaza və ya istehsalçı barkodu', style: 'min-width:280px' });
     var body = h('tbody');
-    var all = [];
+    var all = [], bySup = {};
     // Nümunə məhsullar yalnız siyahı boş olanda təklif olunur (təkrar basanda dublikat yaranırdı)
     var seedBtn = h('button', { class: 'btn small', onclick: function () {
       seedBtn.disabled = true;
@@ -143,7 +143,7 @@
       var s = q.value.trim().toLowerCase();
       UI.clear(body);
       var list = all.filter(function (p) { return !s || p.name.toLowerCase().indexOf(s) !== -1 || p.storeBarcode.indexOf(s) !== -1 || (p.mfrBarcode || '').indexOf(s) !== -1; });
-      if (!list.length) body.appendChild(h('tr', null, h('td', { colspan: showCost ? '8' : '7', class: 'empty' }, all.length ? 'Uyğun məhsul yoxdur' : 'Hələ məhsul yoxdur')));
+      if (!list.length) body.appendChild(h('tr', null, h('td', { colspan: showCost ? '9' : '8', class: 'empty' }, all.length ? 'Uyğun məhsul yoxdur' : 'Hələ məhsul yoxdur')));
       list.forEach(function (p) {
         var low = p.stock <= (p.minStock || 0);
         body.appendChild(h('tr', null,
@@ -153,15 +153,19 @@
           h('td', { class: 'num' }, M.format(p.price)),
           showCost ? h('td', { class: 'num muted' }, M.format(p.avgCost)) : null,
           h('td', { class: 'num' }, p.stock < 0 ? h('span', { class: 'warn-text' }, String(p.stock)) : low ? h('span', { class: 'badge' }, String(p.stock)) : String(p.stock)),
+          h('td', { style: 'font-size:13px', 'data-sup': p.id }, (bySup[p.id] || []).map(function (x) { return h('div', null, (x.name || 'köhnə qalıq') + ' · ' + x.qty); })),
           h('td', null, p.active ? h('span', { class: 'badge ok' }, 'Aktiv') : h('span', { class: 'badge off' }, 'Passiv')),
           h('td', { style: 'white-space:nowrap' },
             can('product.edit') ? h('button', { class: 'btn small', onclick: function () { productForm(p, load); } }, 'Dəyiş') : null, ' ',
             can('stock.receive') ? h('button', { class: 'btn small', onclick: function () { receiveForm(p, load); } }, 'Qəbul') : null, ' ',
+            can('supplier.view') ? h('button', { class: 'btn small', 'data-act': 'lots', onclick: function () { lotsModal(p); } }, 'Partiyalar') : null, ' ',
             can('label.print') ? h('button', { class: 'btn small', onclick: function () { labelForm(p); } }, 'Etiket') : null)));
       });
     }
     function load() {
-      return S.listProducts().then(function (ps) { all = ps.map(function (p) { return S.sanitizeForRole(p, showCost); }); draw(); });
+      return Promise.all([S.listProducts(), S.stockBySupplier().catch(function () { return {}; })]).then(function (r) {
+        all = r[0].map(function (p) { return S.sanitizeForRole(p, showCost); }); bySup = r[1]; draw();
+      });
     }
     root.Screens._refresh = load;     // başqa cihazdan dəyişiklik gələndə siyahı yenilənir
     q.addEventListener('input', draw);
@@ -174,7 +178,7 @@
           can('product.edit') ? h('button', { class: 'btn primary', onclick: function () { productForm(null, load); } }, 'Yeni məhsul') : null)),
       h('div', { class: 'card table-wrap' }, h('table', null,
         h('thead', null, h('tr', null, h('th', null, 'Məhsul'), h('th', null, 'Mağaza barkodu'), h('th', null, 'İstehsalçı barkodu'), h('th', { class: 'num' }, 'Satış ₼'),
-          showCost ? h('th', { class: 'num' }, 'Orta maya ₼') : null, h('th', { class: 'num' }, 'Qalıq'), h('th', null, 'Status'), h('th', null, ''))),
+          showCost ? h('th', { class: 'num' }, 'Orta maya ₼') : null, h('th', { class: 'num' }, 'Qalıq'), h('th', null, 'Təchizatçı (qalıq)'), h('th', null, 'Status'), h('th', null, ''))),
         body)),
       can('product.edit') && can('stock.receive') ? seedBox : null));
     load().then(function () { q.focus(); });
@@ -227,11 +231,26 @@
   function receiveForm(p, onSaved) {
     var qty = h('input', { class: 'input', id: 'r-qty', type: 'number', min: '1', value: '1' });
     var cost = h('input', { class: 'input mono', id: 'r-cost', inputmode: 'decimal', value: p.lastCost != null ? M.format(p.lastCost).replace(/\s/g, '') : '' });
-    var note = h('input', { class: 'input', id: 'r-note', placeholder: 'Təchizatçı, qaimə №' });
+    var note = h('input', { class: 'input', id: 'r-note', placeholder: 'Qaimə №, izah' });
+    var sup = h('select', { class: 'input', id: 'r-sup' });
+    var supHint = h('div', { class: 'muted', style: 'font-size:13px', id: 'r-sup-hint' });
+    var hasSuppliers = false;
+    function loadSuppliers(selectId) {
+      return S.listSuppliers().then(function (list) {
+        hasSuppliers = list.length > 0;
+        UI.clear(sup);
+        sup.appendChild(h('option', { value: '' }, hasSuppliers ? '— təchizatçı seçin —' : '— təchizatçı yoxdur —'));
+        list.forEach(function (x) { sup.appendChild(h('option', { value: x.id, selected: x.id === selectId }, x.name)); });
+        supHint.textContent = hasSuppliers ? 'FIFO: hər satış ən köhnə partiyadan çıxır, hesabatda təchizatçıya görə görünür.' : 'Hələ təchizatçı yoxdur. Yeni təchizatçı əlavə edin; təchizatçısız qəbul "köhnə qalıq" kimi sayılır.';
+      });
+    }
+    loadSuppliers();
+    var addBtn = can('supplier.manage') ? h('button', { class: 'btn small', type: 'button', id: 'r-sup-add', onclick: function () { supplierForm(null, function (s2) { loadSuppliers(s2.id); }); } }, '+ Yeni təchizatçı') : null;
     UI.modal({
       title: 'Mal qəbulu — ' + p.name,
       body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
-        h('p', { class: 'muted', style: 'margin:0' }, 'Hazırkı qalıq: ' + p.stock + '. Tam qəbul sənədi və təchizatçı borcu növbəti mərhələdədir.'),
+        h('p', { class: 'muted', style: 'margin:0' }, 'Hazırkı qalıq: ' + p.stock + '. Hər qəbul ayrıca partiyadır (təchizatçı, say, alış qiyməti).'),
+        h('div', { class: 'field' }, h('label', { for: 'r-sup' }, 'Təchizatçı'), h('div', { class: 'row', style: 'align-items:stretch;flex-wrap:nowrap' }, h('div', { style: 'flex:1' }, sup), addBtn), supHint),
         h('div', { class: 'grid2' },
           h('div', { class: 'field' }, h('label', { for: 'r-qty' }, 'Say'), qty),
           can('product.cost.view') ? h('div', { class: 'field' }, h('label', { for: 'r-cost' }, 'Alış qiyməti (ədəd), ₼'), cost) : null),
@@ -239,13 +258,49 @@
       buttons: [{ text: 'İmtina' }, { text: 'Qəbul et', kind: 'primary', submit: true, onClick: function (close) {
         var c = can('product.cost.view') ? M.parse(cost.value) : null;     // qiyməti görməyən rol üçün server son qiyməti götürür
         if (can('product.cost.view') && c == null) throw new Error('Alış qiyməti səhvdir');
+        if (hasSuppliers && !sup.value) throw new Error('Təchizatçını seçin');
         var n = parseInt(qty.value, 10);
-        return S.receiveStock(p.id, n, c, note.value).then(function (np) {
+        return S.receiveStock(p.id, n, c, note.value, sup.value || null).then(function (np) {
           UI.toast('Qalıq: ' + np.stock); close(); onSaved();
           labelForm(np, n);
         });
       } }]
     });
+  }
+
+  // Təchizatçı əlavə etmək / dəyişmək. onDone(supplier)
+  function supplierForm(sp, onDone) {
+    var name = h('input', { class: 'input', id: 'sp-name', maxlength: '60', autocomplete: 'off', value: sp ? sp.name : '', placeholder: 'Şirkət və ya şəxs adı' });
+    var phone = h('input', { class: 'input', id: 'sp-phone', maxlength: '40', autocomplete: 'off', value: sp ? sp.phone : '' });
+    var note = h('input', { class: 'input', id: 'sp-note', maxlength: '300', autocomplete: 'off', value: sp ? sp.note : '', placeholder: 'VÖEN, ünvan, şərtlər…' });
+    UI.modal({
+      title: sp ? 'Təchizatçını dəyiş' : 'Yeni təchizatçı',
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'field' }, h('label', { for: 'sp-name' }, 'Ad *'), name),
+        h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'sp-phone' }, 'Telefon'), phone), h('div', { class: 'field' }, h('label', { for: 'sp-note' }, 'Qeyd'), note))),
+      buttons: [{ text: 'İmtina' }, { text: 'Yadda saxla', kind: 'primary', submit: true, onClick: function (close) {
+        var d = { name: name.value, phone: phone.value, note: note.value };
+        var op = sp ? S.updateSupplier(sp.id, d) : S.createSupplier(d);
+        return op.then(function (r) { close(); UI.toast('Yadda saxlanıldı'); if (onDone) onDone(r.supplier || r); });
+      } }]
+    });
+  }
+
+  // Bir məhsulun partiyaları (FIFO sırası)
+  function lotsModal(p) {
+    var box = h('div', { class: 'table-wrap' });
+    UI.modal({ title: 'Partiyalar (FIFO) — ' + p.name, wide: true, body: box, buttons: [{ text: 'Bağla' }] });
+    S.productLots(p.id).then(function (lots) {
+      var seeCost = lots.some(function (l) { return l.unitCost != null; });
+      if (!lots.length) return box.appendChild(h('p', { class: 'muted' }, 'Bu məhsul üzrə qəbul yoxdur.'));
+      box.appendChild(h('table', { id: 'lots-table' }, h('thead', null, h('tr', null, h('th', null, 'Qəbul tarixi'), h('th', null, 'Təchizatçı'), h('th', { class: 'num' }, 'Qəbul'), h('th', { class: 'num' }, 'Qalıq'),
+        seeCost ? h('th', { class: 'num' }, 'Alış ₼') : null)),
+        h('tbody', null, lots.map(function (l) {
+          return h('tr', { class: l.remaining ? '' : 'inactive' }, h('td', null, l.opening ? 'Köhnə qalıq' : UI.fmtDate(l.at)), h('td', null, l.supplier || (l.opening ? '—' : 'Təchizatçısız')),
+            h('td', { class: 'num' }, String(l.qty)), h('td', { class: 'num' }, String(l.remaining)), seeCost ? h('td', { class: 'num' }, M.format(l.unitCost)) : null);
+        }))));
+      box.appendChild(h('p', { class: 'muted', style: 'font-size:13px;margin:10px 0 0' }, 'Satış ən köhnə partiyadan çıxır. "Qalıq" sütunu hələ satılmamış hissədir.'));
+    }).catch(function (e) { box.appendChild(h('p', { class: 'warn-text' }, e.message)); });
   }
 
   function labelForm(p, count) {
@@ -271,6 +326,119 @@
         UI.printHtml(UI.labelsHtml([{ product: p, count: c }]), 'label'); close();
       } }]
     });
+  }
+
+  /* ================= Təchizatçılar ================= */
+  var BAKU = 'Asia/Baku';
+  function todayBaku() { return new Intl.DateTimeFormat('en-CA', { timeZone: BAKU, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
+  function addDays(ds, n) { var d = new Date(ds + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+  function monthStart(ds, k) { var d = new Date(ds.slice(0, 7) + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + k); return d.toISOString().slice(0, 10); }
+  function dayIso(ds) { return ds ? new Date(ds + 'T00:00:00+04:00').toISOString() : ''; }          // Bakı vaxtı UTC+4 (yay vaxtı yoxdur)
+
+  function csvDownload(name, rows) {
+    var text = '\ufeff' + rows.map(function (r) { return r.map(function (c) { c = c == null ? '' : String(c); return /[";\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
+    var a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })), download: name });
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function suppliers(el) {
+    UI.clear(el);
+    var canManage = can('supplier.manage');
+    var tb = h('tbody'), repBody = h('tbody'), repFoot = h('tfoot'), repHead = h('thead');
+    var preset = h('select', { class: 'input', id: 'rp-preset' }, [['month', 'Bu ay'], ['today', 'Bu gün'], ['yesterday', 'Dünən'], ['prev', 'Keçən ay'], ['all', 'Bütün vaxt'], ['custom', 'Seçilmiş tarixlər']].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    var from = h('input', { class: 'input', id: 'rp-from', type: 'date' }), to = h('input', { class: 'input', id: 'rp-to', type: 'date' });
+    var last = null, warnBox = h('div', { id: 'rp-warn', class: 'warn-text', role: 'alert', hidden: true, style: 'font-size:14px' });
+
+    function range() {
+      var t = todayBaku(), v = preset.value, f = '', e = '';
+      if (v === 'today') { f = t; e = addDays(t, 1); }
+      else if (v === 'yesterday') { f = addDays(t, -1); e = t; }
+      else if (v === 'month') { f = monthStart(t, 0); e = monthStart(t, 1); }
+      else if (v === 'prev') { f = monthStart(t, -1); e = monthStart(t, 0); }
+      else if (v === 'custom') { f = from.value; e = to.value ? addDays(to.value, 1) : ''; }
+      if (v !== 'custom') { from.value = f; to.value = e ? addDays(e, -1) : ''; }
+      return { from: dayIso(f), to: dayIso(e) };
+    }
+
+    function loadSuppliers() {
+      return Promise.all([S.listSuppliers({ all: true }), S.supplierReport({})]).then(function (r) {
+        var hand = {}; r[1].rows.forEach(function (x) { hand[x.supplierId || ''] = x; });
+        UI.clear(tb);
+        if (!r[0].length) tb.appendChild(h('tr', null, h('td', { colspan: '6', class: 'empty' }, 'Hələ təchizatçı yoxdur')));
+        r[0].forEach(function (sp) {
+          var x = hand[sp.id];
+          tb.appendChild(h('tr', { 'data-sup': sp.name, class: sp.active ? '' : 'inactive' }, h('td', null, sp.name), h('td', null, sp.phone || '—'), h('td', { class: 'muted' }, sp.note || ''),
+            h('td', { class: 'num' }, String(x ? x.onHandQty : 0)), h('td', null, sp.active ? h('span', { class: 'badge ok' }, 'Aktiv') : h('span', { class: 'badge off' }, 'Söndürülüb')),
+            h('td', { style: 'text-align:right;white-space:nowrap' }, canManage ? [
+              h('button', { class: 'btn small', type: 'button', 'data-act': 'edit', onclick: function () { supplierForm(sp, loadAll); } }, 'Redaktə'), ' ',
+              h('button', { class: 'btn small' + (sp.active ? ' danger' : ''), type: 'button', 'data-act': 'toggle', onclick: function () {
+                S.updateSupplier(sp.id, { active: !sp.active }).then(function () { UI.toast(sp.active ? 'Söndürüldü' : 'Aktiv edildi'); loadAll(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+              } }, sp.active ? 'Söndür' : 'Aktiv et')] : null)));
+        });
+      });
+    }
+
+    function loadReport() {
+      return S.supplierReport(range()).then(function (rep) {
+        last = rep;
+        var cost = rep.seeCost;
+        warnBox.hidden = !rep.excessReturnQty;
+        warnBox.textContent = rep.excessReturnQty ? 'Diqqət: ' + rep.excessReturnQty + ' ədəd mal satılandan artıq qaytarılıb (məsələn, iki cihaz eyni çekin eyni sətrini oflayn qaytarıb). Qaytarmalar bölməsində həmin çeki yoxlayın; pul iki dəfə qaytarılmış ola bilər.' : '';
+        UI.clear(repHead); UI.clear(repBody); UI.clear(repFoot);
+        repHead.appendChild(h('tr', null, h('th', null, 'Təchizatçı'), h('th', { class: 'num' }, 'Satılan'), h('th', { class: 'num' }, 'Qaytarılan'), h('th', { class: 'num' }, 'Xalis ədəd'), h('th', { class: 'num' }, 'Gəlir ₼'),
+          cost ? [h('th', { class: 'num' }, 'Maya (FIFO) ₼'), h('th', { class: 'num' }, 'Mənfəət ₼')] : null, h('th', { class: 'num' }, 'Qalıq (ədəd)'), cost ? h('th', { class: 'num' }, 'Qalığın dəyəri ₼') : null, h('th', null, '')));
+        if (!rep.rows.length) repBody.appendChild(h('tr', null, h('td', { colspan: cost ? '10' : '7', class: 'empty' }, 'Bu dövrdə məlumat yoxdur')));
+        rep.rows.forEach(function (x) {
+          repBody.appendChild(h('tr', { 'data-rep': x.name }, h('td', null, x.name), h('td', { class: 'num' }, String(x.soldQty)), h('td', { class: 'num' }, String(x.returnedQty)), h('td', { class: 'num' }, h('b', null, String(x.qty))),
+            h('td', { class: 'num' }, M.format(x.revenue)), cost ? [h('td', { class: 'num muted' }, M.format(x.cost)), h('td', { class: 'num' }, M.format(x.profit))] : null,
+            h('td', { class: 'num' }, String(x.onHandQty)), cost ? h('td', { class: 'num muted' }, M.format(x.onHandValue)) : null,
+            h('td', null, x.products.length ? h('button', { class: 'btn small', type: 'button', 'data-act': 'detail', onclick: function () { detail(x); } }, 'Məhsullar') : null)));
+        });
+        var t = rep.totals;
+        repFoot.appendChild(h('tr', null, h('th', null, 'Cəmi'), h('th', { class: 'num' }, String(t.soldQty)), h('th', { class: 'num' }, String(t.returnedQty)), h('th', { class: 'num' }, String(t.qty)), h('th', { class: 'num' }, M.format(t.revenue)),
+          cost ? [h('th', { class: 'num' }, M.format(t.cost)), h('th', { class: 'num' }, M.format(t.profit))] : null, h('th', { class: 'num' }, String(t.onHandQty)), cost ? h('th', { class: 'num' }, M.format(t.onHandValue)) : null, h('th', null, '')));
+      });
+    }
+    function loadAll() { return Promise.all([loadSuppliers(), loadReport()]).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+
+    function detail(x) {
+      var cost = last && last.seeCost;
+      UI.modal({ title: x.name + ' — məhsullar', wide: true, buttons: [{ text: 'Bağla' }], body: h('div', { class: 'table-wrap' }, h('table', { id: 'detail-table' },
+        h('thead', null, h('tr', null, h('th', null, 'Məhsul'), h('th', { class: 'num' }, 'Satılan'), h('th', { class: 'num' }, 'Qaytarılan'), h('th', { class: 'num' }, 'Xalis'), h('th', { class: 'num' }, 'Gəlir ₼'),
+          cost ? [h('th', { class: 'num' }, 'Maya ₼'), h('th', { class: 'num' }, 'Mənfəət ₼')] : null)),
+        h('tbody', null, x.products.map(function (p) {
+          return h('tr', null, h('td', null, p.name), h('td', { class: 'num' }, String(p.soldQty)), h('td', { class: 'num' }, String(p.returnedQty)), h('td', { class: 'num' }, String(p.qty)), h('td', { class: 'num' }, M.format(p.revenue)),
+            cost ? [h('td', { class: 'num muted' }, M.format(p.cost)), h('td', { class: 'num' }, M.format(p.profit))] : null);
+        })))) });
+    }
+
+    function exportCsv() {
+      if (!last) return;
+      var cost = last.seeCost;
+      var rows = [['Təchizatçı', 'Məhsul', 'Satılan', 'Qaytarılan', 'Xalis ədəd', 'Gəlir', cost ? 'Maya (FIFO)' : null, cost ? 'Mənfəət' : null].filter(function (c) { return c !== null; })];
+      function num(q) { return (q / 100).toFixed(2).replace('.', ','); }
+      last.rows.forEach(function (x) {
+        x.products.forEach(function (p) { rows.push([x.name, p.name, p.soldQty, p.returnedQty, p.qty, num(p.revenue)].concat(cost ? [num(p.cost), num(p.profit)] : [])); });
+      });
+      csvDownload('techizatci-hesabati.csv', rows);
+    }
+
+    [preset, from, to].forEach(function (c) { c.addEventListener('change', function () { if (c !== preset && preset.value !== 'custom') preset.value = 'custom'; loadReport().catch(function (e) { UI.toast(e.message, 'bad'); }); }); });
+    root.Screens._refresh = loadAll;     // başqa cihazdan qəbul/satış gələndə yenilənir
+
+    el.appendChild(h('div', { class: 'page' },
+      h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:16px' }, h('h1', { style: 'margin:0' }, 'Təchizatçılar'),
+        canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, '+ Yeni təchizatçı') : null),
+      h('div', { class: 'card table-wrap' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, 'Ad'), h('th', null, 'Telefon'), h('th', null, 'Qeyd'), h('th', { class: 'num' }, 'Qalıq (ədəd)'), h('th', null, 'Vəziyyət'), h('th', null, ''))), tb)),
+      h('div', { class: 'card', style: 'margin-top:24px' },
+        h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+          h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, 'Hansı təchizatçının malından nə qədər satılıb'),
+            h('button', { class: 'btn small', type: 'button', id: 'rp-csv', onclick: exportCsv }, 'Excel üçün CSV')),
+          warnBox,
+          h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: 'rp-preset' }, 'Dövr'), preset), h('div', { class: 'field' }, h('label', { for: 'rp-from' }, 'Başlanğıc'), from), h('div', { class: 'field' }, h('label', { for: 'rp-to' }, 'Son'), to)),
+          h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Satış FIFO ilədir: hər çek ən köhnə partiyadan çıxır. Gəlir endirimdən sonrakı məbləğdir, qaytarmalar çıxılır. "Təchizatçısız" — sistemə köçməzdən əvvəlki qalıq və ya qəbuldan əvvəl (mənfi qalıqla) satılan mal. Oflayn cihaz sonra sinxronlaşanda bölgü təchizatçılar arasında düzələ bilər, cəmlər dəyişmir.')),
+        h('div', { class: 'table-wrap' }, h('table', { id: 'rep-table' }, repHead, repBody, repFoot)))));
+    range(); loadAll();
   }
 
   /* ================= Qaytarma ================= */
@@ -665,6 +833,6 @@
       h('table', null, h('thead', null, h('tr', null, h('th', null, 'Ad'), h('th', null, 'Rol'), h('th', null, 'Vəziyyət'), h('th', null, ''))), tb));
   }
 
-  root.Screens = { login: login, forcePinChange: forcePinChange, products: products, returns: returns, shift: shift, sales: sales, admin: admin,
+  root.Screens = { login: login, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, admin: admin,
     pendingForMe: pendingForMe, approvalsModal: approvalsModal, _refresh: null };
 })(window);

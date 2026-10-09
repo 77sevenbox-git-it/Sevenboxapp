@@ -26,17 +26,19 @@
   function matrix() { return DB.get('meta', 'matrix').then(function (m) { return m ? m.value : Rules.DEFAULT_MATRIX; }); }
 
   // Rol və "aktiv" bayrağı hər dəfə bazadan oxunur: başqa cihazda Admin rolu dəyişibsə və ya hesabı söndürübsə bu cihazda köhnə səlahiyyət qalmasın.
+  // perm massivdirsə, onlardan biri kifayətdir.
   function requirePerm(perm, user) {
     var live = !user;
     user = user || session.user;
     if (!user) return Promise.reject(err('Daxil olun', 'auth'));
+    var perms = [].concat(perm);
     return Promise.all([matrix(), live ? DB.get('users', user.id) : Promise.resolve(null)]).then(function (r) {
       if (live) {
         var u = r[1];
         if (!u || !u.active) throw err('Hesabınız söndürülüb. Yenidən daxil olun', 'auth');
         user.role = u.role; user.name = u.name;
       }
-      if (!Rules.can(r[0], user.role, perm)) throw err('Bu əməliyyata icazəniz yoxdur: ' + (Rules.PERMISSIONS[perm] || perm), 'forbidden');
+      if (!perms.some(function (p) { return Rules.can(r[0], user.role, p); })) throw err('Bu əməliyyata icazəniz yoxdur: ' + (Rules.PERMISSIONS[perms[0]] || perms[0]), 'forbidden');
       return user;
     });
   }
@@ -97,7 +99,23 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3);
+    return migrateV2().then(migrateV3).then(migrateV4);
+  }
+
+  // v3 → v4: təchizatçılar və partiyalar. İcazə matrisi yenilənir; köhnə cihazın artıq buraxdığı təchizatçı/partiya hadisələri
+  // serverdən bir dəfəlik "doldurma" ilə alınır (sync.js, meta.backfill). Təzə cihazda doldurma lazım deyil.
+  function migrateV4() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 4) return;
+      return Promise.all([DB.get('meta', 'matrix'), DB.get('meta', 'syncCursor')]).then(function (r) {
+        var cur = r[1] ? r[1].value : 0;
+        return DB.atomic(['meta'], function (t) {
+          return t.put('meta', { key: 'matrix', value: Rules.upgradeMatrix(r[0] ? r[0].value : Rules.DEFAULT_MATRIX) })
+            .then(function () { return t.put('meta', { key: 'backfill', value: { upTo: cur, next: 0, done: cur === 0 } }); })
+            .then(function () { return t.put('meta', { key: 'schema', value: 4 }); });
+        });
+      });
+    });
   }
 
   // v2 → v3: mal qəbulu ayrıca "stock.receive" icazəsi oldu; əvvəl "product.edit" olan rollara verilir (Kassirə verilmir)
@@ -157,7 +175,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 3 }),
+              t.put('meta', { key: 'schema', value: 4 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -450,24 +468,150 @@
     });
   }
 
-  // Sadə mal qəbulu (tam qəbul sənədi və təchizatçı borcu növbəti mərhələdə). Orta çəkili maya (FR-24).
-  // Yalnız "stock.receive" icazəsi olan rol (defolt: Menecer, Admin). unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür.
-  function receiveStock(productId, qty, unitCost, note) {
+  /* ---------- Təchizatçılar ---------- */
+  function validateSupplier(d, suppliers, selfId) {
+    var n = cleanName(d.name);
+    if (n.length < 2) return 'Təchizatçının adı ən azı 2 simvol olmalıdır';
+    if (n.length > 60) return 'Ad 60 simvoldan uzun ola bilməz';
+    if (suppliers.some(function (s) { return s.id !== selfId && nameKey(s.name) === nameKey(n); })) return 'Bu adda təchizatçı artıq var';
+    if (String(d.phone || '').length > 40) return 'Telefon çox uzundur';
+    if (String(d.note || '').length > 300) return 'Qeyd 300 simvoldan uzun ola bilməz';
+    return null;
+  }
+
+  function listSuppliers(opts) {
+    return requirePerm(['supplier.view', 'stock.receive']).then(function () {
+      return DB.getAll('suppliers').then(function (list) {
+        list = list.filter(function (s) { return (opts && opts.all) || s.active; });
+        return list.sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
+      });
+    });
+  }
+
+  function createSupplier(d) {
+    return requirePerm('supplier.manage').then(function (user) {
+      return DB.getAll('suppliers').then(function (all) {
+        var bad = validateSupplier(d || {}, all); if (bad) throw err(bad);
+        var at = now();
+        var s = { id: DB.uid('sup'), name: cleanName(d.name), phone: String(d.phone || '').trim(), note: String(d.note || '').trim(), active: true, updatedAt: at };
+        return DB.atomic(['suppliers', 'audit', 'outbox'], function (t) {
+          return t.put('suppliers', s).then(function () { return log(t, 'supplier.upserted', { supplier: s, reason: 'created' }, user, at); }).then(function () { return s; });
+        });
+      });
+    });
+  }
+
+  function updateSupplier(id, patch) {
+    return requirePerm('supplier.manage').then(function (user) {
+      return DB.getAll('suppliers').then(function (all) {
+        var cur = all.filter(function (s) { return s.id === id; })[0];
+        if (!cur) throw err('Təchizatçı tapılmadı');
+        var next = Object.assign({}, cur);
+        ['name', 'phone', 'note'].forEach(function (k) { if (patch[k] != null) next[k] = k === 'name' ? cleanName(patch[k]) : String(patch[k]).trim(); });
+        if (patch.active != null) next.active = !!patch.active;
+        var bad = validateSupplier(next, all, id); if (bad) throw err(bad);
+        if (JSON.stringify(next) === JSON.stringify(cur)) return { supplier: cur, unchanged: true };
+        next.updatedAt = nowAfter(cur.updatedAt);
+        return DB.atomic(['suppliers', 'audit', 'outbox'], function (t) {
+          return t.put('suppliers', next).then(function () { return log(t, 'supplier.upserted', { supplier: next, reason: 'updated' }, user, next.updatedAt); }).then(function () { return { supplier: next }; });
+        });
+      });
+    });
+  }
+
+  // Mal qəbulu. Hər qəbul bir PARTİYADIR (FIFO): məhsul, təchizatçı, say, alış qiyməti, vaxt — bütün cihazlarda eyni.
+  // Orta çəkili maya (FR-24) saxlanılır. Yalnız "stock.receive" icazəsi olan rol (defolt: Menecer, Admin).
+  // unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür. supplierId verilməyibsə partiya "təchizatçısız"dır.
+  function receiveStock(productId, qty, unitCost, note, supplierId) {
     return requirePerm('stock.receive').then(function (user) {
       if (!Number.isInteger(qty) || qty <= 0) throw err('Say müsbət tam ədəd olmalıdır');
       if (unitCost != null && !(unitCost >= 0)) throw err('Alış qiyməti səhvdir');
-      return DB.atomic(['products', 'stockMoves', 'priceHistory', 'audit', 'outbox'], function (t) {
-        return t.get('products', productId).then(function (p) {
+      return DB.atomic(['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'audit', 'outbox'], function (t) {
+        return Promise.all([t.get('products', productId), supplierId ? t.get('suppliers', supplierId) : Promise.resolve(null)]).then(function (r) {
+          var p = r[0], sup = r[1];
           if (!p) throw err('Məhsul tapılmadı');
+          if (supplierId && (!sup || !sup.active)) throw err('Təchizatçı tapılmadı və ya söndürülüb');
           if (unitCost == null) unitCost = p.lastCost || 0;
-          var before = p.stock;
+          var before = p.stock, at = now(), lotId = DB.uid('lot');
           Object.assign(p, Rules.applyReceipt(p, qty, unitCost));
+          var lot = { id: lotId, productId: p.id, supplierId: supplierId || null, qty: qty, unitCost: unitCost, at: at, userId: user.id, note: note || '' };
           return t.put('products', p)
-            .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: qty, before: before, after: p.stock, unitCost: unitCost, note: note || '', at: now(), userId: user.id }); })
-            .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: now() }); })
-            .then(function () { return log(t, 'stock.received', { productId: p.id, qty: qty, unitCost: unitCost }, user); })
+            .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: qty, before: before, after: p.stock, unitCost: unitCost, note: note || '', at: at, userId: user.id }); })
+            .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: at }); })
+            .then(function () { return t.put('lots', lot); })
+            .then(function () { return log(t, 'stock.received', { productId: p.id, qty: qty, unitCost: unitCost, supplierId: lot.supplierId, lotId: lotId, at: at, note: lot.note }, user, at); })
             .then(function () { return p; });
         });
+      });
+    });
+  }
+
+  /* ---------- FIFO hesabatı ---------- */
+  function fifoState() {
+    return Promise.all([DB.getAll('lots'), DB.getAll('sales'), DB.getAll('returns'), DB.getAll('products'), DB.getAll('suppliers')]).then(function (r) {
+      var stock = {}, avg = {};
+      r[3].forEach(function (p) { stock[p.id] = p.stock; avg[p.id] = p.avgCost || 0; });
+      var res = root.Fifo.replay({ lots: r[0], sales: r[1], returns: r[2], stock: stock, avgCost: avg });
+      var names = {}; r[4].forEach(function (s) { names[s.id] = s.name; });
+      var pnames = {}; r[3].forEach(function (p) { pnames[p.id] = p.name; });
+      return { res: res, sales: r[1], returns: r[2], suppliers: r[4], names: names, pnames: pnames };
+    });
+  }
+
+  // Dövr üzrə: hansı təchizatçının malından nə qədər satılıb (FIFO). Alış qiymətinə baxmaq icazəsi yoxdursa maya/mənfəət verilmir.
+  // from/to: ISO vaxt, [from, to). Qaytarır: {rows:[{supplierId,name,soldQty,returnedQty,qty,revenue,cost,profit,onHandQty,onHandValue,products:[…]}], totals}
+  function supplierReport(range) {
+    return requirePerm('supplier.view').then(function () {
+      return Promise.all([fifoState(), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[1], session.user.role, 'product.cost.view');
+        var rep = root.Fifo.supplierReport(st.res, st.sales, st.returns, range && range.from || '', range && range.to || '');
+        var hand = root.Fifo.onHand(st.res);
+        var keys = {}; Object.keys(rep).forEach(function (k) { keys[k] = 1; }); Object.keys(hand).forEach(function (k) { keys[k] = 1; });
+        st.suppliers.forEach(function (s) { keys[s.id] = 1; });
+        var rows = Object.keys(keys).map(function (k) {
+          var a = rep[k] || { soldQty: 0, returnedQty: 0, qty: 0, revenue: 0, cost: 0, products: {} }, h = hand[k] || { qty: 0, value: 0 };
+          var prods = Object.keys(a.products).map(function (pid) {
+            var p = a.products[pid];
+            return { productId: pid, name: st.pnames[pid] || pid, soldQty: p.soldQty, returnedQty: p.returnedQty, qty: p.qty, revenue: p.revenue, cost: seeCost ? p.cost : null, profit: seeCost ? p.revenue - p.cost : null };
+          }).sort(function (x, y) { return y.qty - x.qty; });
+          return { supplierId: k || null, name: k ? (st.names[k] || 'Silinmiş təchizatçı') : 'Təchizatçısız (köhnə qalıq / mənfi satış)', soldQty: a.soldQty, returnedQty: a.returnedQty, qty: a.qty,
+            revenue: a.revenue, cost: seeCost ? a.cost : null, profit: seeCost ? a.revenue - a.cost : null, onHandQty: h.qty, onHandValue: seeCost ? Math.round(h.value) : null, products: prods };
+        }).filter(function (x) { return x.supplierId || x.soldQty || x.returnedQty || x.onHandQty; })
+          .sort(function (a, b) { return (a.supplierId ? 0 : 1) - (b.supplierId ? 0 : 1) || b.qty - a.qty || a.name.localeCompare(b.name, 'az'); });
+        var totals = rows.reduce(function (t, x) {
+          t.soldQty += x.soldQty; t.returnedQty += x.returnedQty; t.qty += x.qty; t.revenue += x.revenue; t.onHandQty += x.onHandQty;
+          if (seeCost) { t.cost += x.cost; t.profit += x.profit; t.onHandValue += x.onHandValue; }
+          return t;
+        }, { soldQty: 0, returnedQty: 0, qty: 0, revenue: 0, cost: 0, profit: 0, onHandQty: 0, onHandValue: 0 });
+        var excess = 0; Object.keys(st.res.returns).forEach(function (k) { excess += st.res.returns[k].excess || 0; });
+        return { rows: rows, totals: totals, seeCost: seeCost, excessReturnQty: excess };
+      });
+    });
+  }
+
+  // Bir məhsulun partiyaları (köhnədən yeniyə) və hər məhsulun hazırda hansı təchizatçıların malından qaldığı
+  function productLots(productId) {
+    return requirePerm(['product.view', 'supplier.view']).then(function () {
+      return Promise.all([fifoState(), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[1], session.user.role, 'product.cost.view');
+        return root.Fifo.productLots(st.res, productId).map(function (l) {
+          return { id: l.id, at: l.at, opening: l.opening, supplierId: l.supplierId, supplier: l.supplierId ? (st.names[l.supplierId] || '—') : null, qty: l.qty, remaining: l.remaining, unitCost: seeCost ? l.unitCost : null };
+        });
+      });
+    });
+  }
+  function stockBySupplier() {
+    return requirePerm(['product.view', 'supplier.view']).then(function () {
+      return fifoState().then(function (st) {
+        var out = {};   // productId → [{name, qty}] (qalığı olan partiyalar təchizatçıya görə)
+        Object.keys(st.res.lots).forEach(function (id) {
+          var L = st.res.lots[id]; if (L.remaining <= 0) return;
+          var arr = out[L.productId] || (out[L.productId] = []);
+          var nm = L.supplierId ? (st.names[L.supplierId] || '—') : null;
+          var f = arr.filter(function (x) { return x.name === nm; })[0];
+          if (f) f.qty += L.remaining; else arr.push({ name: nm, qty: L.remaining });
+        });
+        return out;
       });
     });
   }
@@ -854,7 +998,8 @@
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
-    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
+    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier,
+    listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
   };

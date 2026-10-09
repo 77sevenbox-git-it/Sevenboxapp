@@ -3,12 +3,13 @@
   'use strict';
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-2';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-3';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: 'Kassa', perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
     { id: 'returns', label: 'Qaytarma', perm: 'pos.return.request', render: function (el) { root.Screens.returns(el); } },
     { id: 'products', label: 'Məhsullar', perm: 'product.view', render: function (el) { root.Screens.products(el); } },
+    { id: 'suppliers', label: 'Təchizatçılar', perm: 'supplier.view', render: function (el) { root.Screens.suppliers(el); } },
     { id: 'sales', label: 'Çeklər', perm: 'report.view', render: function (el) { root.Screens.sales(el); } },
     { id: 'shift', label: 'Növbə', perm: 'shift.open_close', render: function (el) { root.Screens.shift(el); } },
     { id: 'admin', label: 'İcazələr', perm: 'admin.permissions', render: function (el) { root.Screens.admin(el); } }

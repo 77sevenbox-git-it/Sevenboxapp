@@ -20,13 +20,18 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
 - **Xəta mesajları:** ekranın yuxarısında və pəncərənin içində göstərilir (telefon klaviaturası aşağını örtəndə itmir).
 - **İstifadəçilər adla:** Admin (İcazələr → İstifadəçilər) "+ Yeni istifadəçi" ilə ad və rol verir (məs. «Elvin Babayev» — Kassir), adı/rolu dəyişir, söndürür və geri aktiv edir. Yaranan istifadəçiyə təsadüfi müvəqqəti PIN verilir (bir dəfə göstərilir), ilk girişdə öz PIN-ini seçir. Ad unikaldır (böyük/kiçik hərf fərqsiz), sistemdə həmişə ən azı bir aktiv Admin qalır, Admin öz hesabını söndürə və öz rolunu dəyişə bilməz. Giriş ekranında, üst paneldə və çeklərdə ad görünür; keçmiş çeklərdə həmin vaxtkı ad qalır. Başqa cihazda rol dəyişəndə/hesab söndürüləndə açıq sessiya bir neçə saniyəyə yenilənir/bağlanır (rol hər əməliyyatda bazadan oxunur).
 - **Çap (Xprinter tipli termo çek və etiket printeri):** üst paneldəki **"Çap"** düyməsi bu cihazın printerini quraşdırır (cihaza məxsusdur, serverə getmir): çek kağızı 80 mm (çap sahəsi 72) və ya 58 mm (48), etiket ölçüsü (30×20, 40×30, 50×30, 58×40, 60×40, 70×50, 100×50, 100×100 və ya özəl en×hündürlük), printer sıxlığı 203/300 dpi, test çeki və test etiketi. Çekin kağız hündürlüyü məzmuna görə hesablanır (printer lazımsız boş kağız çəkmir), etiketdə hər etiket ayrıca səhifədir. Barkodun zolaq eni printerin nöqtəsinin tam sayıdır (203 dpi-də 0,25 / 0,375 / 0,5 mm), etiketin eninə görə seçilir; etiket çox darsa xəbərdarlıq çıxır.
+- **Təchizatçılar və FIFO:** "Təchizatçılar" bölməsində təchizatçı (ad, telefon, qeyd) əlavə olunur/dəyişir/söndürülür. Mal qəbulunda təchizatçı seçilir (1 məhsul istənilən sayda təchizatçıdan ala bilər); hər qəbul ayrıca **partiyadır** (təchizatçı, say, alış qiyməti, vaxt). Satış FIFO ilədir: hər çek ən köhnə partiyadan çıxır, qaytarma malı çıxdığı partiyaya qaytarır. Hesabat (Təchizatçılar → "Hansı təchizatçının malından nə qədər satılıb"): dövr seçilir (bu gün / bu ay / keçən ay / bütün vaxt / tarixlər), təchizatçı üzrə satılan, qaytarılan, xalis ədəd, gəlir (endirimdən sonra), maya (FIFO), mənfəət və qalıq; hər təchizatçının məhsulları və "Excel üçün CSV". Maya/mənfəət yalnız alış qiymətinə baxmaq icazəsi olan rolda görünür. Məhsullar cədvəlində qalığın təchizatçılara görə bölgüsü və "Partiyalar" pəncərəsi var. İcazələr: `supplier.view` (Admin, Menecer, Mühasib), `supplier.manage` (Admin, Menecer).
+  - *"Təchizatçısız"* sətri: sistemə köçməzdən əvvəlki qalıq və qəbuldan əvvəl (mənfi qalıqla) satılan mal. Sonradan qəbul gələndə həmin borc partiyaya bağlanır.
+  - FIFO bölgüsü saxlanmır, qəbul/satış/qaytarma **vaxt sırası ilə yenidən hesablanır** — bütün cihazlar eyni nəticəni alır. Oflayn cihaz gec sinxronlaşanda təchizatçılar arasında bölgü düzələ bilər, cəmlər dəyişmir.
+  - Satılandan artıq qaytarma (iki cihaz eyni çekin eyni sətrini oflayn qaytarsa) gizlənmir: hesabat səhifəsində xəbərdarlıq çıxır, artıq hissə "Təchizatçısız" qaytarma sayılır, qalıq uzlaşır. Pulun iki dəfə qaytarılıb-qaytarılmadığını əl ilə yoxlamaq lazımdır.
+  - Köhnə tətbiq versiyasından yenilənən cihaz buraxdığı təchizatçı/partiya hadisələrini serverdən bir dəfə oxuyur (qalığa toxunmur).
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.
 - **Çoxcihazlı sinxron (iki istiqamətli):** hər brauzer/cihaz öz lokal nüsxəsi ilə işləyir; hadisələr Google Sheets-ə yazılır və digər cihazlara paylanır. İstifadəçilər/PIN-lər, məhsullar, qalıq, çeklər, qaytarmalar, növbə, icazələr, mağaza məlumatı və təsdiq sorğuları cihazlar arasında eynidir.
-- **Backend:** `apps-script/Code.gs` (v4) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3 ilə də işləyir, amma yavaş: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
+- **Backend:** `apps-script/Code.gs` (v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
 
 ## Hələ yoxdur (növbəti mərhələlər)
 
-Tam mal qəbulu sənədi və təchizatçı borcu, hesabatlar və Excel ixracı, push-bildiriş (təsdiq sorğusu indi açıq tətbiqdə görünür), inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
+Tam mal qəbulu sənədi və təchizatçı borcu (ödənişlər), digər hesabatlar, push-bildiriş (təsdiq sorğusu indi açıq tətbiqdə görünür), inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
 
 ## İşə salmaq
 
@@ -75,6 +80,7 @@ node tests/run.js              # qaydalar, pul, barkod
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
 node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə keçməsi
+node tests/fifo.test.js        # FIFO bölgüsü, təchizatçı hesabatı, borc/qaytarma/artıq qaytarma (saf funksiyalar, təsadüfi ssenarilər)
 python3 tests/e2e.py           # brauzerdə uçdan-uca, tək cihaz (Playwright lazımdır)
 python3 tests/e2e_sync.py      # iki ayrı brauzer yaddaşı + Apps Script təqlidi: PIN bazaya yazılır, 2-ci brauzerdə işləyir, menecer təsdiqi
 node tests/fuzz.test.js [N]    # təsadüfi çoxcihazlı əməliyyatlar + şəbəkə xətaları: bütün cihazlar eyni nəticəyə gəlməlidir (N toxum, defolt 12)
@@ -87,7 +93,7 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 
 **Giriş PIN-ini unutmusunuzsa (Admin də):** Apps Script redaktorunda `resetAdminPin()` funksiyasını işə salın. Admin üçün təsadüfi müvəqqəti PIN yaranır və Logs-da (View → Logs / Execution log) göstərilir; cihazlar onu bir neçə saniyəyə alır, Admin girişdən sonra yeni PIN seçməlidir.
 
-**Code.gs v4-ə keçid:** `apps-script/Code.gs`-i köhnənin yerinə yapışdırın → `setup()` işə salın → Deploy → Manage deployments → ✏️ → Version: **New version** → Deploy (ünvan və token dəyişmir). Sonra hər brauzerdə Ctrl+F5.
+**Code.gs v5-ə keçid (v3/v4-dən):** `apps-script/Code.gs`-i köhnənin yerinə yapışdırın → `setup()` işə salın → Deploy → Manage deployments → ✏️ → Version: **New version** → Deploy (ünvan və token dəyişmir). Sonra hər brauzerdə Ctrl+F5. `setup()` `Suppliers` vərəqini yaradır və `StockReceipts`-ə yeni sütunları (təchizatçı, partiya) əlavə edir; onu işə salmasanız da vərəqlər ilk yazıda yaranır, amma köhnə `StockReceipts` başlığı yenilənməz.
 
 ## Vacib təhlükəsizlik qeydi
 
@@ -103,12 +109,13 @@ js/barcode.js   EAN-13, mağaza və çek barkodu, SVG (svgMm: printer nöqtəsin
 js/rules.js     biznes qaydaları (saf funksiyalar)
 js/db.js        IndexedDB, atomik tranzaksiyalar
 js/services.js  satış, qaytarma, növbə, məhsul, giriş, audit
+js/fifo.js      FIFO bölgüsü və təchizatçı hesabatı (saf funksiyalar)
 js/replica.js   başqa cihazlardan gələn hadisələrin lokal bazaya tətbiqi
 js/sync.js      outbox ⇄ Apps Script (göndər + al, nömrə aralıqları)
 js/ui.js        modal, PIN təsdiqi, bildirişlər
 js/print.js     çek/etiket şablonları, kağız/etiket ayarları, çap
 js/pos.js       kassa ekranı
-js/screens.js   giriş, məhsullar, qaytarma, növbə, çeklər, icazələr
+js/screens.js   giriş, məhsullar, təchizatçılar, qaytarma, növbə, çeklər, icazələr
 js/app.js       menyu və marşrutlar
 apps-script/Code.gs
 tests/

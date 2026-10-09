@@ -19,7 +19,7 @@ function makeDevice(backend, idb) {
   };
   ctx.window = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
-  ['money', 'barcode', 'rules', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx, { filename: f + '.js' }));
+  ['money', 'barcode', 'rules', 'fifo', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx, { filename: f + '.js' }));
   ctx.Sync.kick = () => {};   // fon dövrləri testi qarışdırmasın (kick ayrıca yoxlanılır)
   return ctx;
 }
@@ -680,6 +680,144 @@ async function t(name, fn) {
     const u = await Y.Services.login(r.user.id, '4817');
     assert.strictEqual(u.mustChangePin, false);
     assert.strictEqual(u.role, 'menecer');
+  });
+
+  /* ---------- Təchizatçılar və FIFO: iki cihazda eyni nəticə ---------- */
+  const repKey = r => JSON.stringify(r.rows.map(x => [x.name, x.soldQty, x.returnedQty, x.revenue, x.cost, x.onHandQty, x.products.map(p => [p.name, p.qty, p.revenue])]));
+  const mgr = (d) => loginAs(d, 'Menecer', '2222');
+
+  await t('təchizatçı və partiya iki cihaza çatır; sətirlər Suppliers/StockReceipts vərəqlərinə düşür; FIFO hesabatı iki cihazda eynidir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    await mgr(X); await mgr(Y);
+    const alfa = await X.Services.createSupplier({ name: 'Alfa MMC', phone: '+994501112233' });
+    const beta = await X.Services.createSupplier({ name: 'Beta Toys' });
+    const pr = (await X.Services.createProduct({ name: 'Maşın', price: 1000, cost: 100 })).product;
+    await X.Services.receiveStock(pr.id, 5, 100, 'q1', alfa.id);
+    await X.Services.receiveStock(pr.id, 5, 120, 'q2', beta.id);
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    assert.strictEqual(JSON.stringify((await Y.Services.listSuppliers()).map(s => s.name).sort()), JSON.stringify(['Alfa MMC', 'Beta Toys']));
+    assert.strictEqual((await Y.Services.productLots(pr.id)).length, 2);
+    assert.ok(b.rows('Suppliers').some(r => r[1] === 'Alfa MMC' && r[2] === '+994501112233'), 'Suppliers vərəqi: ' + JSON.stringify(b.rows('Suppliers')));
+    const sr = b.rows('StockReceipts').filter(r => r[1] === pr.id);
+    assert.strictEqual(sr.length, 2); assert.ok(sr.every(r => r[5] && r[6]), 'təchizatçı və partiya id-si yazılıb');
+    // Y satış edir (açıq növbə lazımdır)
+    await Y.Services.openShift(1000);
+    await Y.Services.checkout([{ productId: pr.id, qty: 7 }], null, { method: 'cash', cashReceived: 7000 });
+    await Y.Sync.cycle(); await X.Sync.cycle();
+    const rx = await X.Services.supplierReport({}), ry = await Y.Services.supplierReport({});
+    assert.strictEqual(repKey(rx), repKey(ry), 'iki cihazda hesabat fərqlənir');
+    assert.strictEqual(rx.rows.find(r => r.name === 'Alfa MMC').soldQty, 5);
+    assert.strictEqual(rx.rows.find(r => r.name === 'Beta Toys').soldQty, 2);
+    assert.strictEqual(Number((await X.Services.listProducts()).find(p => p.id === pr.id).stock), 3);
+  });
+
+  await t('eyni anda iki cihaz eyni məhsulu müxtəlif təchizatçıdan qəbul edir; sonra satış — hesabat hər yerdə eyni, qalıq cəmi düzgün', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    await mgr(X); await mgr(Y);
+    const s1 = await X.Services.createSupplier({ name: 'Təchizatçı 1' });
+    const s2 = await X.Services.createSupplier({ name: 'Təchizatçı 2' });
+    const pr = (await X.Services.createProduct({ name: 'Kukla', price: 2000, cost: 500 })).product;
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    await Promise.all([X.Services.receiveStock(pr.id, 4, 500, '', s1.id), Y.Services.receiveStock(pr.id, 6, 600, '', s2.id)]);
+    await X.Sync.cycle(); await Y.Sync.cycle(); await X.Sync.cycle();
+    await X.Services.openShift(0);
+    await X.Services.checkout([{ productId: pr.id, qty: 3 }], null, { method: 'cash', cashReceived: 6000 });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    const rx = await X.Services.supplierReport({}), ry = await Y.Services.supplierReport({});
+    assert.strictEqual(repKey(rx), repKey(ry));
+    const lots = await X.Services.productLots(pr.id);
+    assert.strictEqual(lots.reduce((n, l) => n + l.remaining, 0), 7);
+    assert.strictEqual(rx.totals.soldQty, 3);
+    assert.strictEqual(rx.totals.onHandQty, 7);
+  });
+
+  await t('təchizatçı eyni anda dəyişdirilir: ad (X) və söndürmə (Y) — son yazan qalib gəlir, iki cihaz eyni vəziyyətə gəlir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    await mgr(X); await mgr(Y);
+    const sp = await X.Services.createSupplier({ name: 'Sinaq' });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    await X.Services.updateSupplier(sp.id, { name: 'Sinaq 2' });
+    await sleep(5);                                   // eyni millisaniyə bərabərliyi ayrıca hal: orada cihazlar məzmunla həll edir, vərəq isə birinci gələni saxlayır (real istifadədə mümkün deyil)
+    await Y.Services.updateSupplier(sp.id, { active: false });
+    for (let i = 0; i < 2; i++) { await X.Sync.cycle(); await Y.Sync.cycle(); }
+    const gx = (await X.Services.listSuppliers({ all: true })).find(s => s.id === sp.id), gy = (await Y.Services.listSuppliers({ all: true })).find(s => s.id === sp.id);
+    assert.deepStrictEqual([gx.name, gx.active], [gy.name, gy.active]);
+    const row = b.rows('Suppliers').filter(r => r[0] === sp.id);
+    assert.strictEqual(row.length, 1, 'bir id — bir sətir');
+    assert.strictEqual(row[0][1], gx.name);
+  });
+
+  await t('köhnə versiyalı cihaz (partiya/təchizatçı hadisələrini buraxıb) yenilənəndə bir dəfəlik doldurma alır; qalıq ikiqat artmır', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b), Z = await boot(b);
+    await mgr(X); await mgr(Z);
+    const sp = await X.Services.createSupplier({ name: 'Köhnə təchizatçı' });
+    const pr = (await X.Services.createProduct({ name: 'Top', price: 300, cost: 100 })).product;
+    await X.Services.receiveStock(pr.id, 8, 100, '', sp.id);
+    await X.Sync.cycle(); await Z.Sync.cycle();
+    const stockBefore = (await Z.Services.listProducts()).find(p => p.id === pr.id).stock;
+    // Z-ni "köhnə versiya" vəziyyətinə salırıq: təchizatçı/partiya yoxdur, sxem 3, imleç serverin sonundadır
+    for (const l of await Z.DB.getAll('lots')) await Z.DB.del('lots', l.id);
+    for (const s of await Z.DB.getAll('suppliers')) await Z.DB.del('suppliers', s.id);
+    const cur = (await Z.DB.get('meta', 'syncCursor')).value;
+    await Z.DB.put('meta', { key: 'schema', value: 3 });
+    await Z.DB.put('meta', { key: 'backfill', value: { upTo: cur, next: 0, done: false } });
+    assert.strictEqual((await Z.Services.productLots(pr.id)).length, 1, 'doldurmadan əvvəl yalnız açılış partiyası');
+    await Z.Sync.cycle();
+    const lots = await Z.Services.productLots(pr.id);
+    assert.strictEqual(JSON.stringify(lots.map(l => [l.supplier, l.qty, l.remaining])), JSON.stringify([['Köhnə təchizatçı', 8, 8]]));
+    assert.strictEqual((await Z.DB.get('meta', 'backfill')).value.done, true);
+    assert.strictEqual((await Z.Services.listProducts()).find(p => p.id === pr.id).stock, stockBefore, 'doldurma qalığa toxunmamalıdır');
+    assert.strictEqual(repKey(await Z.Services.supplierReport({})), repKey(await X.Services.supplierReport({})));
+    // ikinci dövr heç nəyi dəyişmir
+    await Z.Sync.cycle();
+    assert.strictEqual((await Z.DB.getAll('lots')).length, 1);
+  });
+
+  await t('köhnə cihazdan gələn qəbul (partiya id-si yoxdur) sistemi pozmur: qalıq "açılış partiyası"nda sayılır', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b), Y = await boot(b);
+    await mgr(X); await mgr(Y);
+    const pr = (await X.Services.createProduct({ name: 'Köhnə qəbul', price: 500, cost: 100 })).product;
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    // köhnə versiyanın göndərdiyi hadisə: supplierId/lotId yoxdur
+    const prod = (await Y.Services.listProducts()).find(p => p.id === pr.id);
+    const ev = { id: 'ev_old1', type: 'stock.received', at: new Date().toISOString(), userId: 'u_menecer', data: { productId: pr.id, qty: 6, unitCost: 100, note: 'köhnə cihaz' } };
+    const res = b.post({ action: 'sync', token: TOKEN, device: 'legacy', since: 0, items: [{ id: ev.id, type: ev.type, at: ev.at, userId: ev.userId, device: 'legacy', data: ev.data }], limit: 500 });
+    assert.ok(res && !res.error, JSON.stringify(res));
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    assert.strictEqual((await X.Services.listProducts()).find(p => p.id === pr.id).stock, 6);
+    const lots = await Y.Services.productLots(pr.id);
+    assert.strictEqual(lots.reduce((n, l) => n + l.remaining, 0), 6);
+    assert.ok(lots.every(l => l.opening), 'partiyası olmayan qəbul açılış partiyası sayılır');
+    assert.strictEqual(repKey(await X.Services.supplierReport({})), repKey(await Y.Services.supplierReport({})));
+    void prod;
+  });
+
+  await t('iki cihaz eyni çekin eyni sətrini oflayn qaytarır: qalıq/hesabat uzlaşır, artıq hissə xəbərdarlıqla göstərilir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    await mgr(X); await mgr(Y);
+    const sp = await X.Services.createSupplier({ name: 'Artıq təch' });
+    const pr = (await X.Services.createProduct({ name: 'Artıq qayt', price: 1000, cost: 100 })).product;
+    await X.Services.receiveStock(pr.id, 5, 100, '', sp.id);
+    await X.Services.openShift(0);
+    const sale = await X.Services.checkout([{ productId: pr.id, qty: 2 }], null, { method: 'cash', cashReceived: 2000 });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    const me = u => u.Services.currentUser();
+    await X.Services.createReturn(sale.id, [{ lineIndex: 0, qty: 2 }], me(X));
+    await Y.Services.openShift(0).catch(() => {});
+    await Y.Services.createReturn(sale.id, [{ lineIndex: 0, qty: 2 }], me(Y));       // Y hələ X-in qaytarmasını görməyib
+    for (let i = 0; i < 2; i++) { await X.Sync.cycle(); await Y.Sync.cycle(); }
+    const rx = await X.Services.supplierReport({}), ry = await Y.Services.supplierReport({});
+    assert.strictEqual(repKey(rx), repKey(ry));
+    assert.strictEqual(rx.excessReturnQty, 2, 'artıq qaytarma bilinməlidir');
+    const stock = (await X.Services.listProducts()).find(p => p.id === pr.id).stock;
+    assert.strictEqual(stock, 7);
+    assert.strictEqual((await X.Services.productLots(pr.id)).reduce((n, l) => n + l.remaining, 0), stock, 'partiya qalığı = məhsul qalığı');
   });
 
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);

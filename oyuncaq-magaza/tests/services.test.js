@@ -4,6 +4,7 @@ const assert = require('assert');
 globalThis.Money = require('../js/money.js');
 globalThis.Barcode = require('../js/barcode.js');
 globalThis.Rules = require('../js/rules.js');
+globalThis.Fifo = require('../js/fifo.js');
 globalThis.DB = require('../js/db.js');
 const S = require('../js/services.js');
 
@@ -458,6 +459,98 @@ async function loginAs(role) {
     await rejects(S.updateUser(r2.user.id, { role: 'kassir' }), /ən azı bir aktiv Admin/);
     await S.updateUser('u_admin', { active: true });
     S.logout();
+  });
+
+  /* ---------- Təchizatçılar və FIFO ---------- */
+  let alfa, beta, fp;
+  const repRow = (rep, name) => rep.rows.find(r => r.name === name);
+  await t('təchizatçı: Menecer yaradır; Kassir yarada bilmir; Mühasib baxır amma dəyişmir; ad təkrarlana bilmir', async () => {
+    S._session.user = { id: 'u_kassir', name: 'Kassir', role: 'kassir' };
+    await rejects(S.createSupplier({ name: 'Alfa MMC' }), /icazəniz yoxdur/);
+    await rejects(S.listSuppliers(), /icazəniz yoxdur/);
+    await loginAs('menecer');
+    alfa = await S.createSupplier({ name: ' Alfa  MMC ', phone: '+994 50 111 22 33', note: 'VÖEN 123' });
+    beta = await S.createSupplier({ name: 'Beta Toys' });
+    assert.strictEqual(alfa.name, 'Alfa MMC');
+    await rejects(S.createSupplier({ name: 'alfa mmc' }), /artıq var/);
+    await rejects(S.createSupplier({ name: 'A' }), /ən azı 2/);
+    S.logout(); S._session.user = { id: 'u_muhasib1', name: 'Mühasib 1', role: 'muhasib' };     // əvvəlki testdə bloklanıb: sessiyanı birbaşa quraq
+    assert.strictEqual((await S.listSuppliers()).length, 2);
+    await rejects(S.createSupplier({ name: 'Gamma' }), /icazəniz yoxdur/);
+    await rejects(S.updateSupplier(alfa.id, { name: 'X Y' }), /icazəniz yoxdur/);
+  });
+
+  await t('təchizatçını dəyişmək/söndürmək; söndürülmüş təchizatçıdan qəbul olmur, siyahıda görünmür', async () => {
+    await loginAs('menecer');
+    const g = await S.createSupplier({ name: 'Gamma Ltd' });
+    await rejects(S.updateSupplier(g.id, { name: 'Beta Toys' }), /artıq var/);
+    assert.ok((await S.updateSupplier(g.id, { name: 'Gamma Ltd' })).unchanged);
+    await S.updateSupplier(g.id, { active: false });
+    assert.ok(!(await S.listSuppliers()).some(x => x.id === g.id));
+    assert.ok((await S.listSuppliers({ all: true })).some(x => x.id === g.id));
+    fp = (await S.createProduct({ name: 'FIFO məhsulu', price: 1000, cost: 100 })).product;
+    await rejects(S.receiveStock(fp.id, 1, 100, '', g.id), /söndürülüb/);
+    await rejects(S.receiveStock(fp.id, 1, 100, '', 'sup_yoxdur'), /tapılmadı/);
+    assert.strictEqual((await S.listProducts()).find(x => x.id === fp.id).stock, 0);     // rədd olunan qəbul qalığa toxunmur
+  });
+
+  await t('FIFO: 2 təchizatçıdan qəbul, satış ən köhnədən çıxır, hesabat təchizatçılara bölür', async () => {
+    await S.receiveStock(fp.id, 5, 100, 'qaimə 1', alfa.id);
+    await S.receiveStock(fp.id, 5, 120, 'qaimə 2', beta.id);
+    if (!(await S.currentShift())) await S.openShift(1000);
+    await S.checkout([{ productId: fp.id, qty: 7 }], null, { method: 'cash', cashReceived: 7000 });
+    const rep = await S.supplierReport({});
+    const a = repRow(rep, 'Alfa MMC'), b = repRow(rep, 'Beta Toys');
+    assert.strictEqual(a.soldQty, 5); assert.strictEqual(b.soldQty, 2);
+    assert.strictEqual(a.cost, 500); assert.strictEqual(b.cost, 240);
+    assert.strictEqual(a.revenue, 5000); assert.strictEqual(b.revenue, 2000);
+    assert.strictEqual(a.profit, 4500);
+    assert.strictEqual(a.onHandQty, 0); assert.strictEqual(b.onHandQty, 3);
+    const lots = await S.productLots(fp.id);
+    assert.deepStrictEqual(lots.map(l => [l.supplier, l.qty, l.remaining]), [['Alfa MMC', 5, 0], ['Beta Toys', 5, 3]]);
+    const bySup = await S.stockBySupplier();
+    assert.deepStrictEqual(bySup[fp.id], [{ name: 'Beta Toys', qty: 3 }]);
+  });
+
+  await t('qaytarma malı çıxdığı partiyalara qaytarır; növbəti satış yenə ən köhnədən', async () => {
+    const sale = (await S.recentSales(1))[0];
+    await S.createReturn(sale.id, [{ lineIndex: 0, qty: 3 }], manager);
+    let rep = await S.supplierReport({});
+    assert.strictEqual(repRow(rep, 'Alfa MMC').returnedQty, 1); assert.strictEqual(repRow(rep, 'Beta Toys').returnedQty, 2);
+    assert.strictEqual(repRow(rep, 'Alfa MMC').qty, 4); assert.strictEqual(repRow(rep, 'Beta Toys').qty, 0);
+    assert.strictEqual(repRow(rep, 'Alfa MMC').onHandQty, 1); assert.strictEqual(repRow(rep, 'Beta Toys').onHandQty, 5);
+    await S.checkout([{ productId: fp.id, qty: 2 }], null, { method: 'cash', cashReceived: 2000 });
+    rep = await S.supplierReport({});
+    assert.strictEqual(repRow(rep, 'Alfa MMC').onHandQty, 0); assert.strictEqual(repRow(rep, 'Beta Toys').onHandQty, 4);
+    const lots = await S.productLots(fp.id);
+    assert.strictEqual(lots.reduce((n, l) => n + l.remaining, 0), (await S.listProducts()).find(x => x.id === fp.id).stock);
+  });
+
+  await t('mənfi qalıqla satış: qəbul gələnə qədər "təchizatçısız", qəbuldan sonra təchizatçıya aid olur', async () => {
+    const np = (await S.createProduct({ name: 'Əvvəl satılan', price: 500, cost: 50 })).product;
+    await S.checkout([{ productId: np.id, qty: 2 }], null, { method: 'cash', cashReceived: 1000 });
+    let rep = await S.supplierReport({});
+    assert.ok(repRow(rep, 'Təchizatçısız (köhnə qalıq / mənfi satış)').products.some(p => p.productId === np.id && p.soldQty === 2));
+    await S.receiveStock(np.id, 10, 50, '', alfa.id);
+    rep = await S.supplierReport({});
+    assert.ok(!repRow(rep, 'Təchizatçısız (köhnə qalıq / mənfi satış)').products.some(p => p.productId === np.id), 'borc partiyaya bağlandı');
+    assert.strictEqual(repRow(rep, 'Alfa MMC').products.find(p => p.productId === np.id).soldQty, 2);
+    const lots = await S.productLots(np.id);
+    assert.strictEqual(lots.reduce((n, l) => n + l.remaining, 0), 8);
+  });
+
+  await t('dövr filtri: gələcək dövrdə satış yoxdur; maya yalnız "alış qiymətini görmək" icazəsi olanda göstərilir', async () => {
+    const future = await S.supplierReport({ from: '2099-01-01T00:00:00.000Z', to: '2099-02-01T00:00:00.000Z' });
+    assert.strictEqual(future.totals.soldQty, 0);
+    assert.ok(future.totals.onHandQty > 0, 'qalıq dövrdən asılı deyil');
+    S.logout(); S._session.user = { id: 'u_muhasib1', name: 'Mühasib 1', role: 'muhasib' };     // əvvəlki testdə bloklanıb: sessiyanı birbaşa quraq
+    assert.strictEqual((await S.supplierReport({})).seeCost, true);
+    const m = (await DB.get('meta', 'matrix')).value; const keep = JSON.parse(JSON.stringify(m));
+    m.muhasib = m.muhasib.filter(x => x !== 'product.cost.view'); await DB.put('meta', { key: 'matrix', value: m });
+    const hidden = await S.supplierReport({});
+    assert.strictEqual(hidden.seeCost, false); assert.strictEqual(hidden.rows[0].cost, null); assert.strictEqual(hidden.rows[0].profit, null);
+    assert.ok((await S.productLots(fp.id)).every(l => l.unitCost === null));
+    await DB.put('meta', { key: 'matrix', value: keep });
   });
 
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);

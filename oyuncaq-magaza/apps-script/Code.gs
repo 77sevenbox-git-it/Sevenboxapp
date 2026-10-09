@@ -18,7 +18,7 @@
 // Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
-var VERSION = 4;
+var VERSION = 5;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -37,7 +37,8 @@ var SHEETS = {
   SaleLines: ['saleId', 'receiptNo', 'lineIndex', 'productId', 'name', 'storeBarcode', 'qty', 'price', 'unitCost', 'negative'],
   Returns: ['id', 'saleId', 'receiptNo', 'at', 'amount', 'cashAmount', 'bankAmount', 'bankType', 'approvedBy', 'reason'],
   Products: ['id', 'name', 'category', 'brand', 'ageGroup', 'storeBarcode', 'mfrBarcode', 'price', 'avgCost', 'lastCost', 'minStock', 'active', 'updatedAt'],
-  StockReceipts: ['at', 'productId', 'qty', 'unitCost', 'userId'],
+  StockReceipts: ['at', 'productId', 'qty', 'unitCost', 'userId', 'supplierId', 'lotId', 'note'],
+  Suppliers: ['id', 'name', 'phone', 'note', 'active', 'updatedAt'],
   Shifts: ['id', 'status', 'openedAt', 'openedBy', 'openingCash', 'closedAt', 'closedBy', 'expectedCash', 'countedCash', 'diff', 'note'],
   CashMoves: ['id', 'shiftId', 'type', 'amount', 'reason', 'at', 'userId', 'approvedBy'],
   Audit: ['at', 'type', 'userId', 'json'],
@@ -46,7 +47,7 @@ var SHEETS = {
 };
 
 // Bu hadisələr öz vərəqlərində var, "Audit"-də təkrarlanmır (Audit = təhlükəsizlik və əməliyyat jurnalı)
-var HEAVY = { 'sale.created': 1, 'return.created': 1, 'product.created': 1, 'product.updated': 1, 'stock.received': 1,
+var HEAVY = { 'sale.created': 1, 'return.created': 1, 'product.created': 1, 'product.updated': 1, 'stock.received': 1, 'supplier.upserted': 1,
   'shift.opened': 1, 'shift.closed': 1, 'cash.in': 1, 'cash.out': 1 };
 
 function setup() {
@@ -353,8 +354,13 @@ function project(batch, it) {
       break;
     }
     case 'stock.received':
-      batch.table('StockReceipts').add([it.at, d.productId, d.qty, d.unitCost / 100, it.userId || '']);
+      batch.table('StockReceipts').add([d.at || it.at, d.productId, d.qty, d.unitCost / 100, it.userId || '', d.supplierId || '', d.lotId || '', d.note || '']);
       break;
+    case 'supplier.upserted': {
+      var sp = d.supplier;
+      batch.table('Suppliers').upsert([sp.id, sp.name, sp.phone || '', sp.note || '', sp.active, sp.updatedAt]);
+      break;
+    }
     case 'shift.opened':
     case 'shift.closed': {
       var sh = d.shift;

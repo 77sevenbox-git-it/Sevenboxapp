@@ -99,7 +99,7 @@
       return pingP;
     }).then(function (p) {
       var v = (p && p.version) || 0;
-      return 'Bağlantı işləyir' + (v < 4 ? '. Diqqət: skript köhnədir (v' + v + '). Sürətli sinxron və keş düzəlişi üçün yeni Code.gs-i yapışdırıb "New version" deploy edin' : '');
+      return 'Bağlantı işləyir' + (v < 5 ? '. Diqqət: skript köhnədir (v' + v + '). ' + (v < 4 ? 'Sürətli sinxron və keş düzəlişi üçün, ' : '') + 'təchizatçı və partiya cədvəllərinin Sheets-ə yazılması üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)' : '');
     }).catch(function (e) { throw new Error(explain(e)); });
   }
 
@@ -193,7 +193,25 @@
         });
       }
 
-      return step(0).then(function () { return legacy ? ensureBlocksLegacy(c) : null; }).then(function () {
+      // Köhnə versiyadan yenilənmiş cihaz: keçmişdə buraxılmış təchizatçı/partiya hadisələrini bir dəfəlik oxuyur (hər dövrdə bir səhifə)
+      function backfillPass() {
+        return DB.get('meta', 'backfill').then(function (m) {
+          var b = m && m.value; if (!b || b.done) return;
+          return post(c.url, { action: 'sync', token: c.token, device: c.device, since: b.next, items: [], limit: 500 }).then(function (res) {
+            var events = res.events || [];
+            return Replica.backfill(events).then(function (sum) {
+              var next = res.next || b.next;
+              var done = !events.length || !res.more || next >= b.upTo;
+              return DB.put('meta', { key: 'backfill', value: { upTo: b.upTo, next: next, done: done } }).then(function () {
+                Object.keys(sum.touched).forEach(function (k) { touched[k] = true; });
+                if (!done) fastUntil = Math.max(fastUntil, Date.now() + 3000);
+              });
+            });
+          });
+        }).catch(function () { /* doldurma alınmadısa növbəti dövrdə təkrar */ });
+      }
+
+      return step(0).then(function () { return legacy ? ensureBlocksLegacy(c) : null; }).then(backfillPass).then(function () {
         if (skew !== null) state.skewMs = Math.round(skew);
         if (total.received) fastUntil = Math.max(fastUntil, Date.now() + T.boost);   // söhbət gedir: növbəti cavab tez gəlsin
         if (Object.keys(touched).length) emit('applied', touched);

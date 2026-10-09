@@ -5,7 +5,7 @@
   'use strict';
   var DB = root.DB, Rules = root.Rules;
   var EPOCH = '1970-01-01T00:00:00.000Z';
-  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'meta', 'audit'];
+  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'meta', 'audit'];
   var MASTER_FIELDS = ['name', 'category', 'brand', 'ageGroup', 'mfrBarcode', 'price', 'minStock', 'active'];
 
   // Outbox id-sindən audit id-sini çıxarır: yeni "vaxt_000123_a_uuid" və köhnə "vaxt_a_uuid" formatı
@@ -95,6 +95,16 @@
     });
   };
 
+  // Mal qəbulu partiyası (FIFO üçün): bütün cihazlarda eyni id, eyni vaxt, eyni təchizatçı. Təkrar tətbiqdə dəyişmir.
+  function putLot(t, ev, d, sum) {
+    if (!d.lotId) return Promise.resolve();            // köhnə versiyalı cihazdan gələn qəbul: partiyası yoxdur, qalıq "açılış partiyasında" sayılır
+    return t.get('lots', d.lotId).then(function (cur) {
+      if (cur) return;
+      sum.touched.lots = true;
+      return t.put('lots', { id: d.lotId, productId: d.productId, supplierId: d.supplierId || null, qty: d.qty, unitCost: d.unitCost, at: d.at || ev.at, userId: ev.userId, note: d.note || '' });
+    });
+  }
+
   H['stock.received'] = function (t, ev, d, sum) {
     return t.get('products', d.productId).then(function (p) {
       if (!p) return;
@@ -103,9 +113,36 @@
       sum.touched.products = true;
       return t.put('products', p).then(function () {
         return t.put('stockMoves', { id: 'sm_' + ev.id, productId: p.id, type: 'receipt', qty: d.qty, before: before, after: p.stock, unitCost: d.unitCost, note: 'başqa cihaz', at: ev.at, userId: ev.userId });
-      });
+      }).then(function () { return putLot(t, ev, d, sum); });
     });
   };
+
+  function putSupplier(t, d, sum) {
+    var ns = d.supplier; if (!ns || !ns.id) return Promise.resolve();
+    return t.get('suppliers', ns.id).then(function (cur) {
+      if (cur && !newer(ns.updatedAt || EPOCH, ns, cur.updatedAt || EPOCH, cur)) return;
+      sum.touched.suppliers = true;
+      return t.put('suppliers', ns);
+    });
+  }
+  H['supplier.upserted'] = function (t, ev, d, sum) { return putSupplier(t, d, sum); };
+
+  // Köhnə versiyadan yeniləndikdən sonra bir dəfəlik "doldurma": keçmişdə buraxılmış təchizatçı və partiya hadisələri yenidən oxunur.
+  // Yalnız təkrar tətbiq təhlükəsiz (idempotent) hadisələr işlənir; qalıq, çek və s. toxunulmaz qalır.
+  var BACKFILL = {
+    'supplier.upserted': function (t, ev, d, sum) { return putSupplier(t, d, sum); },
+    'stock.received': function (t, ev, d, sum) { return putLot(t, ev, d, sum); }
+  };
+  function backfill(events) {
+    var sum = { applied: 0, touched: {} };
+    return DB.atomic(['suppliers', 'lots'], function (t) {
+      return each(events, function (ev) {
+        var fn = BACKFILL[ev.type]; if (!fn) return;
+        sum.applied++;
+        return fn(t, ev, ev.data || {}, sum);
+      });
+    }).then(function () { return sum; });
+  }
 
   H['sale.created'] = function (t, ev, d, sum) {
     var sale = d.sale; if (!sale || !sale.id) return;
@@ -221,6 +258,6 @@
   function cursor() { return DB.get('meta', 'syncCursor').then(function (m) { return m ? m.value : 0; }); }
   function setCursor(n) { return DB.put('meta', { key: 'syncCursor', value: n }); }
 
-  root.Replica = { apply: apply, cursor: cursor, setCursor: setCursor, auditIdOf: auditIdOf };
+  root.Replica = { apply: apply, backfill: backfill, cursor: cursor, setCursor: setCursor, auditIdOf: auditIdOf };
   if (typeof module !== 'undefined') module.exports = root.Replica;
 })(typeof window !== 'undefined' ? window : globalThis);

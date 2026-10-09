@@ -1,5 +1,5 @@
 /* node tests/fuzz.test.js [seedSayı] — çoxcihazlı təsadüfi (fuzz) yoxlama.
-   3 "brauzer" paralel işləyir: məhsul yaradır, mal qəbul edir, növbə açıb bağlayır, satır, qaytarır, qiymət dəyişir, PIN dəyişir.
+   3 "brauzer" paralel işləyir: məhsul yaradır, təchizatçı yaradır/adını dəyişir, təchizatçıdan mal qəbul edir, növbə açıb bağlayır, satır, qaytarır, qiymət dəyişir, PIN dəyişir.
    Şəbəkə pozulur: təsadüfi gecikmə, sorğu itir, CAVAB itir (server işləyib, cihaz bilmir), HTML cavab, 500.
    Sonda şəbəkə düzəlir və yoxlanılır: bütün cihazlarda eyni məlumat, qalıq = hadisələrin cəmi, çek nömrələri və barkodlar unikal, dublikat yoxdur. */
 const assert = require('assert');
@@ -43,13 +43,13 @@ function faultyFetch(be, ctl) {
 function makeDevice(fetchFn) {
   const ctx = { console, setTimeout, clearTimeout, TextEncoder, DOMException, crypto: require('crypto').webcrypto, indexedDB: new IDBFactory(), IDBKeyRange, navigator: { onLine: true }, fetch: fetchFn };
   ctx.window = ctx; ctx.globalThis = ctx; vm.createContext(ctx);
-  ['money', 'barcode', 'rules', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx, { filename: f + '.js' }));
+  ['money', 'barcode', 'rules', 'fifo', 'db', 'services', 'replica', 'sync'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx, { filename: f + '.js' }));
   ctx.Sync.kick = () => {};
   return ctx;
 }
 
 // Gözlənilən (iş qaydası) xətalar: bunlar səhv deyil. Qalan hər xəta tapıntıdır.
-const BUSINESS = /mənfi çekdə|növbəni açın|Artıq açıq növbə|azdır|ən çox|müddəti bitib|menecer təsdiqi|İzah yazın|Qalıq yoxdur|limit|qaytarıla bilməz|Bağlanmış|bağlanıb|tapılmadı|icazəniz yoxdur|PIN səhvdir|bloklanıb|Nömrə ehtiyatı|Açıq növbə yoxdur/i;
+const BUSINESS = /mənfi çekdə|növbəni açın|Artıq açıq növbə|azdır|ən çox|müddəti bitib|menecer təsdiqi|İzah yazın|Qalıq yoxdur|limit|qaytarıla bilməz|Bağlanmış|bağlanıb|tapılmadı|icazəniz yoxdur|PIN səhvdir|bloklanıb|Nömrə ehtiyatı|Açıq növbə yoxdur|artıq var|söndürülüb/i;
 
 async function runSeed(seed) {
   const rnd = mulberry32(seed * 7919 + 13);
@@ -78,10 +78,16 @@ async function runSeed(seed) {
       if (x < 0.12) {
         await login(d, 'u_menecer', '2222');
         await S.createProduct({ name: 'Mal ' + Math.floor(rnd() * 1e6), price: 100 + Math.floor(rnd() * 900), cost: 50 + Math.floor(rnd() * 50) });
+      } else if (x < 0.15) {
+        await login(d, 'u_menecer', '2222');
+        const sups = await S.listSuppliers({ all: true });
+        if (sups.length && rnd() < 0.4) await S.updateSupplier(pick(sups).id, rnd() < 0.5 ? { name: 'Təch ' + Math.floor(rnd() * 1e6) } : { note: 'qeyd ' + Math.floor(rnd() * 100) });
+        else await S.createSupplier({ name: 'Təch ' + Math.floor(rnd() * 1e6), phone: '+99450' + Math.floor(1e6 + rnd() * 8e6) });
       } else if (x < 0.27) {
         await login(d, 'u_menecer', '2222');
         const ps = await S.listProducts(); if (!ps.length) return;
-        await S.receiveStock(pick(ps).id, 1 + Math.floor(rnd() * 12), 40 + Math.floor(rnd() * 80));
+        const sups = await S.listSuppliers();
+        await S.receiveStock(pick(ps).id, 1 + Math.floor(rnd() * 12), 40 + Math.floor(rnd() * 80), '', sups.length && rnd() < 0.8 ? pick(sups).id : undefined);
       } else if (x < 0.34) {
         await login(d, 'u_kassir', '1111');
         if (!(await S.currentShift())) await S.openShift(1000 + Math.floor(rnd() * 5000), 'sınaq');
@@ -149,7 +155,9 @@ async function runSeed(seed) {
     const returns = j(await d.DB.getAll('returns')).map(r => r.id).sort();
     const shifts = j(await d.DB.getAll('shifts')).map(s => ({ id: s.id, status: s.status })).sort((a, b) => a.id < b.id ? -1 : 1);
     const store = j((await d.DB.get('meta', 'store')).value);
-    return { products, users, sales, returns, shifts, store };
+    const suppliers = j(await d.DB.getAll('suppliers')).map(x => ({ id: x.id, name: x.name, phone: x.phone, note: x.note, active: x.active, updatedAt: x.updatedAt })).sort((a, b) => a.id < b.id ? -1 : 1);
+    const lots = j(await d.DB.getAll('lots')).map(x => ({ id: x.id, productId: x.productId, supplierId: x.supplierId, qty: x.qty, unitCost: x.unitCost, at: x.at })).sort((a, b) => a.id < b.id ? -1 : 1);
+    return { products, users, sales, returns, shifts, store, suppliers, lots };
   };
   const snaps = [];
   for (const d of devs) snaps.push(await snap(d));
@@ -195,13 +203,40 @@ async function runSeed(seed) {
   });
   s0.products.forEach(p => { if ((exp[p.id] || 0) !== p.stock) problems.push(`qalıq səhvdir: ${p.name} gözlənilən ${exp[p.id] || 0}, cihazda ${p.stock}`); });
 
+  // FIFO: bütün cihazlarda eyni hesabat; partiyaların qalığı − borc = məhsul qalığı; təchizatçılar üzrə cəm = ümumi satış/qaytarma
+  const reps = [];
+  for (const d of devs) { await d.Services.login('u_menecer', '2222'); reps.push(await d.Services.supplierReport({})); }
+  for (let i = 1; i < DEVICES; i++) if (JSON.stringify(reps[0]) !== JSON.stringify(reps[i])) problems.push(`təchizatçı hesabatı cihaz 0 və cihaz ${i}-də fərqlidir`);
+  {
+    const d = devs[0], lots = await d.DB.getAll('lots'), salesAll = await d.DB.getAll('sales'), retsAll = await d.DB.getAll('returns'), prods = await d.DB.getAll('products');
+    const stock = {}, avgCost = {}; prods.forEach(p => { stock[p.id] = p.stock; avgCost[p.id] = p.avgCost || 0; });
+    const res = d.Fifo.replay({ lots, sales: salesAll, returns: retsAll, stock, avgCost });
+    prods.forEach(p => {
+      const rem = Object.keys(res.lots).map(k => res.lots[k]).filter(l => l.productId === p.id).reduce((n, l) => n + l.remaining, 0);
+      const def = res.deficits[p.id] || 0;
+      if (rem - def !== p.stock) {
+        problems.push(`FIFO qalığı uyğun deyil: ${p.name} partiyalar ${rem} − borc ${def} ≠ qalıq ${p.stock}`);
+        if (process.env.FUZZ_DUMP) fs.writeFileSync(process.env.FUZZ_DUMP, JSON.stringify({ pid: p.id, stock: p.stock, avg: p.avgCost, lots: lots.filter(l => l.productId === p.id), sales: salesAll.filter(x => x.lines.some(l => l.productId === p.id)), returns: retsAll.filter(x => x.lines.some(l => l.productId === p.id)) }, null, 1));
+      }
+      if (rem > 0 && def > 0) problems.push(`FIFO: ${p.name} həm qalıq (${rem}) həm borc (${def}) göstərir`);
+    });
+    const sold = salesAll.reduce((n, sl) => n + sl.lines.reduce((m, l) => m + l.qty, 0), 0), back = retsAll.reduce((n, r) => n + r.lines.reduce((m, l) => m + l.qty, 0), 0);
+    if (reps[0].totals.soldQty !== sold) problems.push(`hesabatda satılan ${reps[0].totals.soldQty} ≠ çeklərdə ${sold}`);
+    if (reps[0].totals.returnedQty !== back) problems.push(`hesabatda qaytarılan ${reps[0].totals.returnedQty} ≠ qaytarmalarda ${back}`);
+    const revenue = salesAll.reduce((n, sl) => n + sl.totals.total, 0) - retsAll.reduce((n, r) => n + r.amount, 0);
+    if (Math.abs(reps[0].totals.revenue - revenue) > reps[0].rows.length + 5) problems.push(`hesabat gəliri ${reps[0].totals.revenue} ≠ çeklər−qaytarma ${revenue}`);
+  }
+  const nRecv = be.rows('Events').filter(r => r[2] === 'stock.received').length;
+  if (be.rows('StockReceipts').length !== nRecv) problems.push(`StockReceipts vərəqi ${be.rows('StockReceipts').length} sətir, hadisə ${nRecv}`);
+  if (be.rows('Suppliers').length !== s0.suppliers.length) problems.push(`Suppliers vərəqi ${be.rows('Suppliers').length} sətir, cihazda ${s0.suppliers.length}`);
+
   // Sheets-dəki cədvəllər
   if (be.rows('Sales').length !== s0.sales.length) problems.push(`Sales vərəqi ${be.rows('Sales').length} sətir, cihazda ${s0.sales.length} çek`);
   if (be.rows('Products').length !== s0.products.length) problems.push(`Products vərəqi ${be.rows('Products').length} sətir, cihazda ${s0.products.length} məhsul`);
   if (be.rows('Users').length !== 5) problems.push('Users vərəqində 5 istifadəçi olmalıdır: ' + be.rows('Users').length);
   const errs = be.rows('Events').filter(r => r[2] === 'server.project_error'); if (errs.length) problems.push('server layihə xətası: ' + errs.length);
 
-  return { problems, stats: { events: total, sales: s0.sales.length, products: s0.products.length } };
+  return { problems, stats: { events: total, sales: s0.sales.length, products: s0.products.length, suppliers: s0.suppliers.length, lots: s0.lots.length } };
 }
 
 (async () => {
@@ -211,7 +246,7 @@ async function runSeed(seed) {
     let r;
     try { r = await runSeed(seed); } catch (e) { r = { problems: ['SINAQ ÇÖKDÜ: ' + (e.stack || e.message)], stats: {} }; }
     if (r.problems.length) { bad++; console.log(`✗ seed ${seed}: ${JSON.stringify(r.stats)}`); r.problems.slice(0, 8).forEach(p => console.log('    - ' + p)); }
-    else console.log(`✓ seed ${seed}: ${r.stats.events} hadisə, ${r.stats.sales} çek, ${r.stats.products} məhsul`);
+    else console.log(`✓ seed ${seed}: ${r.stats.events} hadisə, ${r.stats.sales} çek, ${r.stats.products} məhsul, ${r.stats.suppliers} təchizatçı, ${r.stats.lots} partiya`);
   }
   console.log(`\n${n - bad} keçdi, ${bad} uğursuz`);
   process.exit(bad ? 1 : 0);

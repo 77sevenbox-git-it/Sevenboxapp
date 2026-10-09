@@ -55,10 +55,11 @@ t('mal qəbulu ayrıca icazədir: Menecer və Admin-də var, Kassir və Mühasib
   assert.ok(!Rules.can(null, 'kassir', 'stock.receive') && !Rules.can(null, 'muhasib', 'stock.receive'));
 });
 t('köhnə matris yenilənir: product.edit olan rola stock.receive əlavə olunur, təkrar çağırış dəyişmir, orijinal dəyişmir', () => {
-  const old = { menecer: ['product.edit'], kassir: ['pos.sell'] };
+  const old = { menecer: ['product.edit'], kassir: ['pos.sell'], muhasib: ['report.view'] };
   const up = Rules.upgradeMatrix(old);
-  assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive']);
+  assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);   // 4: təchizatçı icazələri
   assert.deepStrictEqual(up.kassir, ['pos.sell']);
+  assert.deepStrictEqual(up.muhasib, ['report.view', 'supplier.view']);      // hesabata baxan təchizatçı hesabatını görür, dəyişə bilmir
   assert.deepStrictEqual(old.menecer, ['product.edit']);
   assert.deepStrictEqual(Rules.upgradeMatrix(up), up);
 });

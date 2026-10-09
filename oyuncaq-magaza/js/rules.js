@@ -24,6 +24,8 @@
     'product.cost.view': 'Alış qiymətini görmək',
     'label.print': 'Etiket çap etmək',
     'report.view': 'Hesabatlara baxmaq',
+    'supplier.view': 'Təchizatçılara və təchizatçı hesabatına baxmaq',
+    'supplier.manage': 'Təchizatçı əlavə etmək və dəyişmək',
     'admin.users': 'İstifadəçiləri idarə etmək',
     'admin.permissions': 'İcazə matrisini dəyişmək'
   };
@@ -31,18 +33,22 @@
   var DEFAULT_MATRIX = {
     admin: Object.keys(PERMISSIONS),
     menecer: ['pos.sell', 'pos.discount.request', 'pos.discount.approve', 'pos.line.delete', 'pos.return.request', 'pos.return.approve',
-      'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view'],
+      'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view', 'supplier.view', 'supplier.manage'],
     kassir: ['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print'],
-    muhasib: ['product.view', 'product.cost.view', 'report.view']
+    muhasib: ['product.view', 'product.cost.view', 'report.view', 'supplier.view']
   };
 
   // İcazə matrisinin versiyası. 3-dən əvvəl "stock.receive" yox idi, mal qəbulu "product.edit" ilə gedirdi.
-  var MATRIX_VERSION = 3;
+  // 4: təchizatçı icazələri. "supplier.manage" mal qəbul edən rollara, "supplier.view" mal qəbul edən və ya hesabata baxan rollara verilir.
+  var MATRIX_VERSION = 4;
   function upgradeMatrix(m) {
     var out = {};
     Object.keys(m || {}).forEach(function (role) {
       var list = (m[role] || []).slice();
-      if (list.indexOf('product.edit') !== -1 && list.indexOf('stock.receive') === -1) list.push('stock.receive');
+      function add(p) { if (list.indexOf(p) === -1) list.push(p); }
+      if (list.indexOf('product.edit') !== -1) add('stock.receive');
+      if (list.indexOf('stock.receive') !== -1) add('supplier.manage');
+      if (list.indexOf('stock.receive') !== -1 || list.indexOf('report.view') !== -1) add('supplier.view');
       out[role] = list;
     });
     return out;
