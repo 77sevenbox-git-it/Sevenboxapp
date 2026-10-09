@@ -1,0 +1,10 @@
+{
+  "name": "Mağaza İdarəetmə Sistemi",
+  "short_name": "Mağaza İS",
+  "lang": "az",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F4F3EF",
+  "theme_color": "#1F5FAD",
+  "icons": [{ "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
