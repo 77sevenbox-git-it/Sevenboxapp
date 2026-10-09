@@ -3,13 +3,26 @@
  * Kassa outbox qeydlərini qəbul edir və Google Sheets vərəqlərinə yazır.
  *
  * Quraşdırma:
- *  1. Yeni Google Sheets faylı yaradın → Extensions → Apps Script → bu kodu yapışdırın.
+ *  1. Verilənlər bazası faylını açın → Extensions → Apps Script → bu kodu yapışdırın.
+ *     (Ayrıca script.google.com layihəsində də işləyir: fayl SPREADSHEET_ID ilə açılır.)
  *  2. Project Settings → Script properties: SYNC_TOKEN = uzun təsadüfi sətir (kassanın ayarlarına da eyni yazılır).
  *  3. setup() funksiyasını bir dəfə işə salın (vərəqləri yaradır).
  *  4. Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone → URL-i kassaya yazın.
  *
  * Təhlükəsizlik (SEC-15): Sheets faylını yalnız Admin-lə paylaşın. Yazı yalnız bu skript vasitəsilə olur.
  */
+
+// Verilənlər bazası faylının ID-si (Drive: "Mağaza İS — Verilənlər bazası").
+// Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
+// ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
+var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
+
+function db() {
+  var active = SpreadsheetApp.getActiveSpreadsheet();
+  if (active) return active;
+  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || SPREADSHEET_ID;
+  return SpreadsheetApp.openById(id);
+}
 
 var SHEETS = {
   Events: ['id', 'at', 'type', 'userId', 'receivedAt', 'json'],
@@ -25,12 +38,13 @@ var SHEETS = {
 };
 
 function setup() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = db();
   Object.keys(SHEETS).forEach(function (name) {
     var sh = ss.getSheetByName(name) || ss.insertSheet(name);
     if (sh.getLastRow() === 0) sh.appendRow(SHEETS[name]);
     sh.setFrozenRows(1);
   });
+  Logger.log('Hazırdır: "' + ss.getName() + '" faylında ' + Object.keys(SHEETS).length + ' vərəq yoxlanıldı.');
 }
 
 function json(obj) {
@@ -39,7 +53,7 @@ function json(obj) {
 
 // Bağlantı yoxlaması: veb tətbiq ünvanını brauzerdə açanda {"ok":true,...} görünməlidir.
 function doGet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = db();
   var hasToken = !!PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN');
   var missing = Object.keys(SHEETS).filter(function (n) { return !ss.getSheetByName(n); });
   return json({ ok: true, service: 'magaza-is', version: 2, tokenSet: hasToken, missingSheets: missing });
@@ -57,7 +71,7 @@ function doPost(e) {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(20000)) return json({ ok: false, error: 'Server məşğuldur, sonra təkrar olunacaq' });
   try {
-    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var ss = db();
     var events = ss.getSheetByName('Events');
     var seen = {};
     if (events.getLastRow() > 1) {
