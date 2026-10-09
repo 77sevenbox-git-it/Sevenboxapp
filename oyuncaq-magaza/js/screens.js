@@ -388,19 +388,26 @@
     function f(id, label, val, attrs) { var i = h('input', Object.assign({ class: 'input', id: id, value: val || '' }, attrs || {})); return { i: i, el: h('div', { class: 'field' }, h('label', { for: id }, label), i) }; }
     var name = f('s-name', 'Mağaza adı', store.name), voen = f('s-voen', 'VÖEN', store.voen), addr = f('s-addr', 'Ünvan', store.address), reg = f('s-reg', 'Kassa adı', store.registerName);
     var url = f('s-url', 'Apps Script veb tətbiq ünvanı', '', { placeholder: 'https://script.google.com/macros/s/…/exec' });
-    var tok = f('s-tok', 'Sinxron açarı (SYNC_TOKEN)', '', { type: 'password', autocomplete: 'off' });
+    var tok = f('s-tok', 'Sinxron açarı (SYNC_TOKEN)', '', { type: 'password', autocomplete: 'off', placeholder: 'Dəyişmək üçün yazın' });
     root.Sync.endpoint().then(function (u) { url.i.value = u; });
+    root.DB.get('meta', 'syncToken').then(function (t) { if (t && t.value) tok.i.placeholder = 'Saxlanılıb · dəyişmək üçün yazın'; });
     return h('div', { class: 'card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
       h('h2', { style: 'margin:0;font-size:18px' }, 'Mağaza və server'),
       h('div', { class: 'grid2' }, name.el, voen.el, addr.el, reg.el, url.el, tok.el),
       h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Ünvan boşdursa, sistem yalnız bu kompyuterdə işləyir və qeydlər sinxron üçün növbədə qalır.'),
       h('div', { class: 'row' },
         h('button', { class: 'btn primary', onclick: function () {
+          var u = url.i.value.trim();
+          var bad = u && root.Sync.checkUrl(u);
+          if (bad) return UI.toast(bad, 'bad');
           S.setStoreInfo({ name: name.i.value.trim(), voen: voen.i.value.trim(), address: addr.i.value.trim(), registerName: reg.i.value.trim() })
-            .then(function () { return root.Sync.setEndpoint(url.i.value.trim(), tok.i.value); })
-            .then(function () { UI.toast('Yadda saxlanıldı'); root.App.refreshStatus(); })
+            .then(function () { return root.Sync.setEndpoint(u, tok.i.value); })
+            .then(function () { tok.i.value = ''; UI.toast('Yadda saxlanıldı'); root.App.refreshStatus(); })
             .catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, 'Yadda saxla'),
+        h('button', { class: 'btn', onclick: function () {
+          root.Sync.test().then(function (msg) { UI.toast(msg); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+        } }, 'Bağlantını yoxla'),
         h('button', { class: 'btn', onclick: function () {
           root.Sync.flush().then(function (r) {
             UI.toast(r.error ? 'Sinxron alınmadı: ' + r.error : r.skipped ? 'Ünvan yoxdur və ya oflayn' : r.sent + ' qeyd göndərildi', r.error ? 'bad' : '');

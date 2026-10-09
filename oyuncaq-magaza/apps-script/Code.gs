@@ -37,6 +37,14 @@ function json(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
+// Bağlantı yoxlaması: veb tətbiq ünvanını brauzerdə açanda {"ok":true,...} görünməlidir.
+function doGet() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var hasToken = !!PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN');
+  var missing = Object.keys(SHEETS).filter(function (n) { return !ss.getSheetByName(n); });
+  return json({ ok: true, service: 'magaza-is', version: 2, tokenSet: hasToken, missingSheets: missing });
+}
+
 function doPost(e) {
   var body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json({ ok: false, error: 'JSON səhvdir' }); }
