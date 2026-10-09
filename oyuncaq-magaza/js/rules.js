@@ -19,6 +19,7 @@
     'shift.open_close': 'Növbə açıb bağlamaq',
     'product.view': 'Məhsullara baxmaq',
     'product.edit': 'Məhsul yaratmaq və dəyişmək',
+    'stock.receive': 'Mal qəbul etmək (qalığı artırmaq)',
     'product.price.set': 'Satış qiymətini təyin etmək',
     'product.cost.view': 'Alış qiymətini görmək',
     'label.print': 'Etiket çap etmək',
@@ -30,10 +31,22 @@
   var DEFAULT_MATRIX = {
     admin: Object.keys(PERMISSIONS),
     menecer: ['pos.sell', 'pos.discount.request', 'pos.discount.approve', 'pos.line.delete', 'pos.return.request', 'pos.return.approve',
-      'shift.open_close', 'product.view', 'product.edit', 'product.price.set', 'product.cost.view', 'label.print', 'report.view'],
+      'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view'],
     kassir: ['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print'],
     muhasib: ['product.view', 'product.cost.view', 'report.view']
   };
+
+  // İcazə matrisinin versiyası. 3-dən əvvəl "stock.receive" yox idi, mal qəbulu "product.edit" ilə gedirdi.
+  var MATRIX_VERSION = 3;
+  function upgradeMatrix(m) {
+    var out = {};
+    Object.keys(m || {}).forEach(function (role) {
+      var list = (m[role] || []).slice();
+      if (list.indexOf('product.edit') !== -1 && list.indexOf('stock.receive') === -1) list.push('stock.receive');
+      out[role] = list;
+    });
+    return out;
+  }
 
   var ROLE_NAMES = { admin: 'Admin', menecer: 'Menecer', kassir: 'Kassir', muhasib: 'Mühasib' };
 
@@ -156,7 +169,7 @@
 
   var Rules = {
     TZ: TZ, MAX_DISCOUNT_PERCENT: MAX_DISCOUNT_PERCENT, NEGATIVE_SALE_LIMIT: NEGATIVE_SALE_LIMIT, RETURN_DAYS: RETURN_DAYS,
-    PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, ROLE_NAMES: ROLE_NAMES, can: can,
+    PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
     cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
     validatePayment: validatePayment, localDate: localDate, returnWindow: returnWindow, returnableQty: returnableQty,
     refundAmount: refundAmount, expectedCash: expectedCash, shiftSummary: shiftSummary

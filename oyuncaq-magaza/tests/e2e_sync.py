@@ -110,6 +110,12 @@ try:
         logout(p1)
         login(p1, 'Kassir', '1111')
         set_pin(p1, '1111', '5530')
+        # Mal qəbulu ayrıca icazədir: kassir məhsulları görür, etiket çap edir, amma qəbul edə və məhsul yarada bilmir
+        p1.get_by_role('navigation').get_by_role('button', name='Məhsullar').click()
+        p1.wait_for_selector('text=Puzzl 500 hissə')
+        check(p1.get_by_role('button', name='Qəbul').count() == 0 and p1.get_by_role('button', name='Yeni məhsul').count() == 0,
+              'kassir "Məhsullar"da "Qəbul" və "Yeni məhsul" düymələrini görmür')
+        check(p1.get_by_role('button', name='Etiket').count() == 5, 'kassir etiket çap edə bilir')
         p1.get_by_role('navigation').get_by_role('button', name='Kassa').click()
         p1.fill('#open-cash', '20,00'); p1.get_by_role('button', name='Növbəni aç').click()
         p1.wait_for_selector('#scan')
@@ -122,6 +128,17 @@ try:
         logout(p2)
         login(p2, 'Menecer', '2222')
         set_pin(p2, '2222', '6149')
+        # Menecer mal qəbul edir → qalıq kassirin brauzerinə də çatır
+        p2.get_by_role('navigation').get_by_role('button', name='Məhsullar').click()
+        p2.wait_for_selector('text=Puzzl 500 hissə')
+        check(p2.get_by_role('button', name='Qəbul').count() == 5, 'menecer hər məhsulda "Qəbul" düyməsini görür')
+        p2.locator('tbody tr', has_text='Puzzl').get_by_role('button', name='Qəbul').click()
+        p2.fill('#r-qty', '3'); p2.get_by_role('button', name='Qəbul et').click()
+        p2.wait_for_selector('text=Etiket çapı'); p2.get_by_role('button', name='Bağla').click()
+        puzzl = "() => DB.getAll('products').then(ps => ps.find(p => p.name.startsWith('Puzzl')).stock)"
+        check(p2.evaluate(puzzl) == 11, 'menecer 3 ədəd qəbul etdi: 8 → 11')
+        latr = wait_until(lambda: p1.evaluate(puzzl) == 11, 25)
+        check(latr is not None, f'menecerin qəbul etdiyi mal kassirin brauzerində görünür ({latr:.1f} san)' if latr else 'qəbul kassirin brauzerinə çatmadı')
 
         p1.locator('tbody tr', has_text='Maqnit').get_by_role('button', name='Sətri sil').click()
         p1.wait_for_selector('#appr-pin')

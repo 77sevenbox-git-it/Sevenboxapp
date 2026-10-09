@@ -32,7 +32,7 @@
     st.sel = i;
     var chk = R.negativeStockCheck(p, st.cart[i].qty);
     if (chk.blocked) {
-      setMsg('"' + p.name + '" qalığı yoxdur və limit (' + R.NEGATIVE_SALE_LIMIT + ' mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır.', 'bad');
+      setMsg('"' + p.name + '" qalığı yoxdur və limit (' + R.NEGATIVE_SALE_LIMIT + ' mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).', 'bad');
       UI.beep(false);
     } else if (chk.needsNegative) {
       setMsg('Diqqət: "' + p.name + '" qalığı ' + p.stock + '. Mənfi qalıqla satış ' + (chk.used + 1) + '/' + R.NEGATIVE_SALE_LIMIT + ' çek.', 'warn');

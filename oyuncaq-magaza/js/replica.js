@@ -42,10 +42,12 @@
 
   H['admin.matrix_changed'] = function (t, ev, d, sum) {
     if (!d.after) return;
+    // köhnə versiyalı cihazdan gələn matris yeni "stock.receive" icazəsini bilmir: eyni qaydayla yenilənir
+    var after = d.v >= Rules.MATRIX_VERSION ? d.after : Rules.upgradeMatrix(d.after);
     return t.get('meta', 'matrixAt').then(function (m) {
       if (m && m.value >= ev.at) return;
       sum.touched.matrix = true;
-      return t.put('meta', { key: 'matrix', value: d.after }).then(function () { return t.put('meta', { key: 'matrixAt', value: ev.at }); });
+      return t.put('meta', { key: 'matrix', value: after }).then(function () { return t.put('meta', { key: 'matrixAt', value: ev.at }); });
     });
   };
 

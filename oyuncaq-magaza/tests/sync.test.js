@@ -199,6 +199,24 @@ async function t(name, fn) {
     assert.strictEqual((await B.Services.storeInfo()).name, 'Oyuncaq dünyası');
   });
 
+  await t('icazə matrisi: köhnə versiyalı cihazdan gələn (v yoxdur) "stock.receive" ilə tamamlanır; yeni versiyalı olduğu kimi qalır', async () => {
+    const D = await boot(be, false);
+    const all = Object.keys(D.Rules.PERMISSIONS).filter(p => p !== 'stock.receive');
+    const old = { admin: all, menecer: ['pos.sell', 'product.edit'], kassir: ['pos.sell'], muhasib: [] };
+    const ev = (n, at, data) => ({ seq: n, id: 'ts_00000' + n + '_x' + n, at, type: 'admin.matrix_changed', device: 'other', data });
+    await D.Replica.apply([ev(1, '2099-01-01T00:00:00.000Z', { after: old })], 1);
+    let m = await D.Services.getMatrix();
+    assert.ok(m.menecer.includes('stock.receive'), 'product.edit olan rola verilir');
+    assert.ok(!m.kassir.includes('stock.receive'), 'Kassirə verilmir');
+    assert.ok(!m.muhasib.includes('stock.receive'));
+    // yeni versiyada admin Menecerdən qəbul icazəsini qəsdən alıb: bu qərar saxlanılır
+    const fresh = { admin: all.concat('stock.receive'), menecer: ['pos.sell', 'product.edit'], kassir: [], muhasib: [] };
+    await D.Replica.apply([ev(2, '2099-01-02T00:00:00.000Z', { after: fresh, v: D.Rules.MATRIX_VERSION })], 2);
+    m = await D.Services.getMatrix();
+    assert.ok(!m.menecer.includes('stock.receive'));
+    assert.ok(m.admin.includes('stock.receive'));
+  });
+
   await t('təsdiq sorğusu: kassir göndərir → menecer görür və təsdiqləyir → kassir cavabı alır', async () => {
     await loginAs(B, 'Kassir', '1111');
     const rq = await B.Services.requestApproval('line_delete', 'pos.line.delete', 'Ayı × 2 = 14,00 ₼');

@@ -61,6 +61,27 @@ async function loginAs(role) {
     await S.receiveStock(magnet.id, 40, 90);
   });
 
+  await t('mal qəbulu ayrıca icazədir: kassir və mühasib qəbul edə bilmir, qalıq dəyişmir', async () => {
+    const before = (await S.listProducts()).find(p => p.id === lego.id).stock;
+    for (const role of ['kassir', 'muhasib']) {
+      await loginAs(role);
+      await rejects(S.receiveStock(lego.id, 5, 900), /icazəniz yoxdur/);
+    }
+    await loginAs('menecer');
+    assert.strictEqual((await S.listProducts()).find(p => p.id === lego.id).stock, before);
+    assert.ok(Rules.can(await S.getMatrix(), 'menecer', 'stock.receive'));
+    assert.ok(Rules.can(await S.getMatrix(), 'admin', 'stock.receive'));
+    assert.ok(!Rules.can(await S.getMatrix(), 'kassir', 'stock.receive'));
+  });
+
+  await t('alış qiyməti verilməyəndə (qiyməti görməyən rol) son qiymət götürülür, orta maya pozulmur', async () => {
+    const x = (await S.createProduct({ name: 'Sınaq qəbul', price: 500, cost: 120 })).product;
+    await S.receiveStock(x.id, 5, 120);
+    const p = await S.receiveStock(x.id, 5, null);
+    assert.strictEqual(p.stock, 10); assert.strictEqual(p.avgCost, 120); assert.strictEqual(p.lastCost, 120);
+    await rejects(S.receiveStock(x.id, 1, -5), /Alış qiyməti səhvdir/);
+  });
+
   await t('növbə olmadan satış olmur', async () => {
     await loginAs('kassir');
     await rejects(S.checkout([{ productId: magnet.id, qty: 1 }], null, { method: 'cash', cashReceived: 1000 }), /növbəni açın/);

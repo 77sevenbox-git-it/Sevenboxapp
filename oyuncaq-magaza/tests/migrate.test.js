@@ -56,7 +56,7 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     tx.objectStore('users').put({ id: 'u_7aa2-random-2', name: 'Menecer', role: 'menecer', salt: 's2', pinHash: sha('s2', '2222'), active: true, mustChangePin: true });
     tx.objectStore('users').put({ id: 'u_55b0-random-3', name: 'Kassir', role: 'kassir', salt: 's3', pinHash: sha('s3', '1111'), active: true, mustChangePin: true });
     tx.objectStore('meta').put({ key: 'initialized', value: '2026-10-01T00:00:00.000Z' });
-    tx.objectStore('meta').put({ key: 'matrix', value: { admin: ['admin.permissions'], menecer: [], kassir: [], muhasib: [] } });
+    tx.objectStore('meta').put({ key: 'matrix', value: { admin: ['admin.permissions'], menecer: ['product.edit', 'pos.sell'], kassir: ['pos.sell'], muhasib: [] } });
     tx.objectStore('meta').put({ key: 'store', value: { name: 'Köhnə mağaza', voen: '1', address: 'x', registerName: 'Kassa 1' } });
     tx.objectStore('sales').put({ id: 's_old1', receiptNo: 1, at: '2026-10-02T10:00:00.000Z', shiftId: 'sh1', lines: [], totals: { total: 100 }, payment: { method: 'cash' } });
     tx.objectStore('outbox').put({ id: '2026-10-02T10:00:00.000Z_a_legacy1', at: '2026-10-02T10:00:00.000Z', type: 'auth.login', data: {}, userId: null });
@@ -73,8 +73,16 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     assert.notStrictEqual(admin.updatedAt, A.Services.EPOCH, 'dəyişdirilmiş PIN yenilik sayılır');
     assert.strictEqual(users.find(u => u.id === 'u_menecer').updatedAt, A.Services.EPOCH, 'toxunulmamış istifadəçi sınaq vəziyyətindədir');
     assert.strictEqual((await A.DB.getAll('sales')).length, 1);
-    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 2);
+    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 3);
     assert.ok(A.Services.deviceId());
+  });
+
+  await t('köhnə (özəlləşdirilmiş) icazə matrisi: product.edit olan rola "stock.receive" verilir, Kassirə verilmir, qalanı toxunulmaz', async () => {
+    const m = (await A.DB.get('meta', 'matrix')).value;
+    assert.deepStrictEqual(Array.from(m.menecer).sort(), ['pos.sell', 'product.edit', 'stock.receive']);
+    assert.deepStrictEqual(Array.from(m.kassir), ['pos.sell']);
+    assert.deepStrictEqual(Array.from(m.admin), ['admin.permissions']);
+    assert.deepStrictEqual(Array.from(m.muhasib), []);
   });
 
   await t('sales.receiptNo indeksi artıq unikal deyil (eyni nömrəli iki çek yazıla bilir)', async () => {

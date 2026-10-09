@@ -84,6 +84,23 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
+    return migrateV2().then(migrateV3);
+  }
+
+  // v2 → v3: mal qəbulu ayrıca "stock.receive" icazəsi oldu; əvvəl "product.edit" olan rollara verilir (Kassirə verilmir)
+  function migrateV3() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 3) return;
+      return DB.atomic(['meta'], function (t) {
+        return t.get('meta', 'matrix').then(function (x) {
+          var up = Rules.upgradeMatrix(x ? x.value : Rules.DEFAULT_MATRIX);
+          return t.put('meta', { key: 'matrix', value: up });
+        }).then(function () { return t.put('meta', { key: 'schema', value: 3 }); });
+      });
+    });
+  }
+
+  function migrateV2() {
     return DB.get('meta', 'schema').then(function (m) {
       if (m && m.value >= 2) return;
       return DB.getAll('users').then(function (users) {
@@ -127,7 +144,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 2 }),
+              t.put('meta', { key: 'schema', value: 3 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -324,13 +341,15 @@
   }
 
   // Sadə mal qəbulu (tam qəbul sənədi və təchizatçı borcu növbəti mərhələdə). Orta çəkili maya (FR-24).
+  // Yalnız "stock.receive" icazəsi olan rol (defolt: Menecer, Admin). unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür.
   function receiveStock(productId, qty, unitCost, note) {
-    return requirePerm('product.edit').then(function (user) {
+    return requirePerm('stock.receive').then(function (user) {
       if (!Number.isInteger(qty) || qty <= 0) throw err('Say müsbət tam ədəd olmalıdır');
-      if (!(unitCost >= 0)) throw err('Alış qiyməti səhvdir');
+      if (unitCost != null && !(unitCost >= 0)) throw err('Alış qiyməti səhvdir');
       return DB.atomic(['products', 'stockMoves', 'priceHistory', 'audit', 'outbox'], function (t) {
         return t.get('products', productId).then(function (p) {
           if (!p) throw err('Məhsul tapılmadı');
+          if (unitCost == null) unitCost = p.lastCost || 0;
           var before = p.stock;
           Object.assign(p, Rules.applyReceipt(p, qty, unitCost));
           return t.put('products', p)
@@ -564,7 +583,7 @@
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
         return t.get('meta', 'matrix').then(function (old) {
           return t.put('meta', { key: 'matrix', value: m }).then(function () { return t.put('meta', { key: 'matrixAt', value: at }); })
-            .then(function () { return log(t, 'admin.matrix_changed', { before: old && old.value, after: m }, user, at); });
+            .then(function () { return log(t, 'admin.matrix_changed', { before: old && old.value, after: m, v: Rules.MATRIX_VERSION }, user, at); });
         });
       });
     });

@@ -9,6 +9,7 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
 - **Qaytarma:** çek barkodu ilə, 14 təqvim günü (Bakı vaxtı), say limiti, menecer təsdiqi, qaytarma çeki.
 - **Növbə:** açılış, mədaxil/məxaric, Z hesabatı, kassa fərqi + izah.
 - **Məhsullar:** avtomatik EAN-13 mağaza barkodu ("20" prefiksi), etiket çapı, sadə mal qəbulu, orta çəkili maya.
+- **Mal qəbulu ayrıca icazədir (`stock.receive`):** defoltda yalnız Menecer və Admin qalığı artıra bilir; Kassir məhsullara baxır və etiket çap edir, amma "Qəbul" düyməsi onda yoxdur və xidmət səviyyəsində də rədd olunur. Kassirdə qalıq bitəndə (mənfi çek limiti dolanda) satış menecer mal qəbul edənə qədər bloklanır. İcazəni Admin İcazələr cədvəlində başqa rola verə bilər; alış qiymətini görməyən rol qəbul edərsə, məhsulun son alış qiyməti götürülür.
 - **Rollar:** Admin / Menecer / Kassir / Mühasib, icazə matrisini yalnız Admin dəyişir. PIN girişi, 5 səhv cəhddə 5 dəqiqəlik blok, ilk girişdə məcburi yeni PIN (ayrıca səhifə, arxa fonda iş ekranı yoxdur). Unudulmuş PIN-i Admin sıfırlayır (İcazələr → İstifadəçilər).
 - **Çek sətri:** kassir sayı sərbəst azaldır (1-ə qədər); sətri silmək zibil ikonu ilə, menecer təsdiqi tələb edir: ya menecer PIN-i, ya da (server qoşulubsa) menecerin cihazına sorğu. Menecer üst paneldə "Sorğular (N)" düyməsindən təsdiqləyir və ya rədd edir.
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.

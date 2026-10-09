@@ -145,7 +145,7 @@
           h('td', null, p.active ? h('span', { class: 'badge ok' }, 'Aktiv') : h('span', { class: 'badge off' }, 'Passiv')),
           h('td', { style: 'white-space:nowrap' },
             can('product.edit') ? h('button', { class: 'btn small', onclick: function () { productForm(p, load); } }, 'Dəyiş') : null, ' ',
-            can('product.edit') ? h('button', { class: 'btn small', onclick: function () { receiveForm(p, load); } }, 'Qəbul') : null, ' ',
+            can('stock.receive') ? h('button', { class: 'btn small', onclick: function () { receiveForm(p, load); } }, 'Qəbul') : null, ' ',
             can('label.print') ? h('button', { class: 'btn small', onclick: function () { labelForm(p); } }, 'Etiket') : null)));
       });
     }
@@ -165,7 +165,7 @@
         h('thead', null, h('tr', null, h('th', null, 'Məhsul'), h('th', null, 'Mağaza barkodu'), h('th', null, 'İstehsalçı barkodu'), h('th', { class: 'num' }, 'Satış ₼'),
           showCost ? h('th', { class: 'num' }, 'Orta maya ₼') : null, h('th', { class: 'num' }, 'Qalıq'), h('th', null, 'Status'), h('th', null, ''))),
         body)),
-      can('product.edit') ? h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn small', onclick: function () {
+      can('product.edit') && can('stock.receive') ? h('div', { style: 'margin-top:12px' }, h('button', { class: 'btn small', onclick: function () {
         S.seedDemoProducts().then(function () { UI.toast('Nümunə məhsullar əlavə olundu'); load(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
       } }, 'Sınaq üçün nümunə məhsullar əlavə et')) : null));
     load().then(function () { q.focus(); });
@@ -228,8 +228,8 @@
           can('product.cost.view') ? h('div', { class: 'field' }, h('label', { for: 'r-cost' }, 'Alış qiyməti (ədəd), ₼'), cost) : null),
         h('div', { class: 'field' }, h('label', { for: 'r-note' }, 'Qeyd'), note)),
       buttons: [{ text: 'İmtina' }, { text: 'Qəbul et', kind: 'primary', submit: true, onClick: function (close) {
-        var c = can('product.cost.view') ? M.parse(cost.value) : p.lastCost;
-        if (c == null) throw new Error('Alış qiyməti səhvdir');
+        var c = can('product.cost.view') ? M.parse(cost.value) : null;     // qiyməti görməyən rol üçün server son qiyməti götürür
+        if (can('product.cost.view') && c == null) throw new Error('Alış qiyməti səhvdir');
         var n = parseInt(qty.value, 10);
         return S.receiveStock(p.id, n, c, note.value).then(function (np) {
           UI.toast('Qalıq: ' + np.stock); close(); onSaved();

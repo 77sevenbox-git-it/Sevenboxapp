@@ -49,6 +49,19 @@ const lines = [{ price: 1450, qty: 1 }, { price: 600, qty: 1 }, { price: 225, qt
 t('yekun 25,00', () => assert.strictEqual(Rules.cartTotals(lines).total, 2500));
 t('5% endirim 23,75', () => assert.strictEqual(Rules.cartTotals(lines, 5).total, 2375));
 t('7% endirim qadağan (AC-09)', () => assert.ok(Rules.validateDiscountPercent(7)));
+t('mal qəbulu ayrıca icazədir: Menecer və Admin-də var, Kassir və Mühasibdə yox', () => {
+  assert.ok(Rules.PERMISSIONS['stock.receive']);
+  assert.ok(Rules.can(null, 'menecer', 'stock.receive') && Rules.can(null, 'admin', 'stock.receive'));
+  assert.ok(!Rules.can(null, 'kassir', 'stock.receive') && !Rules.can(null, 'muhasib', 'stock.receive'));
+});
+t('köhnə matris yenilənir: product.edit olan rola stock.receive əlavə olunur, təkrar çağırış dəyişmir, orijinal dəyişmir', () => {
+  const old = { menecer: ['product.edit'], kassir: ['pos.sell'] };
+  const up = Rules.upgradeMatrix(old);
+  assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive']);
+  assert.deepStrictEqual(up.kassir, ['pos.sell']);
+  assert.deepStrictEqual(old.menecer, ['product.edit']);
+  assert.deepStrictEqual(Rules.upgradeMatrix(up), up);
+});
 t('5% endirim icazəli', () => assert.strictEqual(Rules.validateDiscountPercent(5), null));
 
 // Ödəniş
