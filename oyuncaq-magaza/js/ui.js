@@ -177,12 +177,8 @@
     });
   }
 
-  function printHtml(html) {
-    var area = document.getElementById('print-area');
-    if (!area) { area = h('div', { id: 'print-area' }); document.body.appendChild(area); }
-    area.innerHTML = html;
-    setTimeout(function () { root.print(); }, 50);
-  }
+  // Çap (js/print.js): kind = 'receipt' (termo çek) | 'label' (etiket). Kağız ölçüsü və printer ayarları cihaza məxsusdur.
+  function printHtml(html, kind) { return root.Print.print(html, kind || 'receipt'); }
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
@@ -193,54 +189,11 @@
   var BANK_TYPE = { pos: 'POS kart', transfer: 'Karta köçürmə' };
   var METHOD = { cash: 'Nağd', bank: 'Bank', mixed: 'Qarışıq' };
 
-  function receiptHtml(sale, store, opts) {
-    var M = root.Money;
-    var rows = sale.lines.map(function (l) {
-      return '<div>' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.price * l.qty) + '</span></div>';
-    }).join('');
-    var p = sale.payment;
-    var pay = '<div class="r"><span>Ödəniş</span><span>' + METHOD[p.method] + (p.bankType ? ' (' + BANK_TYPE[p.bankType] + ')' : '') + '</span></div>';
-    if (p.bankPart) pay += '<div class="r"><span>Bank</span><span>' + M.format(p.bankPart) + '</span></div>';
-    if (p.cashPart) pay += '<div class="r"><span>Nağd alınan</span><span>' + M.format(p.cashReceived) + '</span></div><div class="r"><span>Qaytarılan</span><span>' + M.format(p.change) + '</span></div>';
-    return '<div class="receipt">' +
-      (opts && opts.duplicate ? '<div class="c"><b>DUBLİKAT</b></div>' : '') +
-      '<h3>' + esc(store.name) + '</h3><div class="c">VÖEN ' + esc(store.voen) + '</div><div class="c">' + esc(store.address) + '</div><hr>' +
-      '<div class="r"><span>Çek №</span><span>' + String(sale.receiptNo).padStart(6, '0') + '</span></div>' +
-      '<div class="r"><span>Tarix</span><span>' + fmtDate(sale.at) + '</span></div>' +
-      '<div class="r"><span>Kassir</span><span>' + esc(sale.cashierName) + '</span></div><hr>' + rows + '<hr>' +
-      '<div class="r"><span>Ara cəm</span><span>' + M.format(sale.totals.subtotal) + '</span></div>' +
-      (sale.totals.discount ? '<div class="r"><span>Endirim ' + sale.discount.percent + '%</span><span>−' + M.format(sale.totals.discount) + '</span></div>' : '') +
-      '<div class="r" style="font-size:14px;font-weight:700"><span>YEKUN</span><span>' + M.format(sale.totals.total) + ' AZN</span></div>' + pay + '<hr>' +
-      '<div class="bc">' + root.Barcode.svg(sale.receiptBarcode, { module: 2, height: 40 }) + '</div>' +
-      '<div class="c">Qaytarma ' + root.Rules.RETURN_DAYS + ' gün ərzində, çeklə</div>' +
-      '<div class="c">Bu çek fiskal çek deyil</div></div>';
-  }
-
-  function returnReceiptHtml(ret, sale, store) {
-    var M = root.Money;
-    var rows = ret.lines.map(function (l) { return '<div>' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.price * l.qty) + '</span></div>'; }).join('');
-    return '<div class="receipt"><h3>' + esc(store.name) + '</h3><div class="c"><b>QAYTARMA ÇEKİ</b></div><hr>' +
-      '<div class="r"><span>İlkin çek №</span><span>' + String(sale.receiptNo).padStart(6, '0') + '</span></div>' +
-      '<div class="r"><span>Tarix</span><span>' + fmtDate(ret.at) + '</span></div>' +
-      '<div class="r"><span>Təsdiqləyən</span><span>' + esc(ret.approvedByName) + '</span></div><hr>' + rows + '<hr>' +
-      '<div class="r" style="font-weight:700"><span>Qaytarılan</span><span>' + M.format(ret.amount) + ' AZN</span></div>' +
-      (ret.cashAmount ? '<div class="r"><span>Nağd</span><span>' + M.format(ret.cashAmount) + '</span></div>' : '') +
-      (ret.bankAmount ? '<div class="r"><span>' + BANK_TYPE[ret.bankType] + '</span><span>' + M.format(ret.bankAmount) + '</span></div>' : '') + '</div>';
-  }
-
-  function labelsHtml(items) {
-    // items: [{product, count}]
-    var M = root.Money;
-    var out = '<div class="labels">';
-    items.forEach(function (it) {
-      for (var i = 0; i < it.count; i++) {
-        out += '<div class="label"><div class="n">' + esc(it.product.name) + '</div><div class="p">' + M.format(it.product.price) + ' ₼</div>' +
-          root.Barcode.svg(it.product.storeBarcode, { module: 2, height: 44 }) + '</div>';
-      }
-    });
-    return out + '</div>';
-  }
+  function receiptHtml(sale, store, opts) { return root.Print.receiptHtml(sale, store, opts); }
+  function returnReceiptHtml(ret, sale, store) { return root.Print.returnReceiptHtml(ret, sale, store); }
+  function labelsHtml(items, opts) { return root.Print.labelsHtml(items, opts); }
+  function receiptWrap(inner) { return root.Print.wrap(inner); }
 
   root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate,
-    receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
+    receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);

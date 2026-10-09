@@ -96,6 +96,33 @@ t('kassir alış qiymətini görmür', () => assert.ok(!Rules.can(null, 'kassir'
 t('mühasib qiymət dəyişə bilmir (AC-15)', () => assert.ok(!Rules.can(null, 'muhasib', 'product.price.set')));
 t('menecer qiyməti təyin edir', () => assert.ok(Rules.can(null, 'menecer', 'product.price.set')));
 
+// Çap üçün barkod (svgMm): zolaq eni printer nöqtəsinin tam sayıdır, ölçü sahəyə sığır
+function rectsOf(svg) { return [...svg.matchAll(/<rect x="(\d+)" y="0" width="(\d+)" height="(\d+)"/g)].map(m => ({ x: +m[1], w: +m[2], h: +m[3] })); }
+t('svgMm: zolaqlar modulun tam misillərində, sxem EAN-13 ilə eyni', () => {
+  for (const dpi of [203, 300]) for (const maxW of [27, 36, 44, 54, 70]) {
+    const code = Barcode.storeBarcode(12345), r = Barcode.svgMm(code, { dpi, maxWidthMm: maxW, heightMm: 12 });
+    const rects = rectsOf(r.svg), bits = Barcode.encode(code), left = 7 * r.mod;
+    assert.ok(rects.every(x => x.x % r.mod === 0 && x.w % r.mod === 0), 'qeyri-tam zolaq');
+    const painted = new Array(bits.length).fill('0');
+    rects.forEach(x => { for (let i = x.x - left; i < x.x - left + x.w; i += r.mod) painted[i / r.mod] = '1'; });
+    assert.strictEqual(painted.join(''), bits, 'zolaq sxemi EAN-13 deyil');
+  }
+});
+t('svgMm: sahəyə sığır; geniş etiketdə zolaq qalınlaşır, dar etiketdə xəbərdarlıq (ok=false)', () => {
+  const code = Barcode.storeBarcode(1);
+  for (const maxW of [26.2, 36, 54]) { const r = Barcode.svgMm(code, { dpi: 203, maxWidthMm: maxW, heightMm: 12 }); assert.ok(r.widthMm <= maxW + 1e-6, maxW + ' mm sahəyə sığmır: ' + r.widthMm); assert.ok(r.ok); }
+  assert.strictEqual(Barcode.svgMm(code, { dpi: 203, maxWidthMm: 26.2, heightMm: 12 }).mod, 2);
+  assert.strictEqual(Barcode.svgMm(code, { dpi: 203, maxWidthMm: 54, heightMm: 12 }).mod, 4);
+  assert.strictEqual(Barcode.svgMm(code, { dpi: 203, maxWidthMm: 20, heightMm: 12 }).ok, false);
+  assert.strictEqual(Barcode.svgMm(code, { dpi: 300, maxWidthMm: 20, heightMm: 12 }).ok, false);
+});
+t('svgMm: 12 rəqəm yazılır, ölçü mm ilə verilir', () => {
+  const code = Barcode.storeBarcode(99), r = Barcode.svgMm(code, { dpi: 203, maxWidthMm: 50, heightMm: 12 });
+  assert.strictEqual((r.svg.match(/<text /g) || []).length, 13);
+  assert.ok(/width="[\d.]+mm" height="12\.0\d*mm"/.test(r.svg) || /height="1[12]\.\d+mm"/.test(r.svg));
+  assert.ok(!/<text /.test(Barcode.svgMm(code, { dpi: 203, maxWidthMm: 50, heightMm: 12, text: false }).svg));
+});
+
 // Növbə
 t('gözlənilən nağd', () => {
   const sales = [{ payment: { cashPart: 2500 } }, { payment: { cashPart: 0 } }];

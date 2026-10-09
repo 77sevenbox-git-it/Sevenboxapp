@@ -3,7 +3,7 @@
   'use strict';
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-1';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-2';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: 'Kassa', perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -56,6 +56,7 @@
       if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, 'Sorğular (' + r[3].length + ')'));
       statusEl.appendChild(h('span', null, r[0] ? 'Növbə açıq · ' + UI.fmtDate(r[0].openedAt).split(', ').pop() : 'Növbə bağlı'));
       statusEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
+      statusEl.appendChild(h('button', { class: 'btn small', id: 'print-settings', title: 'Bu cihazın printeri: kağız eni, etiket ölçüsü, test çapı', onclick: function () { root.Print.settingsModal(); } }, 'Çap'));
       statusEl.appendChild(h('button', { class: 'btn small', onclick: logout }, 'Çıxış'));
       document.querySelector('.brand b').textContent = r[2].name;
       document.querySelector('.brand .muted').textContent = r[2].registerName;
@@ -72,22 +73,34 @@
 
   function logout() { UI.abortPending(); S.logout(); root.POS.reset(); start(); }
 
-  // Başqa cihazdan gələn dəyişikliklər: icazələr, qalıq, çeklər, sorğular
+  // Başqa cihazdan gələn dəyişikliklər: icazələr, istifadəçilər, qalıq, çeklər, sorğular
   function onApplied(t) {
     if (!S.currentUser()) return;
-    var chain = Promise.resolve();
-    if (t.matrix) {
-      chain = S.getMatrix().then(function (m) {
+    var chain = Promise.resolve(true);
+    if (t.users) {
+      // Hesab söndürülübsə / PIN sıfırlanıbsa bu cihazda dərhal çıxış; ad və ya rol dəyişibsə menyu yenilənir
+      chain = S.refreshSession().then(function (st) {
+        if (st === 'gone') { UI.toast('Hesabınız dəyişdirilib və ya söndürülüb. Yenidən daxil olun', 'bad'); logout(); return false; }
+        if (st === 'changed') t.matrix = true;
+        return true;
+      });
+    }
+    chain = chain.then(function (ok) {
+      if (!ok) return false;
+      if (!t.matrix) return true;
+      return S.getMatrix().then(function (m) {
         app.matrix = m;
         renderNav();
         if (!allowed().some(function (r) { return r.id === app.route; })) go('');
+        return true;
       });
-    }
-    chain.then(function () {
+    });
+    chain.then(function (ok) {
+      if (!ok) return;
       refreshStatus();
       if (document.querySelector('.modal-back')) return;       // açıq pəncərəni pozmuruq
       if ((t.products || t.sales) && app.route === 'pos') root.POS.refresh();
-      else if ((t.products || t.sales) && root.Screens._refresh) root.Screens._refresh();
+      else if ((t.products || t.sales || t.users) && root.Screens._refresh) root.Screens._refresh();
     });
   }
 

@@ -646,6 +646,42 @@ async function t(name, fn) {
     assert.ok(rx[1] < ry[0] || ry[1] < rx[0], JSON.stringify([rx, ry]));
   });
 
+  await t('istifadəçi idarəsi iki cihazda: yaranır, adı/rolu dəyişir, söndürülür — açıq sessiya düzəlir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [X, Y] = await Promise.all([boot(b), boot(b)]);
+    await loginAs(X, 'Admin', '1234');
+    const r = await X.Services.createUser({ name: 'Elvin Babayev', role: 'kassir' });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    assert.ok((await Y.Services.listUsers()).some(u => u.name === 'Elvin Babayev' && u.role === 'kassir'), 'yeni istifadəçi Y-yə çatmadı');
+    const row = b.rows('Users').find(x => x[1] === 'Elvin Babayev');
+    assert.ok(row && row[2] === 'kassir' && row[3] === true && row[4] === true, 'Users vərəqində: ' + JSON.stringify(row));
+    // Y-də Elvin müvəqqəti PIN ilə girir və öz PIN-ini seçir
+    await Y.Services.login(r.user.id, r.tempPin);
+    await Y.Services.changePin(r.tempPin, '4817');
+    await Y.Sync.cycle(); await X.Sync.cycle();
+    // X: ad və rol dəyişir
+    await X.Services.updateUser(r.user.id, { name: 'Elvin Babayev (kassa 2)', role: 'menecer' });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    assert.strictEqual(await Y.Services.refreshSession(), 'changed');
+    assert.strictEqual(Y.Services.currentUser().role, 'menecer');
+    assert.strictEqual(Y.Services.currentUser().name, 'Elvin Babayev (kassa 2)');
+    assert.ok(b.rows('Users').some(x => x[1] === 'Elvin Babayev (kassa 2)' && x[2] === 'menecer'));
+    // PIN dəyişikliyi (Y) ilə rol dəyişikliyi (X) — hər ikisi sağ qalmalıdır: son yazan bütün sətri götürdüyü üçün yeni PIN də rol da saxlanmalıdır
+    // X: söndürür
+    await X.Services.updateUser(r.user.id, { active: false });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    assert.strictEqual(await Y.Services.refreshSession(), 'gone');
+    await rejects(Y.Services.requirePerm('pos.sell'), /söndürülüb/);
+    assert.ok(!(await Y.Services.listUsers()).some(u => u.id === r.user.id));
+    assert.strictEqual(b.rows('Users').find(x => x[0] === r.user.id)[3], false);
+    // yenidən aktiv — köhnə PIN işləyir
+    await X.Services.updateUser(r.user.id, { active: true });
+    await X.Sync.cycle(); await Y.Sync.cycle();
+    const u = await Y.Services.login(r.user.id, '4817');
+    assert.strictEqual(u.mustChangePin, false);
+    assert.strictEqual(u.role, 'menecer');
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

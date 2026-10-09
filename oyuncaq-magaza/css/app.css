@@ -119,25 +119,31 @@ tr.neg td { background: var(--warn-soft); }
 .users small { display: block; color: var(--muted); font-size: 12px; }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
 
-/* Çap */
+/* Çap: @page ölçüsü js/print.js tərəfindən çap anında təyin olunur (çek: ölçülmüş hündürlük, etiket: etiketin ölçüsü) */
 #print-area { display: none; }
 @media print {
-  @page { size: 80mm auto; margin: 0; }
+  html, body { height: auto !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
   body > *:not(#print-area) { display: none !important; }
   #print-area { display: block; }
-  body { background: #fff; }
 }
-.receipt { width: 72mm; padding: 4mm; font-family: var(--mono); font-size: 11px; color: #000; }
-.receipt h3 { margin: 0; text-align: center; font-size: 13px; }
+.receipt { margin: 0 auto; padding: 1.5mm 0; font-family: Consolas, 'Lucida Console', 'DejaVu Sans Mono', 'Courier New', monospace; line-height: 1.25; color: #000; background: #fff; overflow-wrap: anywhere; }
+.receipt h3 { margin: 0; text-align: center; font-size: 1.2em; }
 .receipt .c { text-align: center; }
-.receipt .r { display: flex; justify-content: space-between; gap: 6px; }
-.receipt hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-.receipt .bc svg { width: 100%; height: auto; }
-.labels { display: flex; flex-wrap: wrap; gap: 2mm; }
-.label { width: 58mm; height: 40mm; padding: 2mm; border: 1px dashed #999; font-family: 'IBM Plex Sans', sans-serif; color: #000; display: flex; flex-direction: column; justify-content: space-between; page-break-inside: avoid; }
-.label .n { font-size: 11px; line-height: 1.2; max-height: 2.4em; overflow: hidden; }
-.label .p { font-size: 16px; font-weight: 700; }
-.label svg { width: 100%; height: auto; max-height: 20mm; }
+.receipt .r { display: flex; justify-content: space-between; gap: 2mm; }
+.receipt .r span:last-child { text-align: right; white-space: nowrap; }
+.receipt .big { font-size: 1.15em; font-weight: 700; }
+.receipt hr { border: none; border-top: 0.3mm dashed #000; margin: 1.6mm 0; }
+.receipt .bc { margin: 1.5mm 0; }
+.receipt .bc svg { display: block; margin: 0 auto; }
+.receipt .frame-box { border: 0.3mm solid #000; padding: 1mm; margin: 1.5mm 0; }
+.label { box-sizing: border-box; overflow: hidden; background: #fff; color: #000; font-family: Arial, Helvetica, sans-serif; display: flex; flex-direction: column; justify-content: space-between; break-after: page; page-break-after: always; }
+.label:last-child { break-after: auto; page-break-after: auto; }
+.label .n { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.15; }
+.label .p { font-weight: 700; line-height: 1.1; }
+.label .bc { display: flex; justify-content: center; }
+.label .bc svg { display: block; }
+.label.frame { outline: 0.2mm solid #000; outline-offset: -0.2mm; }
+@media screen { .label { border: 1px dashed #999; margin: 0 auto 8px; } }
 
 /* Sətir silmə, təsdiq sorğuları, sinxron vəziyyəti */
 .qty-btn:disabled { opacity: .35; cursor: not-allowed; }
@@ -152,3 +158,4 @@ td.del, th.del { width: 44px; text-align: center; padding-left: 4px; padding-rig
 .req-item .row { gap: 8px; }
 .conflicts { margin: 0; padding-left: 18px; color: var(--bad); font-size: 14px; }
 .pin-reset { font-family: var(--mono); font-size: 34px; letter-spacing: 6px; text-align: center; padding: 12px; background: var(--ground); border-radius: 10px; }
+tr.inactive td { color: var(--faint); }

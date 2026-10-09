@@ -354,6 +354,112 @@ async function loginAs(role) {
     delete globalThis.sessionStorage;
   });
 
+  /* ---------- İstifadəçilərin idarəsi ---------- */
+  let elvin, elvinPin;
+  await t('istifadəçi yaratmaq yalnız Admin-ə məxsusdur', async () => {
+    S._session.user = { id: 'u_kassir', name: 'Kassir', role: 'kassir' };     // Kassirin PIN-i əvvəlki testlərdə dəyişib
+    await rejects(S.createUser({ name: 'Yeni Ad', role: 'kassir' }), /icazəniz yoxdur/);
+    await loginAs('menecer');
+    await rejects(S.createUser({ name: 'Yeni Ad', role: 'kassir' }), /icazəniz yoxdur/);
+  });
+
+  await t('Admin "Elvin Babayev" (Kassir) yaradır: müvəqqəti PIN, ilk girişdə dəyişməlidir, ad girişdə görünür', async () => {
+    await loginAs('admin');
+    const r = await S.createUser({ name: '  Elvin   Babayev ', role: 'kassir' });
+    elvin = r.user; elvinPin = r.tempPin;
+    assert.strictEqual(elvin.name, 'Elvin Babayev');                 // artıq boşluqlar təmizlənir
+    assert.ok(/^\d{6}$/.test(elvinPin));
+    assert.ok((await S.listUsers()).some(u => u.id === elvin.id && u.name === 'Elvin Babayev' && u.role === 'kassir'));
+    const u = await S.login(elvin.id, elvinPin);
+    assert.strictEqual(u.mustChangePin, true); assert.strictEqual(u.name, 'Elvin Babayev');
+    S.logout();
+  });
+
+  await t('ad yoxlaması: təkrar (böyük/kiçik hərf fərqsiz), çox qısa, çox uzun, səhv rol', async () => {
+    await loginAs('admin');
+    await rejects(S.createUser({ name: 'elvin babayev', role: 'kassir' }), /artıq var/);
+    await rejects(S.createUser({ name: 'ELVİN BABAYEV', role: 'kassir' }), /artıq var/);   // az hərfləri: İ → i
+    await rejects(S.createUser({ name: 'A', role: 'kassir' }), /ən azı 2/);
+    await rejects(S.createUser({ name: 'x'.repeat(41), role: 'kassir' }), /40 simvol/);
+    await rejects(S.createUser({ name: 'Yeni Şəxs', role: 'direktor' }), /Rol seçin/);
+    await rejects(S.createUser({ name: '   ', role: 'kassir' }), /ən azı 2/);
+  });
+
+  await t('yaradılan istifadəçi eyni PIN ilə yeni PIN seçir; sistem hadisəsi "created" kimi yazılır', async () => {
+    await S.login(elvin.id, elvinPin);
+    await S.changePin(elvinPin, '4817');
+    const ob = (await DB.getAll('outbox')).filter(o => o.type === 'user.upserted' && o.data.user.id === elvin.id);
+    assert.ok(ob.some(o => o.data.reason === 'created'));
+    S.logout();
+  });
+
+  await t('Admin adı və rolu dəyişir; eyni adı başqasına verə bilməz; heç nə dəyişməyibsə hadisə yaranmır', async () => {
+    await loginAs('admin');
+    const before = (await DB.getAll('outbox')).length;
+    const same = await S.updateUser(elvin.id, { name: 'Elvin Babayev', role: 'kassir' });
+    assert.ok(same.unchanged); assert.strictEqual((await DB.getAll('outbox')).length, before);
+    await rejects(S.updateUser(elvin.id, { name: 'Menecer' }), /artıq var/);
+    await S.updateUser(elvin.id, { name: 'Elvin B.' });
+    assert.ok((await S.listUsers()).some(u => u.name === 'Elvin B.'));
+    await S.updateUser(elvin.id, { name: 'Elvin Babayev' });
+  });
+
+  await t('rol/ad başqa cihazda dəyişəndə açıq sessiya köhnə səlahiyyətlə işləmir', async () => {
+    await S.login(elvin.id, '4817');
+    await rejects(S.receiveStock(lego.id, 1, 900), /icazəniz yoxdur/);              // Kassir mal qəbul edə bilmir
+    const rec = await DB.get('users', elvin.id);                                    // başqa cihazdan gələn dəyişiklik (replika)
+    rec.role = 'menecer'; rec.name = 'Elvin Babayev (müdir)'; rec.updatedAt = new Date().toISOString(); await DB.put('users', rec);
+    assert.strictEqual(await S.refreshSession(), 'changed');
+    assert.strictEqual(S.currentUser().role, 'menecer'); assert.strictEqual(S.currentUser().name, 'Elvin Babayev (müdir)');
+    await S.receiveStock(lego.id, 1, 900);                                          // indi icazə var
+    rec.role = 'kassir'; rec.name = 'Elvin Babayev'; await DB.put('users', rec);
+    await rejects(S.receiveStock(lego.id, 1, 900), /icazəniz yoxdur/);              // yenilənməni gözləmədən də rol bazadan oxunur
+    assert.strictEqual(S.currentUser().role, 'kassir');
+  });
+
+  await t('söndürülən istifadəçi: girə bilmir, siyahıda yoxdur, açıq sessiyası dərhal bitir; aktiv edilir', async () => {
+    await S.login(elvin.id, '4817');
+    S._session.user.id === elvin.id;
+    const admin = await DB.get('users', 'u_admin');
+    // eyni cihazda Admin söndürür (sessiya dəyişməsi üçün qısa keçid)
+    const keep = S.currentUser(); S.logout(); await loginAs('admin');
+    await S.updateUser(elvin.id, { active: false });
+    assert.ok(!(await S.listUsers()).some(u => u.id === elvin.id));
+    await rejects(S.login(elvin.id, '4817'), /tapılmadı/);
+    S.logout(); S._session.user = { id: keep.id, name: keep.name, role: keep.role };     // Elvin-in köhnə açıq sessiyası
+    assert.strictEqual(await S.refreshSession(), 'gone');
+    await rejects(S.requirePerm('pos.sell'), /söndürülüb/);
+    S.logout(); await loginAs('admin');
+    await S.updateUser(elvin.id, { active: true });
+    assert.ok((await S.listUsers()).some(u => u.id === elvin.id));
+    assert.ok(admin);
+  });
+
+  await t('PIN Admin tərəfindən sıfırlananda açıq sessiya bitir', async () => {
+    await S.login(elvin.id, '4817');
+    const me = S.currentUser();
+    const rec = await DB.get('users', elvin.id); rec.mustChangePin = true; await DB.put('users', rec);   // başqa cihazda sıfırlandı
+    assert.strictEqual(await S.refreshSession(), 'gone');
+    rec.mustChangePin = false; await DB.put('users', rec); assert.ok(me);
+    S.logout();
+  });
+
+  await t('son aktiv Admin qorunur; öz hesabını söndürmək olmaz; ikinci Admin ilə rol dəyişmək olur', async () => {
+    await loginAs('admin');
+    await rejects(S.updateUser('u_admin', { active: false }), /Öz hesabınızı/);
+    await rejects(S.updateUser('u_admin', { role: 'menecer' }), /ən azı bir aktiv Admin/);
+    const r2 = await S.createUser({ name: 'İkinci Admin', role: 'admin' });
+    S.logout(); await S.login(r2.user.id, r2.tempPin);
+    await S.updateUser('u_admin', { role: 'menecer' });                              // artıq başqa Admin var
+    await rejects(S.updateUser(r2.user.id, { role: 'kassir' }), /ən azı bir aktiv Admin/);
+    await rejects(S.updateUser(r2.user.id, { active: false }), /Öz hesabınızı/);
+    await S.updateUser('u_admin', { role: 'admin' });
+    await S.updateUser('u_admin', { active: false });                                // 2 Admin var idi, biri söndürüldü
+    await rejects(S.updateUser(r2.user.id, { role: 'kassir' }), /ən azı bir aktiv Admin/);
+    await S.updateUser('u_admin', { active: true });
+    S.logout();
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

@@ -69,6 +69,7 @@
     code = String(code).trim();
     if (!code) return;
     S.lookupForPos(code).then(function (r) {
+      if (!st) return;                      // axtarış gedəndə çıxış / sıfırlama olub: yeni istifadəçinin səbətinə yazmırıq
       if (r.kind === 'product') return addProduct(r.product);
       UI.beep(false);
       if (r.kind === 'mfr') setMsg('Bu istehsalçı barkodudur. Məhsulun üzərindəki mağaza barkodunu oxudun (' + r.products.map(function (p) { return p.name; }).join(', ') + ').', 'bad');
@@ -200,23 +201,25 @@
     var input = paymentInput(); delete input.total;
     S.checkout(cart, st.discount, input).then(function (sale) {
       return S.storeInfo().then(function (store) {
-        UI.printHtml(UI.receiptHtml(sale, store));
+        var printErr = null;
+        try { UI.printHtml(UI.receiptHtml(sale, store)); } catch (pe) { printErr = pe; }      // çap xətası satışı geri qaytarmır və səbəti açıq saxlamır (təkrar satış riski)
         var last = { receiptNo: sale.receiptNo, change: sale.payment.change, total: sale.totals.total };
         st = fresh();
         st.last = last;
-        setMsg('Çek № ' + sale.receiptNo + ' tamamlandı' + (last.change ? ' · qaytarılacaq ' + M.format(last.change) + ' ₼' : ''), '');
+        setMsg('Çek № ' + sale.receiptNo + ' tamamlandı' + (last.change ? ' · qaytarılacaq ' + M.format(last.change) + ' ₼' : '') + (printErr ? ' · ÇEK ÇAP OLUNMADI (' + printErr.message + '): Çeklər bölməsindən təkrar çap edin' : ''), printErr ? 'warn' : '');
         root.App && root.App.refreshStatus();
       });
     }).catch(function (e) {
       setMsg(e.message, 'bad'); UI.beep(false);
       if (e.code === 'negative_blocked') refreshProducts();
-    }).then(function () { st.busy = false; render(); focusScan(); });
+    }).then(function () { if (!st) return; st.busy = false; render(); focusScan(); });
   }
 
   // Satışdan sonra qalıqlar dəyişir; səbətdəki məhsul obyektlərini yeniləyirik
   function refreshProducts() {
     return S.listProducts().then(function (ps) {
       var byId = {}; ps.forEach(function (p) { byId[p.id] = p; });
+      if (!st) return;                      // arada çıxış / sıfırlama olub
       st.cart.forEach(function (c) { if (byId[c.product.id]) c.product = byId[c.product.id]; });
       render();
     });
@@ -423,7 +426,7 @@
   /* ---------- Klaviatura ---------- */
   var burst = { buf: '', last: 0 };
   function onKey(e) {
-    if (!mountEl || !document.body.contains(mountEl) || document.querySelector('.modal-back')) return;
+    if (!st || !mountEl || !document.body.contains(mountEl) || document.querySelector('.modal-back')) return;
     var tgt = e.target;
     var inOther = tgt && tgt !== refs.scan && /INPUT|TEXTAREA/.test(tgt.tagName);
 

@@ -128,7 +128,7 @@ async def open_dev(browser, label):
     await ctx.route('https://script.google.com/**', make_proxy(label))
     await ctx.add_init_script('window.print = function(){};')
     pg = await ctx.new_page()
-    pg.on('pageerror', lambda e: errors.append(f'JS xətası ({label}): {e}'))
+    pg.on('pageerror', lambda e: errors.append(f'JS xətası ({label}): {e} :: ' + str(getattr(e, "stack", ""))[:600]))
     await pg.goto(f'http://localhost:{WEB}/index.html')
     await pg.wait_for_selector('.users button')
     return Dev(label, pg)

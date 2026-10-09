@@ -18,6 +18,8 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
 - **Qaytarma:** say satılandan (və əvvəl qaytarılandan) çox ola bilməz; bu, menecer təsdiq ekranından əvvəl yoxlanır.
 - **İstehsalçı barkodu:** uzunluq və format məhdudiyyəti yoxdur (hərf-rəqəm, istənilən uzunluq); yalnız boşluq və öz mağaza/çek barkodlarımız qəbul olunmur.
 - **Xəta mesajları:** ekranın yuxarısında və pəncərənin içində göstərilir (telefon klaviaturası aşağını örtəndə itmir).
+- **İstifadəçilər adla:** Admin (İcazələr → İstifadəçilər) "+ Yeni istifadəçi" ilə ad və rol verir (məs. «Elvin Babayev» — Kassir), adı/rolu dəyişir, söndürür və geri aktiv edir. Yaranan istifadəçiyə təsadüfi müvəqqəti PIN verilir (bir dəfə göstərilir), ilk girişdə öz PIN-ini seçir. Ad unikaldır (böyük/kiçik hərf fərqsiz), sistemdə həmişə ən azı bir aktiv Admin qalır, Admin öz hesabını söndürə və öz rolunu dəyişə bilməz. Giriş ekranında, üst paneldə və çeklərdə ad görünür; keçmiş çeklərdə həmin vaxtkı ad qalır. Başqa cihazda rol dəyişəndə/hesab söndürüləndə açıq sessiya bir neçə saniyəyə yenilənir/bağlanır (rol hər əməliyyatda bazadan oxunur).
+- **Çap (Xprinter tipli termo çek və etiket printeri):** üst paneldəki **"Çap"** düyməsi bu cihazın printerini quraşdırır (cihaza məxsusdur, serverə getmir): çek kağızı 80 mm (çap sahəsi 72) və ya 58 mm (48), etiket ölçüsü (30×20, 40×30, 50×30, 58×40, 60×40, 70×50, 100×50, 100×100 və ya özəl en×hündürlük), printer sıxlığı 203/300 dpi, test çeki və test etiketi. Çekin kağız hündürlüyü məzmuna görə hesablanır (printer lazımsız boş kağız çəkmir), etiketdə hər etiket ayrıca səhifədir. Barkodun zolaq eni printerin nöqtəsinin tam sayıdır (203 dpi-də 0,25 / 0,375 / 0,5 mm), etiketin eninə görə seçilir; etiket çox darsa xəbərdarlıq çıxır.
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.
 - **Çoxcihazlı sinxron (iki istiqamətli):** hər brauzer/cihaz öz lokal nüsxəsi ilə işləyir; hadisələr Google Sheets-ə yazılır və digər cihazlara paylanır. İstifadəçilər/PIN-lər, məhsullar, qalıq, çeklər, qaytarmalar, növbə, icazələr, mağaza məlumatı və təsdiq sorğuları cihazlar arasında eynidir.
 - **Backend:** `apps-script/Code.gs` (v4) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3 ilə də işləyir, amma yavaş: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
@@ -76,8 +78,12 @@ node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə ke
 python3 tests/e2e.py           # brauzerdə uçdan-uca, tək cihaz (Playwright lazımdır)
 python3 tests/e2e_sync.py      # iki ayrı brauzer yaddaşı + Apps Script təqlidi: PIN bazaya yazılır, 2-ci brauzerdə işləyir, menecer təsdiqi
 node tests/fuzz.test.js [N]    # təsadüfi çoxcihazlı əməliyyatlar + şəbəkə xətaları: bütün cihazlar eyni nəticəyə gəlməlidir (N toxum, defolt 12)
+python3 tests/e2e_print.py     # çap: çek/etiket PDF ölçüləri, səhifə sayı, barkod 203/300 dpi-də oxunur (pip: pypdf pillow zxing-cpp; sistem: poppler-utils)
 python3 tests/e2e_latency.py   # real Apps Script gecikməsi (~2,3 san/sorğu) + 15% xəta + ilişmiş sorğu təqlidi ilə 2 brauzer; ölçülmüş gecikmələri yazır
 ```
+
+**Çapı işə salmaq (Windows + Chrome):** Xprinter sürücüsünü quraşdırın; çap pəncərəsində *Printer* — Xprinter, *Miqyas* — 100%, *Kənar boşluqlar* — Yoxdur, *Başlıq və sonluq* — söndürülü. Hər çekdə pəncərə çıxmasın deyirsinizsə, Chrome-u `chrome.exe --kiosk-printing --app=<ünvan>` ilə açın: çap pəncərəsiz, defolt printerə gedir (Xprinter-i Windows-da defolt edin; etiket printeri ayrıdırsa, onu başqa kompyuterdə və ya başqa brauzer profilində defolt edin). Çek printerində sürücünün kağızı "80mm × Receipt" (və ya 58 mm) olmalıdır. Test çapında çərçivə kəsilirsə "Çap" pəncərəsində "Kağız ölçüsü: Çap sürücüsünün ölçüsü" seçin. Çox uzun çeklərdə (50+ sətir) sürücü maksimum uzunluğu məhdudlaşdıra bilər, o halda da həmin seçim işləyir.
+Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəsilməməsi, barkodun printer sıxlığında oxunması (`tests/e2e_print.py`). **Yoxlanıla bilməyən:** sizin konkret printerin sürücüsünün kağızı qəbul etməsi və termo başlığın qaralığı — ona görə ilk dəfə test çeki və test etiketi çap edin.
 
 **Giriş PIN-ini unutmusunuzsa (Admin də):** Apps Script redaktorunda `resetAdminPin()` funksiyasını işə salın. Admin üçün təsadüfi müvəqqəti PIN yaranır və Logs-da (View → Logs / Execution log) göstərilir; cihazlar onu bir neçə saniyəyə alır, Admin girişdən sonra yeni PIN seçməlidir.
 
@@ -93,13 +99,14 @@ Giriş və icazələr bu mərhələdə **brauzerin içində** yoxlanılır. Bu, 
 index.html  manifest.json  sw.js
 css/app.css
 js/money.js     pul (qəpiklə, float yox)
-js/barcode.js   EAN-13, mağaza və çek barkodu, SVG
+js/barcode.js   EAN-13, mağaza və çek barkodu, SVG (svgMm: printer nöqtəsinə uyğun çap barkodu)
 js/rules.js     biznes qaydaları (saf funksiyalar)
 js/db.js        IndexedDB, atomik tranzaksiyalar
 js/services.js  satış, qaytarma, növbə, məhsul, giriş, audit
 js/replica.js   başqa cihazlardan gələn hadisələrin lokal bazaya tətbiqi
 js/sync.js      outbox ⇄ Apps Script (göndər + al, nömrə aralıqları)
-js/ui.js        modal, PIN təsdiqi, çek/etiket şablonları
+js/ui.js        modal, PIN təsdiqi, bildirişlər
+js/print.js     çek/etiket şablonları, kağız/etiket ayarları, çap
 js/pos.js       kassa ekranı
 js/screens.js   giriş, məhsullar, qaytarma, növbə, çeklər, icazələr
 js/app.js       menyu və marşrutlar

@@ -8,6 +8,8 @@
   // Hər çağırış əvvəlkindən ciddi böyük vaxt qaytarır: eyni cihazın iki ardıcıl yazısı eyni millisaniyəyə düşməsin (son yazan qalib qaydası üçün)
   var lastNow = 0;
   function now() { var t = Date.now(); if (t <= lastNow) t = lastNow + 1; lastNow = t; return new Date(t).toISOString(); }
+  // Mövcud qeydi dəyişən əməliyyat üçün: vaxt həmin qeydin gördüyümüz versiyasından ciddi sonra olmalıdır (eyni millisaniyə / geri qalan saat "son yazan qalib"də redaktəni itirməsin)
+  function nowAfter(prevIso) { var p = Date.parse(prevIso || ''); if (p && p > lastNow) lastNow = p; return now(); }
 
   /* ---------- Təhlükəsizlik ---------- */
   function toHex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return b.toString(16).padStart(2, '0'); }).join(''); }
@@ -16,16 +18,25 @@
     return root.crypto.subtle.digest('SHA-256', data).then(toHex);
   }
   function newSalt() { return toHex(root.crypto.getRandomValues(new Uint8Array(16))); }
+  // Müvəqqəti PIN: kriptoqrafik təsadüfi 6 rəqəm (Math.random proqnozlaşdırıla bilər)
+  function tempPin() { return String(100000 + (root.crypto.getRandomValues(new Uint32Array(1))[0] % 900000)); }
 
   var session = { user: null };
 
   function matrix() { return DB.get('meta', 'matrix').then(function (m) { return m ? m.value : Rules.DEFAULT_MATRIX; }); }
 
+  // Rol və "aktiv" bayrağı hər dəfə bazadan oxunur: başqa cihazda Admin rolu dəyişibsə və ya hesabı söndürübsə bu cihazda köhnə səlahiyyət qalmasın.
   function requirePerm(perm, user) {
+    var live = !user;
     user = user || session.user;
     if (!user) return Promise.reject(err('Daxil olun', 'auth'));
-    return matrix().then(function (m) {
-      if (!Rules.can(m, user.role, perm)) throw err('Bu əməliyyata icazəniz yoxdur: ' + (Rules.PERMISSIONS[perm] || perm), 'forbidden');
+    return Promise.all([matrix(), live ? DB.get('users', user.id) : Promise.resolve(null)]).then(function (r) {
+      if (live) {
+        var u = r[1];
+        if (!u || !u.active) throw err('Hesabınız söndürülüb. Yenidən daxil olun', 'auth');
+        user.role = u.role; user.name = u.name;
+      }
+      if (!Rules.can(r[0], user.role, perm)) throw err('Bu əməliyyata icazəniz yoxdur: ' + (Rules.PERMISSIONS[perm] || perm), 'forbidden');
       return user;
     });
   }
@@ -236,7 +247,7 @@
         if (h !== u.pinHash) throw err('Köhnə PIN səhvdir');
         var salt = newSalt();
         return hashPin(newPin, salt).then(function (nh) {
-          u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = now();
+          u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = nowAfter(u.updatedAt);
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
             return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_changed' }, me, u.updatedAt); });
           }).then(function () { me.mustChangePin = false; persistSession(u); });
@@ -250,15 +261,89 @@
     return requirePerm('admin.users').then(function (admin) {
       return DB.get('users', userId).then(function (u) {
         if (!u) throw err('İstifadəçi tapılmadı');
-        var temp = String(Math.floor(100000 + Math.random() * 900000));
+        var temp = tempPin();
         var salt = newSalt();
         return hashPin(temp, salt).then(function (h) {
-          u.salt = salt; u.pinHash = h; u.mustChangePin = true; u.updatedAt = now();
+          u.salt = salt; u.pinHash = h; u.mustChangePin = true; u.updatedAt = nowAfter(u.updatedAt);
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
             return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_reset' }, admin, u.updatedAt); });
           }).then(function () { return temp; });
         });
       });
+    });
+  }
+
+  /* ---------- İstifadəçilərin idarəsi (Admin) ---------- */
+  function cleanName(n) { return String(n == null ? '' : n).replace(/\s+/g, ' ').trim(); }
+  function nameKey(n) { return cleanName(n).toLocaleLowerCase('az'); }
+  function validateUserName(name, users, selfId) {
+    var n = cleanName(name);
+    if (n.length < 2) return 'Ad ən azı 2 simvol olmalıdır';
+    if (n.length > 40) return 'Ad 40 simvoldan uzun ola bilməz';
+    if (users.some(function (u) { return u.id !== selfId && nameKey(u.name) === nameKey(n); })) return 'Bu adda istifadəçi artıq var';
+    return null;
+  }
+
+  function createUser(d) {
+    return requirePerm('admin.users').then(function (admin) {
+      return DB.getAll('users').then(function (users) {
+        var bad = validateUserName(d && d.name, users);
+        if (bad) throw err(bad);
+        if (!d || !Rules.ROLE_NAMES[d.role]) throw err('Rol seçin');
+        var temp = tempPin(), salt = newSalt();
+        return hashPin(temp, salt).then(function (h) {
+          var at = now();
+          var u = { id: DB.uid('u'), name: cleanName(d.name), role: d.role, salt: salt, pinHash: h, active: true, mustChangePin: true, updatedAt: at };
+          return DB.atomic(['users', 'audit', 'outbox'], function (t) {
+            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'created' }, admin, at); });
+          }).then(function () { return { user: { id: u.id, name: u.name, role: u.role, active: true }, tempPin: temp }; });
+        });
+      });
+    });
+  }
+
+  // Ad, rol, aktivlik. Son aktiv Admin söndürülə / rolu azaldıla bilməz; öz hesabınızı söndürə bilməzsiniz.
+  function updateUser(id, patch) {
+    return requirePerm('admin.users').then(function (admin) {
+      return DB.getAll('users').then(function (users) {
+        var cur = users.filter(function (u) { return u.id === id; })[0];
+        if (!cur) throw err('İstifadəçi tapılmadı');
+        var next = Object.assign({}, cur);
+        if (patch.name != null) {
+          var bad = validateUserName(patch.name, users, id); if (bad) throw err(bad);
+          next.name = cleanName(patch.name);
+        }
+        if (patch.role != null) {
+          if (!Rules.ROLE_NAMES[patch.role]) throw err('Rol səhvdir');
+          next.role = patch.role;
+        }
+        if (patch.active != null) next.active = !!patch.active;
+        if (next.name === cur.name && next.role === cur.role && next.active === cur.active) return { user: cur, unchanged: true };
+        if (id === admin.id && !next.active) throw err('Öz hesabınızı söndürə bilməzsiniz');
+        var wasAdmin = cur.active && cur.role === 'admin', stillAdmin = next.active && next.role === 'admin';
+        if (wasAdmin && !stillAdmin && !users.some(function (u) { return u.id !== id && u.active && u.role === 'admin'; })) {
+          throw err('Sistemdə ən azı bir aktiv Admin qalmalıdır');
+        }
+        next.updatedAt = nowAfter(cur.updatedAt);
+        return DB.atomic(['users', 'audit', 'outbox'], function (t) {
+          return t.put('users', next).then(function () { return log(t, 'user.upserted', { user: next, reason: 'updated', before: { name: cur.name, role: cur.role, active: cur.active } }, admin, next.updatedAt); });
+        }).then(function () { return { user: next }; });
+      });
+    });
+  }
+
+  // Başqa cihazdan gələn istifadəçi dəyişikliyindən sonra cari sessiyanı yoxlayır:
+  // 'gone' — hesab söndürülüb və ya PIN Admin tərəfindən sıfırlanıb (çıxış lazımdır); 'changed' — ad/rol dəyişib; 'same'.
+  function refreshSession() {
+    var me = session.user;
+    if (!me) return Promise.resolve('none');
+    return DB.get('users', me.id).then(function (u) {
+      if (!u || !u.active) return 'gone';
+      if (u.mustChangePin && !me.mustChangePin) return 'gone';
+      var changed = u.role !== me.role || u.name !== me.name;
+      me.role = u.role; me.name = u.name;
+      if (!u.mustChangePin) persistSession(u);
+      return changed ? 'changed' : 'same';
     });
   }
 
@@ -349,7 +434,7 @@
               next.price = changes.price;
             }
             var v = validateProductInput(next); if (v) throw err(v);
-            var at = now();                       // yenilənmə vaxtı hadisənin vaxtı ilə eynidir: bütün cihazlar eyni "son yazan"ı seçir
+            var at = nowAfter(p.updatedAt);       // yenilənmə vaxtı hadisənin vaxtı ilə eynidir: bütün cihazlar eyni "son yazan"ı seçir
             next.updatedAt = at; next.updatedDev = device;
             var chk = next.mfrBarcode && next.mfrBarcode !== p.mfrBarcode ? t.byIndex('products', 'mfrBarcode', next.mfrBarcode) : Promise.resolve([]);
             return chk.then(function (dups) {
@@ -769,7 +854,7 @@
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
-    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listAllUsers: listAllUsers, validateNewPin: validateNewPin,
+    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
   };

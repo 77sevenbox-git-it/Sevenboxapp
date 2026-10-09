@@ -250,14 +250,25 @@
 
   function labelForm(p, count) {
     var n = h('input', { class: 'input', id: 'l-n', type: 'number', min: '1', max: '500', value: String(count || 1) });
-    var preview = h('div', { style: 'display:flex;justify-content:center;padding:8px;background:var(--ground);border-radius:8px' });
-    preview.innerHTML = UI.labelsHtml([{ product: p, count: 1 }]);
+    var preview = h('div', { style: 'display:flex;justify-content:center;padding:8px;background:var(--ground);border-radius:8px;overflow:auto' });
+    var info = h('div', { class: 'muted', style: 'font-size:13px', id: 'l-info' });
+    function draw() {
+      var L = root.Print.settings().label, b = root.Print.barcodeInfo();
+      preview.innerHTML = UI.labelsHtml([{ product: p, count: 1 }]);
+      info.textContent = 'Etiket ' + L.w + ' × ' + L.h + ' mm · ' + L.dpi + ' dpi · barkod zolağı ' + b.modMm.toFixed(2) + ' mm' + (b.ok ? '' : ' — etiket dardır, barkod oxunmaya bilər');
+      info.className = b.ok ? 'muted' : 'warn-text';
+    }
+    draw();
     UI.modal({
       title: 'Etiket çapı',
-      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, preview, h('div', { class: 'field' }, h('label', { for: 'l-n' }, 'Etiket sayı'), n)),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, preview, info,
+        h('div', { class: 'field' }, h('label', { for: 'l-n' }, 'Etiket sayı'), n),
+        h('div', null, h('button', { class: 'btn small', type: 'button', id: 'l-settings', onclick: function () {
+          root.Print.settingsModal(draw);
+        } }, 'Çap ayarları'))),
       buttons: [{ text: 'Bağla' }, { text: 'Çap et', kind: 'primary', submit: true, onClick: function (close) {
         var c = Math.min(500, Math.max(1, parseInt(n.value, 10) || 1));
-        UI.printHtml(UI.labelsHtml([{ product: p, count: c }])); close();
+        UI.printHtml(UI.labelsHtml([{ product: p, count: c }]), 'label'); close();
       } }]
     });
   }
@@ -436,7 +447,7 @@
       row('Gözlənilən nağd', M.format(s.expectedCash)); row('Sayılmış nağd', M.format(s.countedCash));
       if (s.diff) row('Fərq', M.format(s.diff));
       if (s.note) out += '<div>İzah: ' + UI.esc(s.note) + '</div>';
-      UI.printHtml('<div class="receipt"><h3>' + UI.esc(store.name) + '</h3><div class="c"><b>Z HESABATI</b></div><hr>' + out + '</div>');
+      UI.printHtml(UI.receiptWrap('<h3>' + UI.esc(store.name) + '</h3><div class="c"><b>Z HESABATI</b></div><hr>' + out));
     });
   }
 
@@ -550,36 +561,107 @@
         h('button', { class: 'btn', onclick: function () { root.Sync.cycle().then(report); } }, 'İndi sinxronlaşdır')));
   }
 
-  // Admin: istifadəçilər və PIN-in sıfırlanması (unudulmuş PIN üçün)
+  // Admin: istifadəçilər — yaratmaq, ad/rol dəyişmək, söndürmək, PIN sıfırlamaq
   function usersCard() {
     var tb = h('tbody');
+    var ROLE_ORDER = ['admin', 'menecer', 'kassir', 'muhasib'];
+    var me = S.currentUser();
+
+    function tempPinModal(title, name, temp) {
+      UI.modal({ title: title, body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+        h('div', { class: 'pin-reset', id: 'temp-pin' }, temp),
+        h('p', { class: 'muted', style: 'margin:0' }, name + ' üçün müvəqqəti PIN bir dəfə göstərilir. İndi ötürün: ilk girişdə özünün yeni PIN-ini seçəcək.')) });
+    }
+
     function load() {
       return S.listAllUsers().then(function (users) {
+        users.sort(function (a, b) {
+          return (b.active - a.active) || (ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)) || a.name.localeCompare(b.name, 'az');
+        });
         UI.clear(tb);
         users.forEach(function (u) {
-          tb.appendChild(h('tr', null, h('td', null, u.name), h('td', null, R.ROLE_NAMES[u.role]),
-            h('td', null, u.mustChangePin ? h('span', { class: 'badge' }, 'PIN dəyişməlidir') : h('span', { class: 'badge ok' }, 'Aktiv')),
-            h('td', { style: 'text-align:right' }, h('button', { class: 'btn small', type: 'button', onclick: function () { resetPin(u); } }, 'PIN-i sıfırla'))));
+          var state = !u.active ? h('span', { class: 'badge off' }, 'Söndürülüb') : u.mustChangePin ? h('span', { class: 'badge' }, 'PIN dəyişməlidir') : h('span', { class: 'badge ok' }, 'Aktiv');
+          var isMe = me && u.id === me.id;
+          tb.appendChild(h('tr', { 'data-user': u.name, class: u.active ? '' : 'inactive' },
+            h('td', null, u.name, isMe ? h('span', { class: 'muted' }, ' (siz)') : null), h('td', null, R.ROLE_NAMES[u.role]), h('td', null, state),
+            h('td', { style: 'text-align:right;white-space:nowrap' },
+              h('button', { class: 'btn small', type: 'button', 'data-act': 'edit', onclick: function () { edit(u); } }, 'Redaktə'), ' ',
+              u.active ? h('button', { class: 'btn small', type: 'button', 'data-act': 'reset', onclick: function () { resetPin(u); } }, 'PIN-i sıfırla') : null, ' ',
+              isMe ? null : h('button', { class: 'btn small' + (u.active ? ' danger' : ''), type: 'button', 'data-act': 'toggle', onclick: function () { toggle(u); } }, u.active ? 'Söndür' : 'Aktiv et'))));
         });
       });
     }
+
+    function roleSelect(val) {
+      var sel = h('select', { class: 'input', id: 'u-role' }, ROLE_ORDER.map(function (r) { return h('option', { value: r, selected: r === val }, R.ROLE_NAMES[r]); }));
+      return sel;
+    }
+
+    function create() {
+      var name = h('input', { class: 'input', id: 'u-name', maxlength: '40', autocomplete: 'off', placeholder: 'Məs. Elvin Babayev' });
+      var role = roleSelect('kassir');
+      UI.modal({
+        title: 'Yeni istifadəçi',
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+          h('div', { class: 'field' }, h('label', { for: 'u-name' }, 'Ad və soyad'), name),
+          h('div', { class: 'field' }, h('label', { for: 'u-role' }, 'Rol'), role),
+          h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Müvəqqəti PIN yaradılacaq; istifadəçi ilk girişdə öz PIN-ini seçir.')),
+        buttons: [{ text: 'İmtina' }, { text: 'Yarat', kind: 'primary', submit: true, onClick: function (close) {
+          return S.createUser({ name: name.value, role: role.value }).then(function (r) {
+            close(); load();
+            tempPinModal('İstifadəçi yaradıldı', r.user.name, r.tempPin);
+          });
+        } }]
+      });
+    }
+
+    function edit(u) {
+      var name = h('input', { class: 'input', id: 'u-name', maxlength: '40', autocomplete: 'off', value: u.name });
+      var role = roleSelect(u.role);
+      if (me && u.id === me.id) role.disabled = true;           // öz rolunu dəyişmək Admini sistemdən kənarlaşdıra bilər
+      UI.modal({
+        title: 'Redaktə — ' + u.name,
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+          h('div', { class: 'field' }, h('label', { for: 'u-name' }, 'Ad və soyad'), name),
+          h('div', { class: 'field' }, h('label', { for: 'u-role' }, 'Rol'), role),
+          me && u.id === me.id ? h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Öz rolunuzu dəyişə bilməzsiniz.') :
+            h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, 'Rol dəyişəndə istifadəçinin açıq cihazında menyu və icazələr bir neçə saniyəyə yenilənir.')),
+        buttons: [{ text: 'İmtina' }, { text: 'Yadda saxla', kind: 'primary', submit: true, onClick: function (close) {
+          return S.updateUser(u.id, { name: name.value, role: role.value }).then(function (r) {
+            close(); load(); UI.toast(r.unchanged ? 'Dəyişiklik yoxdur' : 'Yadda saxlanıldı');
+            root.App.refreshStatus();
+          });
+        } }]
+      });
+    }
+
+    function toggle(u) {
+      var off = u.active;
+      UI.modal({
+        title: (off ? 'Söndür' : 'Aktiv et') + ' — ' + u.name,
+        body: h('p', { style: 'margin:0' }, off ? 'İstifadəçi artıq daxil ola bilməyəcək, açıq cihazlarda isə bir neçə saniyəyə çıxış edəcək. Keçmiş çeklər və hesabatlar saxlanılır.' : 'İstifadəçi yenidən daxil ola biləcək (PIN dəyişməyibsə köhnə PIN ilə).'),
+        buttons: [{ text: 'İmtina' }, { text: off ? 'Söndür' : 'Aktiv et', kind: off ? 'danger' : 'primary', submit: true, onClick: function (close) {
+          return S.updateUser(u.id, { active: !off }).then(function () { close(); load(); UI.toast(off ? 'Söndürüldü' : 'Aktiv edildi'); });
+        } }]
+      });
+    }
+
     function resetPin(u) {
       UI.modal({
         title: 'PIN-i sıfırla — ' + u.name,
         body: h('p', { style: 'margin:0' }, 'Müvəqqəti PIN yaradılacaq. İstifadəçi ilk girişdə özünün yeni PIN-ini seçəcək. Köhnə PIN dərhal etibarsız olur.'),
         buttons: [{ text: 'İmtina' }, { text: 'Sıfırla', kind: 'danger', submit: true, onClick: function (close) {
-          return S.resetPin(u.id).then(function (temp) {
-            close();
-            UI.modal({ title: 'Müvəqqəti PIN', body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
-              h('div', { class: 'pin-reset' }, temp), h('p', { class: 'muted', style: 'margin:0' }, u.name + ' üçün bir dəfə göstərilir. İndi ötürün.')) });
-            load();
-          });
+          return S.resetPin(u.id).then(function (temp) { close(); tempPinModal('Müvəqqəti PIN', u.name, temp); load(); });
         } }]
       });
     }
+
     load();
-    return h('div', { class: 'card table-wrap', style: 'margin-top:24px' },
-      h('div', { style: 'padding:16px 20px 0' }, h('h2', { style: 'margin:0;font-size:18px' }, 'İstifadəçilər')),
+    root.Screens._refresh = load;     // başqa cihazdan istifadəçi dəyişikliyi gələndə siyahı yenilənir
+    return h('div', { class: 'card table-wrap', style: 'margin-top:24px', id: 'users-card' },
+      h('div', { style: 'padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap' },
+        h('h2', { style: 'margin:0;font-size:18px' }, 'İstifadəçilər'),
+        h('button', { class: 'btn primary small', type: 'button', id: 'user-add', onclick: create }, '+ Yeni istifadəçi')),
       h('table', null, h('thead', null, h('tr', null, h('th', null, 'Ad'), h('th', null, 'Rol'), h('th', null, 'Vəziyyət'), h('th', null, ''))), tb));
   }
 

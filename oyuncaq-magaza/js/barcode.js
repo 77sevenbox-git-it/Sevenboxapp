@@ -73,10 +73,55 @@
       '<text x="' + (width / 2) + '" y="' + textY + '" font-family="monospace" font-size="' + (m * 7) + '" text-anchor="middle" fill="#000">' + code + '</text></svg>';
   }
 
+  // Çap üçün SVG (termo çek və etiket printeri). Ölçü milimetrlə verilir, zolaq eni isə printerin nöqtəsinin (dot) TAM sayıdır:
+  // 203 dpi-də 1 nöqtə = 0,125 mm, 2 nöqtə = 0,25 mm. Kəsr nöqtə bulanıq/qeyri-bərabər zolaq verib oxunmanı pozur.
+  // opts: dpi (203), maxWidthMm (sığmalı olduğu en), heightMm (zolaq + rəqəmlər), maxMod (zolaq eni üçün nöqtə sayı yuxarı həddi), text (rəqəmləri göstər)
+  // Qaytarır: { svg, mod, modMm, widthMm, heightMm, ok } — ok=false: sığan zolaq eni 0,24 mm-dən kiçikdir (etiket çox dardır, oxunmaya bilər)
+  var LEFT_Q = 7, RIGHT_Q = 2;               // SVG-nin içindəki sakit zona (birinci rəqəm solda yerləşir); qalanı etiketin boş kağızıdır
+  function svgMm(code, opts) {
+    opts = opts || {};
+    var bits = encode(code);
+    var dpi = opts.dpi || 203, dotMm = 25.4 / dpi;
+    var totalMods = LEFT_Q + bits.length + RIGHT_Q;
+    var maxDots = Math.floor((opts.maxWidthMm || 60) / dotMm + 1e-6);
+    var mod = Math.max(1, Math.min(opts.maxMod || 4, Math.floor(maxDots / totalMods)));
+    if (opts.mod) mod = opts.mod;
+    var W = totalMods * mod;
+    var H = Math.max(24, Math.round((opts.heightMm || 12) / dotMm));
+    var withText = opts.text !== false;
+    var fs = withText ? Math.min(Math.round(2.4 / dotMm), Math.round(H * 0.3)) : 0;      // rəqəm hündürlüyü ≈ 2,4 mm
+    var barH = withText ? H - fs - 2 : H, guardH = H;
+    var rects = '', i = 0, left = LEFT_Q * mod;
+    while (i < bits.length) {
+      if (bits[i] === '1') {
+        var start = i;
+        while (i < bits.length && bits[i] === '1') i++;
+        var guard = withText && (start < 3 || (start >= 45 && start < 50) || start >= 92);
+        rects += '<rect x="' + (left + start * mod) + '" y="0" width="' + ((i - start) * mod) + '" height="' + (guard ? guardH : barH) + '"/>';
+      } else { i++; }
+    }
+    var txt = '';
+    if (withText) {
+      var y = H - Math.round(fs * 0.12);
+      var style = 'font-family="Arial,Helvetica,sans-serif" font-size="' + fs + '" text-anchor="middle" fill="#000"';
+      txt += '<text x="' + Math.round(LEFT_Q * mod / 2) + '" y="' + y + '" ' + style + '>' + code[0] + '</text>';
+      for (var k = 0; k < 6; k++) {
+        txt += '<text x="' + (left + (3 + k * 7 + 3.5) * mod) + '" y="' + y + '" ' + style + '>' + code[1 + k] + '</text>';
+        txt += '<text x="' + (left + (50 + k * 7 + 3.5) * mod) + '" y="' + y + '" ' + style + '>' + code[7 + k] + '</text>';
+      }
+    }
+    var widthMm = W * dotMm, heightMm = H * dotMm;
+    return {
+      svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + W + ' ' + H + '" width="' + widthMm.toFixed(3) + 'mm" height="' + heightMm.toFixed(3) + 'mm" shape-rendering="crispEdges" role="img" aria-label="Barkod ' + code + '">' +
+        '<g fill="#000">' + rects + '</g>' + txt + '</svg>',
+      mod: mod, modMm: mod * dotMm, widthMm: widthMm, heightMm: heightMm, ok: mod * dotMm >= 0.24
+    };
+  }
+
   var Barcode = {
     checkDigit: checkDigit, isValidEan13: isValidEan13, storeBarcode: storeBarcode, receiptBarcode: receiptBarcode,
     isStoreBarcode: isStoreBarcode, isReceiptBarcode: isReceiptBarcode, receiptNoFromBarcode: receiptNoFromBarcode,
-    encode: encode, svg: svg
+    encode: encode, svg: svg, svgMm: svgMm
   };
   root.Barcode = Barcode;
   if (typeof module !== 'undefined') module.exports = Barcode;
