@@ -3,7 +3,7 @@
   'use strict';
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-3';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-4';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: 'Kassa', perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -57,6 +57,7 @@
       if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, 'Sorğular (' + r[3].length + ')'));
       statusEl.appendChild(h('span', null, r[0] ? 'Növbə açıq · ' + UI.fmtDate(r[0].openedAt).split(', ').pop() : 'Növbə bağlı'));
       statusEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
+      if (app.matrix && root.Notify.wants(u, app.matrix)) statusEl.appendChild(h('button', { class: 'btn small', id: 'notify-btn', title: 'Təsdiq sorğusu gələndə telefona/brauzerə bildiriş', onclick: function () { root.Notify.modal(); } }, 'Bildiriş'));
       statusEl.appendChild(h('button', { class: 'btn small', id: 'print-settings', title: 'Bu cihazın printeri: kağız eni, etiket ölçüsü, test çapı', onclick: function () { root.Print.settingsModal(); } }, 'Çap'));
       statusEl.appendChild(h('button', { class: 'btn small', onclick: logout }, 'Çıxış'));
       document.querySelector('.brand b').textContent = r[2].name;
@@ -66,13 +67,16 @@
       var ids = {}; r[3].forEach(function (a) { ids[a.id] = a; });
       if (seenRequests) {
         var fresh = r[3].filter(function (a) { return !seenRequests[a.id]; });
-        if (fresh.length) { UI.toast('Yeni təsdiq sorğusu: ' + fresh[0].summary); UI.beep(true); }
+        if (fresh.length) {
+          UI.toast('Yeni təsdiq sorğusu: ' + fresh[0].summary); UI.beep(true);
+          if (document.hidden) root.Notify.localAlert(fresh[0].summary);       // pəncərə arxa plandadır: sistem bildirişi
+        }
       }
       seenRequests = ids;
     });
   }
 
-  function logout() { UI.abortPending(); S.logout(); root.POS.reset(); start(); }
+  function logout() { UI.abortPending(); S.logout(); root.POS.reset(); root.Notify.sync(); start(); }
 
   // Başqa cihazdan gələn dəyişikliklər: icazələr, istifadəçilər, qalıq, çeklər, sorğular
   function onApplied(t) {
@@ -98,6 +102,7 @@
     });
     chain.then(function (ok) {
       if (!ok) return;
+      if (t.matrix || t.users) root.Notify.sync();
       refreshStatus();
       if (document.querySelector('.modal-back')) return;       // açıq pəncərəni pozmuruq
       if ((t.products || t.sales) && app.route === 'pos') root.POS.refresh();
@@ -115,7 +120,15 @@
     shell.appendChild(h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('b', null, ''), h('span', { class: 'muted', style: 'font-size:14px' }, '')), nav, statusEl));
     shell.appendChild(main);
     refreshStatus();
-    go(location.hash.slice(1) || 'pos');
+    var wantApprovals = location.hash === '#approvals';       // bildirişə klikdən açılıb
+    go(wantApprovals ? 'pos' : location.hash.slice(1) || 'pos');
+    root.Notify.sync();
+    if (wantApprovals) openApprovals();
+  }
+
+  function openApprovals() {
+    if (!S.currentUser() || document.querySelector('.modal-back')) return;
+    root.Screens.pendingForMe().then(function (list) { if (list.length) root.Screens.approvalsModal(refreshStatus); });
   }
 
   function start() {
@@ -136,6 +149,7 @@
   app.go = go; app.renderNav = renderNav; app.refreshStatus = refreshStatus;
   root.App = app;
 
+  root.Notify.onOpen(openApprovals);
   addEventListener('online', refreshStatus);
   addEventListener('offline', refreshStatus);
   setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)

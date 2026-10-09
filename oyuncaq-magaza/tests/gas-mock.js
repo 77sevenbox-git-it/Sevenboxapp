@@ -10,6 +10,8 @@ function makeBackend(opts) {
   opts = opts || {};
   const calls = { sheetApi: 0, openById: 0, requests: 0 };
   const logs = [];
+  const pushLog = [];
+  const backendRef = {};
   const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, sheets: {} };
 
   class Range {
@@ -87,14 +89,27 @@ function makeBackend(opts) {
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => (k in store.props ? store.props[k] : null), setProperty: (k, v) => { store.props[k] = v; } }) },
     CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = v; }, remove: k => { delete store.cache[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
-    ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) }
+    ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
+    // Push xidmətinin təqlidi: backend.pushLog-da hər sorğu (url + başlıqlar); cavabı backend.pushRespond(url, req) təyin edir (defolt 201)
+    UrlFetchApp: {
+      fetchAll(reqs) {
+        return reqs.map(r => {
+          pushLog.push({ url: r.url, method: r.method, headers: r.headers });
+          if (backendRef.pushThrows) throw new Error(backendRef.pushThrows);
+          const out = backendRef.pushRespond ? backendRef.pushRespond(r.url, r) : { status: 201, body: '' };
+          return { getResponseCode: () => out.status, getContentText: () => out.body || '' };
+        });
+      },
+      fetch(url, r) { return this.fetchAll([Object.assign({ url }, r)])[0]; }
+    }
   };
+  if (opts.noBigInt) sandbox.BigInt = undefined;
   vm.createContext(sandbox);
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'apps-script', 'Code.gs'), 'utf8'), sandbox, { filename: 'Code.gs' });
   sandbox.setup();
 
-  return {
-    calls, store, sandbox, logs,
+  Object.assign(backendRef, {
+    calls, store, sandbox, logs, pushLog,
     get: () => JSON.parse(sandbox.doGet().text),
     post(body) { calls.requests++; return JSON.parse(sandbox.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text); },
     rows(name) { const sh = store.sheets[name]; return sh ? sh.rows.slice(1).filter(r => r.some(v => v !== '' && v !== undefined)) : []; },
@@ -108,7 +123,8 @@ function makeBackend(opts) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
       };
     }
-  };
+  });
+  return backendRef;
 }
 
 module.exports = { makeBackend };

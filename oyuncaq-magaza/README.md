@@ -25,13 +25,17 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
   - FIFO bölgüsü saxlanmır, qəbul/satış/qaytarma **vaxt sırası ilə yenidən hesablanır** — bütün cihazlar eyni nəticəni alır. Oflayn cihaz gec sinxronlaşanda təchizatçılar arasında bölgü düzələ bilər, cəmlər dəyişmir.
   - Satılandan artıq qaytarma (iki cihaz eyni çekin eyni sətrini oflayn qaytarsa) gizlənmir: hesabat səhifəsində xəbərdarlıq çıxır, artıq hissə "Təchizatçısız" qaytarma sayılır, qalıq uzlaşır. Pulun iki dəfə qaytarılıb-qaytarılmadığını əl ilə yoxlamaq lazımdır.
   - Köhnə tətbiq versiyasından yenilənən cihaz buraxdığı təchizatçı/partiya hadisələrini serverdən bir dəfə oxuyur (qalığa toxunmur).
+- **Telefona bildiriş (təsdiq sorğusu):** menecer/admin cihazında üst paneldəki **"Bildiriş"** → "Aktiv et" (bir dəfə, icazəni təsdiqləyin). Kassir "Menecerə sorğu göndər" edəndə server (Apps Script) Web Push (VAPID) ilə səlahiyyəti olan başqa cihazlara bildiriş göndərir — tətbiq bağlı olsa belə (telefonda Chrome işləyirsə). Bildirişdə tətbiq ikonu və statusbar üçün şəffaf ağ "badge" var (boş boz kvadrat görünməsin); klik tətbiqi açır və təsdiq sorğuları pəncərəsini göstərir. Tətbiq açıqdır, amma pəncərə arxa plandadırsa, səhifə push olmadan öz bildirişini göstərir; ekrandadırsa səs + zolaq kifayətdir. "Test bildirişi" düyməsi bu cihazda bildiriş göstərir və serverdən real push göndərib push xidmətinin cavabını (məs. 201) yazır. Çıxış edəndə və ya rol təsdiq icazəsini itirəndə cihaz serverdə söndürülür; sorğuçunun öz cihazına/hesabına, 5 dəqiqədən köhnə və artıq cavablanmış sorğuya bildiriş getmir.
+  - *iPhone/iPad:* bildiriş yalnız tətbiq Safari-dən "Ana ekrana əlavə et" ilə quraşdırılıbsa işləyir (iOS 16.4+). Android: Chrome-un batareya "optimallaşdırması" onu söndürməməlidir.
+  - Bildirişin mətni sabitdir ("Təsdiq sorğusu — kassadan menecer təsdiqi gözlənilir"), konkret məzmun tətbiqin içindədir (push ilə mətn göndərilmir, boş push gedir; beləliklə serverdə mesaj şifrələmə kodu lazım olmur və məlumat üçüncü tərəf push xidmətindən keçmir).
+  - Server kodu (Code.gs v6) xarici xidmətə sorğu göndərir (`UrlFetchApp`): `setup()` işlədəndə Google yeni icazə istəyir ("Connect to an external service"). Apps Script layihəsində V8 runtime olmalıdır (yeni layihələrdə defoltdur; BigInt lazımdır). Xüsusi (private) VAPID açarı Script properties-də qalır, cihaza göndərilmir; `PUSH_CONTACT` property-sini (məs. `mailto:siz@firma.az`) istəsəniz yazın.
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.
 - **Çoxcihazlı sinxron (iki istiqamətli):** hər brauzer/cihaz öz lokal nüsxəsi ilə işləyir; hadisələr Google Sheets-ə yazılır və digər cihazlara paylanır. İstifadəçilər/PIN-lər, məhsullar, qalıq, çeklər, qaytarmalar, növbə, icazələr, mağaza məlumatı və təsdiq sorğuları cihazlar arasında eynidir.
-- **Backend:** `apps-script/Code.gs` (v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
+- **Backend:** `apps-script/Code.gs` (v6: bildiriş; v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
 
 ## Hələ yoxdur (növbəti mərhələlər)
 
-Tam mal qəbulu sənədi və təchizatçı borcu (ödənişlər), digər hesabatlar, push-bildiriş (təsdiq sorğusu indi açıq tətbiqdə görünür), inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
+Tam mal qəbulu sənədi və təchizatçı borcu (ödənişlər), digər hesabatlar, inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
 
 ## İşə salmaq
 
@@ -80,10 +84,14 @@ node tests/run.js              # qaydalar, pul, barkod
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
 node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə keçməsi
+node tests/push.test.js        # server push: P-256/ES256 hesabı Node kriptoqrafiyası ilə yoxlanır, kimə push gedir, xəta halları
+node tests/notify.test.js      # brauzer tərəfi: abunə, icazə, qeydiyyat/söndürmə, test, yerli bildiriş (API-lər təqlid olunur)
+node tests/sw.test.js          # service worker: push/klik məntiqi
 node tests/fifo.test.js        # FIFO bölgüsü, təchizatçı hesabatı, borc/qaytarma/artıq qaytarma (saf funksiyalar, təsadüfi ssenarilər)
 python3 tests/e2e.py           # brauzerdə uçdan-uca, tək cihaz (Playwright lazımdır)
 python3 tests/e2e_sync.py      # iki ayrı brauzer yaddaşı + Apps Script təqlidi: PIN bazaya yazılır, 2-ci brauzerdə işləyir, menecer təsdiqi
 node tests/fuzz.test.js [N]    # təsadüfi çoxcihazlı əməliyyatlar + şəbəkə xətaları: bütün cihazlar eyni nəticəyə gəlməlidir (N toxum, defolt 12)
+python3 tests/e2e_notify.py    # real Chromium: service worker-ə push çatdırılır, bildirişin ikon/badge/mətni, ikon faylları, "Bildiriş" pəncərəsi (tam Chromium lazımdır)
 python3 tests/e2e_print.py     # çap: çek/etiket PDF ölçüləri, səhifə sayı, barkod 203/300 dpi-də oxunur (pip: pypdf pillow zxing-cpp; sistem: poppler-utils)
 python3 tests/e2e_latency.py   # real Apps Script gecikməsi (~2,3 san/sorğu) + 15% xəta + ilişmiş sorğu təqlidi ilə 2 brauzer; ölçülmüş gecikmələri yazır
 ```
@@ -93,7 +101,7 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 
 **Giriş PIN-ini unutmusunuzsa (Admin də):** Apps Script redaktorunda `resetAdminPin()` funksiyasını işə salın. Admin üçün təsadüfi müvəqqəti PIN yaranır və Logs-da (View → Logs / Execution log) göstərilir; cihazlar onu bir neçə saniyəyə alır, Admin girişdən sonra yeni PIN seçməlidir.
 
-**Code.gs v5-ə keçid (v3/v4-dən):** `apps-script/Code.gs`-i köhnənin yerinə yapışdırın → `setup()` işə salın → Deploy → Manage deployments → ✏️ → Version: **New version** → Deploy (ünvan və token dəyişmir). Sonra hər brauzerdə Ctrl+F5. `setup()` `Suppliers` vərəqini yaradır və `StockReceipts`-ə yeni sütunları (təchizatçı, partiya) əlavə edir; onu işə salmasanız da vərəqlər ilk yazıda yaranır, amma köhnə `StockReceipts` başlığı yenilənməz.
+**Code.gs v6-ya keçid (v3/v4/v5-dən):** `apps-script/Code.gs`-i köhnənin yerinə yapışdırın → `setup()` işə salın → Deploy → Manage deployments → ✏️ → Version: **New version** → Deploy (ünvan və token dəyişmir). `setup()` işlədəndə Google "Connect to an external service" icazəsi istəyəcək (bildiriş üçün) — təsdiqləyin. Sonra hər brauzerdə Ctrl+F5. Bildiriş üçün hər menecer cihazında "Bildiriş → Aktiv et" və "Test bildirişi" edin. `setup()` `Suppliers` və `Push` vərəqlərini yaradır və `StockReceipts`-ə yeni sütunları (təchizatçı, partiya) əlavə edir; onu işə salmasanız da vərəqlər ilk yazıda yaranır, amma köhnə `StockReceipts` başlığı yenilənməz.
 
 ## Vacib təhlükəsizlik qeydi
 
@@ -110,6 +118,7 @@ js/rules.js     biznes qaydaları (saf funksiyalar)
 js/db.js        IndexedDB, atomik tranzaksiyalar
 js/services.js  satış, qaytarma, növbə, məhsul, giriş, audit
 js/fifo.js      FIFO bölgüsü və təchizatçı hesabatı (saf funksiyalar)
+js/notify.js    bildirişlər: Web Push abunəsi, icazə, test, yerli bildiriş
 js/replica.js   başqa cihazlardan gələn hadisələrin lokal bazaya tətbiqi
 js/sync.js      outbox ⇄ Apps Script (göndər + al, nömrə aralıqları)
 js/ui.js        modal, PIN təsdiqi, bildirişlər
@@ -118,5 +127,6 @@ js/pos.js       kassa ekranı
 js/screens.js   giriş, məhsullar, təchizatçılar, qaytarma, növbə, çeklər, icazələr
 js/app.js       menyu və marşrutlar
 apps-script/Code.gs
+icons/          tətbiq ikonları (SVG + PNG), bildiriş badge-i; tools/make-icons.py ilə yenidən yaradılır
 tests/
 ```

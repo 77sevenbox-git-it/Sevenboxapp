@@ -99,12 +99,20 @@
       return pingP;
     }).then(function (p) {
       var v = (p && p.version) || 0;
-      return 'Bağlantı işləyir' + (v < 5 ? '. Diqqət: skript köhnədir (v' + v + '). ' + (v < 4 ? 'Sürətli sinxron və keş düzəlişi üçün, ' : '') + 'təchizatçı və partiya cədvəllərinin Sheets-ə yazılması üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)' : '');
+      return 'Bağlantı işləyir' + (v < 6 ? '. Diqqət: skript köhnədir (v' + v + '). ' + (v < 4 ? 'Sürətli sinxron və keş düzəlişi, ' : '') + (v < 5 ? 'təchizatçı/partiya cədvəllərinin Sheets-ə yazılması, ' : '') + 'telefona bildiriş üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)' : '');
     }).catch(function (e) { throw new Error(explain(e)); });
   }
 
   function test() {
     return config().then(function (c) { return verify(c.url, c.token); });
+  }
+
+  // Sinxron dövrü olmayan tək əməliyyat (bildiriş qeydiyyatı və s.). Server qoşulmayıbsa xəta.
+  function api(action, extra) {
+    return config().then(function (c) {
+      if (!c.url || !c.token) throw new Error('Server qoşulmayıb');
+      return post(c.url, Object.assign({ action: action, token: c.token, device: c.device }, extra || {}), { timeout: 25000 });
+    });
   }
 
   /* ---------- Nömrə aralıqları ---------- */
@@ -304,6 +312,6 @@
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);

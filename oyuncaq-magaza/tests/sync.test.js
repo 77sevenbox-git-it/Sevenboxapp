@@ -820,6 +820,23 @@ async function t(name, fn) {
     assert.strictEqual((await X.Services.productLots(pr.id)).reduce((n, l) => n + l.remaining, 0), stock, 'partiya qalığı = məhsul qalığı');
   });
 
+  await t('təsdiq sorğusu uçdan-uca: kassir cihazı sorğu göndərir → server menecerin cihazına push göndərir (kassirin özünə yox)', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const [K, M] = await Promise.all([boot(b), boot(b)]);                     // kassa və menecer cihazları
+    await loginAs(M, 'Menecer', '2222');
+    const key = (await M.Sync.api('push.key')).key;
+    assert.ok(key && key.length > 60);
+    await M.Sync.api('push.register', { endpoint: 'https://fcm.googleapis.com/fcm/send/mgr-1', userId: 'u_menecer', userName: 'Menecer', role: 'menecer', perms: ['pos.line.delete', 'pos.discount.approve'] });
+    await K.Sync.api('push.register', { endpoint: 'https://fcm.googleapis.com/fcm/send/kassa-1', userId: 'u_kassir', userName: 'Kassir', role: 'kassir', perms: ['pos.sell'] });
+    K.Services._session.user = { id: 'u_kassir', name: 'Kassir', role: 'kassir' };     // kassir sınaq PIN-i əvvəlki testlərdə dəyişə bilər: sessiyanı birbaşa quraq
+    await K.Services.requestApproval('line_delete', 'pos.line.delete', 'Kassir sətir silmək istəyir: Ayı');
+    await K.Sync.cycle();
+    assert.strictEqual(JSON.stringify(b.pushLog.map(x => x.url)), JSON.stringify(['https://fcm.googleapis.com/fcm/send/mgr-1']));
+    assert.ok(/^vapid t=.+, k=.+$/.test(b.pushLog[0].headers.Authorization));
+    await M.Sync.cycle();
+    assert.strictEqual((await M.Services.listPendingApprovals()).length, 1);   // menecer cihazında sorğu görünür
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();
