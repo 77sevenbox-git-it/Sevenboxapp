@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-9';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-10';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -21,6 +21,9 @@
 
   function allowed() { var u = S.currentUser(); return ROUTES.filter(function (r) { return u && R.can(app.matrix, u.role, r.perm); }); }
 
+  // Ekran açılanda yumşaq giriş animasiyası (sinif təkrar verilir ki, animasiya hər keçiddə yenidən oynasın)
+  function animateIn(el, cls) { if (!el) return; var c = cls || 'screen-in'; el.classList.remove(c); void el.offsetWidth; el.classList.add(c); }
+
   function go(id) {
     var list = allowed();
     var r = list.find(function (x) { return x.id === id; }) || list[0];
@@ -30,6 +33,7 @@
     if (location.hash !== '#' + r.id) history.replaceState(null, '', '#' + r.id);
     renderNav();
     UI.clear(main);
+    animateIn(main);
     r.render(main);
   }
 
@@ -121,6 +125,7 @@
     main = h('main', { id: 'main' });
     shell.appendChild(h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('b', null, ''), h('span', { class: 'muted', style: 'font-size:14px' }, '')), nav, statusEl, UI.langSwitch()));
     shell.appendChild(main);
+    animateIn(shell.firstChild, 'fade-in');
     refreshStatus();
     var wantApprovals = location.hash === '#approvals';       // bildirişə klikdən açılıb
     go(wantApprovals ? 'pos' : location.hash.slice(1) || 'pos');

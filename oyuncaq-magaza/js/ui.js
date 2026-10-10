@@ -44,7 +44,7 @@
   function langSwitch() {
     var I = root.I18n; if (!I) return null;
     var sel = h('select', { class: 'input lang-sel', id: 'lang-sel', 'aria-label': 'Language / Язык / Dil / Dil', title: 'Language / Язык / Dil' },
-      I.langs.map(function (l) { return h('option', { value: l.code, selected: l.code === I.lang() }, l.name); }));
+      I.langs.map(function (l) { return h('option', { value: l.code, selected: l.code === I.lang(), title: l.name }, l.abbr || l.name); }));
     sel.addEventListener('change', function () { if (I.setLang(sel.value)) root.location.reload(); });
     return sel;
   }

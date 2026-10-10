@@ -7,10 +7,10 @@
   'use strict';
   var KEY = 'mag.lang';
   var LANGS = [
-    { code: 'az', name: 'Azərbaycanca', short: 'AZ', locale: 'az-AZ' },
-    { code: 'ru', name: 'Русский', short: 'RU', locale: 'ru-RU' },
-    { code: 'en', name: 'English', short: 'EN', locale: 'en-GB' },
-    { code: 'tr', name: 'Türkçe', short: 'TR', locale: 'tr-TR' }
+    { code: 'az', name: 'Azərbaycanca', short: 'AZ', abbr: 'Az', locale: 'az-AZ' },
+    { code: 'ru', name: 'Русский', short: 'RU', abbr: 'Rus', locale: 'ru-RU' },
+    { code: 'en', name: 'English', short: 'EN', abbr: 'Eng', locale: 'en-GB' },
+    { code: 'tr', name: 'Türkçe', short: 'TR', abbr: 'Tr', locale: 'tr-TR' }
   ];
   var dict = { ru: {}, en: {}, tr: {} };
   var missing = {};

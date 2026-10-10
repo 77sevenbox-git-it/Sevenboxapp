@@ -23,6 +23,7 @@ def proxy(route, request):
     route.fulfill(status=200, body=body, headers={'access-control-allow-origin': '*', 'content-type': 'application/json'})
 
 def audit(pg, where, device='telefon'):
+    pg.wait_for_timeout(450)      # giriş animasiyası bitsin (yarımşəffaf mərhələdə kontrast səhv ölçülür)
     pg.add_script_tag(path=AXE) if not pg.evaluate('() => !!window.axe') else None
     res = pg.evaluate("""async () => await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } })""")
     for v in res['violations']:

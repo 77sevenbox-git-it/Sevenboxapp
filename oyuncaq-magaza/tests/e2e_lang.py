@@ -58,7 +58,7 @@ try:
             pg.goto(URL); pg.wait_for_selector('.users button')
             check(pg.evaluate("() => I18n.lang()") == 'az', f'[{L}] ilkin dil Azərbaycanca')
             opts = pg.eval_on_selector_all('#lang-sel option', 'els => els.map(e => e.value + ":" + e.textContent)')
-            check(opts == ['az:Azərbaycanca', 'ru:Русский', 'en:English', 'tr:Türkçe'], f'[{L}] dil siyahısı: {opts}')
+            check(opts == ['az:Az', 'ru:Rus', 'en:Eng', 'tr:Tr'], f'[{L}] dil siyahısı (qısaldılmış): {opts}')
             login_az = pg.inner_text('body')
             to_lang(pg, L)
             check(pg.evaluate("() => document.documentElement.lang") == L, f'[{L}] html lang={L}')
