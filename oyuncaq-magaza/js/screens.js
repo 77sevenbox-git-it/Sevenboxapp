@@ -770,7 +770,8 @@
           S.setMatrix(m).then(function () { root.App.matrix = m; UI.toast(_t('İcazələr yadda saxlanıldı')); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, _t('Yadda saxla'))),
         can('admin.users') ? usersCard() : null,
-        settingsCard(r[1])));
+        settingsCard(r[1]),
+        archiveCard()));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
   }
 
@@ -822,6 +823,70 @@
           root.Sync.test().then(function (msg) { UI.toast(msg); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, _t('Bağlantını yoxla')),
         h('button', { class: 'btn', onclick: function () { root.Sync.cycle().then(report); } }, _t('İndi sinxronlaşdır'))));
+  }
+
+  // Admin: Google Sheets tutumu və arxivləşdirmə (Code.gs v7). Sheets bir faylda 10 milyon xanaya icazə verir (boş xanalar da sayılır): dolanda sinxron dayanır.
+  function archiveCard() {
+    var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, h('div', { class: 'muted' }, _t('Yüklənir…')));
+    function num(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+
+    function runModal(st) {
+      var prog = h('p', { class: 'muted', id: 'arch-prog', hidden: true, role: 'status', style: 'margin:0' }, _t('Arxivləşdirilir… 1–5 dəqiqə çəkə bilər, pəncərəni bağlamayın.'));
+      UI.modal({
+        title: _t('Arxivləşdirmə'), sticky: true,
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+          h('p', { style: 'margin:0' }, _t('Son {0} gündən köhnə qeydlər Drive-da yeni arxiv faylına köçürüləcək. 1–5 dəqiqə çəkə bilər: bu müddətdə kassa işləyir, amma sinxron gecikə bilər. İş saatından sonra edin.', [st.keepDays])),
+          prog),
+        buttons: [{ text: _t('Ləğv et') }, { text: _t('Arxivləşdir'), kind: 'primary', submit: true, onClick: function (close) {
+          prog.hidden = false;
+          return root.Sync.cycle().catch(function () { /* bu cihazın göndərilməmiş qeydləri əvvəl getsin; alınmasa da arxivləşdirmə təhlükəsizdir */ })
+            .then(function () { return root.Sync.archiveRun(); })
+            .then(function (r) {
+              close();
+              if (!r.archived) UI.toast(_t('Arxivləşdirməyə dəyər köhnə qeyd yoxdur: {0} gündən köhnə kifayət qədər qeyd yoxdur', [st.keepDays]));
+              else UI.toast(_t('Arxivləşdirildi: {0} hadisə köçürüldü. Cədvəl tutumu: {1}%', [num(r.removed.Events), Math.round(r.cells / st.limit * 1000) / 10]), r.warnings && r.warnings.length ? 'bad' : '');
+              load();
+            });
+        } }]
+      });
+    }
+
+    function show(st) {
+      UI.clear(body);
+      var hot = st.pct >= 70;
+      body.appendChild(h('div', null,
+        h('div', { id: 'arch-cap', class: hot ? 'warn-text' : '' }, _t('Cədvəl tutumu: {0}% ({1} / {2} xana)', [st.pct, num(st.cells), num(st.limit)])),
+        h('div', { class: 'meter' + (hot ? ' hot' : ''), role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': String(Math.round(st.pct)), 'aria-label': _t('Cədvəl tutumu') }, h('i', { style: 'width:' + Math.min(Math.max(st.pct, 0.5), 100) + '%' }))));
+      body.appendChild(h('div', { class: 'muted', style: 'font-size:14px' },
+        _t('Hadisə: canlı {0} · arxivdə {1} · cəmi {2}', [num(st.live), num(st.base), num(st.total)]), ' · ',
+        st.last ? _t('Son arxivləşdirmə: {0}', [UI.fmtDate(st.last)]) : _t('Hələ arxivləşdirilməyib')));
+      if (hot) body.appendChild(h('div', { class: 'warn-text', style: 'font-size:14px' }, _t('Tutum dolmağa yaxınlaşır. İş saatından sonra arxivləşdirin.')));
+      body.appendChild(h('p', { class: 'muted', style: 'margin:0;font-size:13px' },
+        _t('Arxivləşdirmə son {0} gündən köhnə qeydləri Drive-da yeni arxiv faylına köçürür, cədvəldə yalnız yeni qeydləri saxlayır. Heç nə itmir, cihazlar heç nə etmir.', [st.keepDays])));
+      body.appendChild(h('div', { class: 'row' },
+        h('button', { class: 'btn primary', id: 'arch-run', type: 'button', onclick: function () { runModal(st); } }, _t('Köhnə qeydləri arxivləşdir')),
+        h('button', { class: 'btn', type: 'button', onclick: load }, _t('Yenilə'))));
+      if (st.segs && st.segs.length) {
+        body.appendChild(h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'arch-files' },
+          h('thead', null, h('tr', null, h('th', null, _t('Tarix')), h('th', null, _t('Hadisələr')), h('th', { class: 'num' }, _t('Köçürülən')), h('th', null, _t('Fayl')))),
+          h('tbody', null, st.segs.slice().reverse().map(function (g) {
+            return h('tr', null, h('td', null, UI.fmtDate(g.at)), h('td', { class: 'mono' }, '#' + num(g.from + 1) + '–' + num(g.to)), h('td', { class: 'num' }, num(g.moved)),
+              h('td', null, h('a', { href: g.url, target: '_blank', rel: 'noopener noreferrer' }, _t('Aç'))));
+          })))));
+        body.appendChild(h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Arxiv fayllarını silməyin. Onları Drive-da başqa qovluğa köçürə bilərsiniz.')));
+      }
+    }
+
+    function load() {
+      return root.Sync.archiveStatus().then(show).catch(function (e) {
+        UI.clear(body);
+        var old = e.message === _t('Naməlum əməliyyat');
+        body.appendChild(h('div', { class: 'muted', id: 'arch-err' }, old ? _t('Skript köhnədir: yeni Code.gs (v7) yerləşdirin, setup() işlədin və Deploy → New version edin.') : _t('Arxiv məlumatı alınmadı: {0}', [e.message])));
+      });
+    }
+    load();
+    return h('div', { class: 'card', id: 'archive-card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('Arxiv (Google Sheets tutumu)')), body);
   }
 
   // Admin: istifadəçilər — yaratmaq, ad/rol dəyişmək, söndürmək, PIN sıfırlamaq

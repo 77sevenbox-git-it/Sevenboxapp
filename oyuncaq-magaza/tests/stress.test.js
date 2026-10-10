@@ -142,7 +142,8 @@ async function t(name, fn) { try { await fn(); passed++; console.log('✓ ' + na
     report.cellsPerSale = perSale;
     const maxEventJson = Math.max(...be.rows('Events').map(r => String(r[5]).length));
     console.log(`   server: Events ${ev}, Sales ${sales}, SaleLines ${sl}; ~${perSale.toFixed(0)} xana/çek; ən böyük hadisə JSON: ${maxEventJson} simvol`);
-    console.log(`   Sheets 10 000 000 xana limiti → ~${Math.floor(1e7 / perSale).toLocaleString('en')} çek; gündə 300 çek ilə ~${Math.floor(1e7 / perSale / 300)} gün (~${(1e7 / perSale / 300 / 365).toFixed(1)} il)`);
+    const gridPerSale = be.grid() / (NDEV * PER_DEV);   // Sheets BOŞ xanaları da sayır: vərəqin şəbəkə ölçüsü (v7-dən əvvəl 26 sütun + boş sətirlər ~2 dəfə çox idi)
+    console.log(`   Sheets 10 000 000 xana limiti (şəbəkə ölçüsü ilə, ~${gridPerSale.toFixed(0)} xana/çek) → gündə 300 çek ilə ~${Math.floor(1e7 / gridPerSale / 300)} gün (~${(1e7 / gridPerSale / 300 / 365).toFixed(1)} il); arxivləşdirmə (v7) bunu məhdudiyyətsiz edir`);
     assert.ok(maxEventJson < 40000);
     const t0 = process.hrtime.bigint();
     const N = await boot(be);                           // yeni cihaz: bütün tarixçəni yükləyir

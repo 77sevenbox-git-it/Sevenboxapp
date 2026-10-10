@@ -68,7 +68,7 @@ Verilənlər bazası faylı Drive-da hazırdır, cədvəllər və başlıqlar qu
 
 Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir. Google giriş səhifəsi görünürsə, "Who has access" = Anyone deyil: digər brauzerlər qoşula bilməyəcək.
 
-`Events` vərəqindəki sətirləri silməyin: cihazlar məlumatı oradan alır. Sıfırlamaq lazımdırsa, bütün cihazlarda brauzer məlumatını da təmizləyin.
+`Events` vərəqindəki sətirləri əl ilə silməyin: cihazlar məlumatı oradan alır. Köhnə sətirləri yalnız **Arxiv** düyməsi (aşağıda) təhlükəsiz köçürür. Sıfırlamaq lazımdırsa, bütün cihazlarda brauzer məlumatını da təmizləyin.
 
 ### Sinxronun qaydaları
 
@@ -84,6 +84,34 @@ Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir
 - Növbəni bağlayanda digər kassaların satışları da hesabata düşsün deyə əvvəlcə server yenilənir.
 - Sətir silmə sorğusu gözləyərkən internet kəsilərsə, menecer PIN-i ilə təsdiqləmək qalır.
 
+## Arxivləşdirmə (Google Sheets 10 milyon xana həddi)
+
+**Problem.** Google Sheets bir faylda 10 milyon xanaya icazə verir və **boş xanaları da sayır** (vərəqin şəbəkə ölçüsü: sətir × sütun, yeni vərəq 1000 × 26 gəlir). Hər çek `Events` (7 xana), `Sales` (20) və `SaleLines` (hər sətir 10) vərəqlərinə yazılır, ona görə ~50 xana/çek. Dolanda Sheets yazını rədd edir və sinxron dayanır. Hesab (gündə 300 çek): v7-dən əvvəl (26 sütunluq vərəqlər) ~9–10 ay, v7-nin sütun/sətir kəsməsi ilə ~1,5 il, arxivləşdirmə ilə **məhdudiyyətsiz** (canlı cədvəldə yalnız son 45 gün qalır: ~0,7 milyon xana, həddin 7%-i).
+
+**Nə vaxt.** Admin → İcazələr → **Arxiv** kartında "Cədvəl tutumu" göstərilir. Tutum **60%-ə** çatanda və ya ən azı ildə bir dəfə arxivləşdirin. 70%-dən yuxarıda Admin girişdə xəbərdarlıq alır. Yalnız **iş saatından sonra** edin: 1–5 dəqiqə ərzində digər cihazların sinxronu "Server məşğuldur" alıb özü təkrar cəhd edir (kassa satışı isə yerli işləyir, itki yoxdur).
+
+**Addımlar (hər dəfə).**
+1. Bütün kassalarda internet olsun, üst paneldə "göndərilməmiş" qeyd qalmasın (Admin kartında "İndi sinxronlaşdır").
+2. Admin → İcazələr → Arxiv → **Köhnə qeydləri arxivləşdir** → təsdiq. Pəncərəni bağlamayın (1–5 dəq).
+3. "Arxivləşdirildi: N hadisə köçürüldü. Cədvəl tutumu: X%" çıxmalıdır; siyahıda yeni arxiv faylı görünür (linkə klik → Drive-da açılır).
+4. Drive-da `7BOXS — Arxiv …` faylını bir dəfə açıb baxın; istəsəniz şəxsi qovluğa köçürün (fayl ID-si dəyişmir, sinxron pozulmur).
+5. Hər şey qaydasındadır: cihazlarda heç nə etmək lazım deyil.
+
+**Nə dəyişir.** `Events`, `Sales`, `SaleLines`, `Returns`, `StockReceipts`, `Shifts`, `CashMoves`, `Audit` vərəqlərindən son **45 gündən** köhnə sətirlər arxiv faylına (cədvəlin tam nüsxəsi) köçür; `Events`-də həm də ən azı son **1500** hadisə canlı qalır. `Products`, `Suppliers`, `Users`, `Settings`, `Push` toxunulmur. Cihazlar öz yerli bazasını saxlayır; kursor hadisənin **mütləq nömrəsidir**, ona görə mövcud cihazlar heç nə hiss etmir. Uzun müddət oflayn qalmış və ya yeni qoşulan cihaz çatışan hadisələri arxiv faylından oxuyur. Çek nömrələri arxivdən sonra da təkrarlanmır (ən böyük nömrə yadda saxlanılır).
+
+**Təhlükəsizlik tədbirləri.** Nüsxə yaradılır və `Events`/`Sales`/`SaleLines` sətir sayı yoxlanılır, uyğun gəlməsə **heç nə silinmir**. Silmədən əvvəl vəziyyətə "trim" markeri yazılır: Apps Script yarıda dayansa növbəti sorğu özü tamamlayır və ya təmizləyir. Oxuyan sorğu arxivləşdirmə ilə toqquşsa nəticə atılır, cihaz təkrar soruşur. İki arxivləşdirmə arasında ən azı 24 saat, düymə təsdiq istəyir. Redaktordan: `archiveStatusLog()` (vəziyyət), `archiveNow()` (eyni əməliyyat).
+
+**Etməyin.** Arxiv fayllarını silməyin. `Events` vərəqindən əl ilə sətir silməyin. Script properties-də `ARCHIVE` dəyərini silməyin/dəyişməyin (kursorlar pozular).
+
+**Məhdudiyyətlər (dürüst).**
+- Yeni cihazın ilk qoşulması arxiv seqmentlərini də oxuyur: tarixçə böyüdükcə (illər) ilk yükləmə uzanır (hər 500 hadisə ~1–3 san).
+- Təkrar göndərmə qoruması canlı pəncərəni əhatə edir (45 gün / 1500 hadisə). 45 gündən çox oflayn qalmış cihaz, əvvəlki göndərməsinin cavabı itibsə, bir hadisəni ikiqat yaza bilər (praktikada çox nadir).
+- Arxiv siyahısı Script properties-də saxlanılır (9 KB hədd): onlarla il kifayətdir; dolsa arxivləşdirmə aydın xəta verir.
+- Köhnə satışları Sheets-də `Sales` vərəqində yox, arxiv faylında axtarın (tətbiqdəki "Çeklər" cihazın yerli bazasındandır və dəyişmir).
+- Real Google Sheets/Drive-da yoxlanılmayıb: məntiq Code.gs-i işlədən təqlidlə (`tests/archive.test.js`) yoxlanılıb. İlk dəfə **test nüsxəsində** edin və Execution log-a baxın. Böyük faylda `copy()` bir neçə dəqiqə çəkə bilər (Apps Script limiti 6 dəq; keçərsə heç nə silinmir, boşa nüsxə faylı qala bilər: silin).
+
+**Code.gs v7-yə keçid.** `apps-script/Code.gs`-i yapışdırın → `setup()` işə salın (ilk dəfə Drive/Sheets üçün əlavə icazə istəyə bilər; **Allow**; eyni zamanda 26 sütunluq vərəqlərin boş sütun və sətirlərini kəsir: xana sayı ~340 mindən ~35 minə düşür) → Deploy → Manage deployments → ✏️ → **New version**. Köhnə v6 skript işləməyə davam edir, amma Arxiv kartı "Skript köhnədir" göstərir.
+
 ## Testlər
 
 ```bash
@@ -92,6 +120,7 @@ npm test                       # aşağıdakı node testləri birlikdə (brauzer
 node tests/run.js              # qaydalar, pul, barkod
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
+node tests/archive.test.js     # arxivləşdirmə: 2500 hadisə, köhnə kursor arxivdən oxuyur, soyuq cihaz eyni vəziyyəti alır, yarımçıq qalma bərpası, xətada heç nə silinmir, xana sayı azalır
 node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə keçməsi
 node tests/push.test.js        # server push: P-256/ES256 hesabı Node kriptoqrafiyası ilə yoxlanır, kimə push gedir, xəta halları
 node tests/notify.test.js      # brauzer tərəfi: abunə, icazə, qeydiyyat/söndürmə, test, yerli bildiriş (API-lər təqlid olunur)

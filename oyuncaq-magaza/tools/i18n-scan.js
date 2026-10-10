@@ -73,7 +73,7 @@ const ALLOW = [
   /^services\.js:.*(Mühasib [12]|\[Mağaza adı\]|\[VÖEN\]|\[Ünvan\]|Konstruktor dəsti|Yumşaq ayı|Maqnit|Qız qalası|Puzzl|Nümunə qalıq)/,
   /^replica\.js:.*(başqa cihaz|təsdiq düzəlişi)/,
   /^print\.js:.*(Konstruktor dəsti|ƏÖÜĞŞİÇ|Sınaq məhsulu|Azərbaycanca)/,   // "Azərbaycanca" — dil seçimində hər dilin öz adı ilə yazılır
-  /^sync\.js:\d+:(İcazə yoxdur|JSON səhvdir|Naməlum əməliyyat|Naməlum açar|Server məşğuldur, sonra təkrar olunacaq|Bildiriş ünvanı tanınmır|Bu cihaz bildiriş üçün qeydiyyatdan keçməyib)$/   // Code.gs-in qaytardığı xəta mətnləri (müqayisə üçün; ekrana srvErr() ilə tərcümə olunmuş çıxır)
+  /^sync\.js:\d+:(İcazə yoxdur|JSON səhvdir|Naməlum əməliyyat|Naməlum açar|Server məşğuldur, sonra təkrar olunacaq|Bildiriş ünvanı tanınmır|Bu cihaz bildiriş üçün qeydiyyatdan keçməyib|Təsdiq lazımdır|Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq)$/   // Code.gs-in qaytardığı xəta mətnləri (müqayisə üçün; ekrana srvErr() ilə tərcümə olunmuş çıxır)
 ];
 function unwrappedFiltered() { return unwrapped().filter(u => !ALLOW.some(r => r.test(u.file + ':' + u.line + ':' + u.text))); }
 

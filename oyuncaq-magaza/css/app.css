@@ -162,6 +162,9 @@ td.del, th.del { width: 44px; text-align: center; padding-left: 4px; padding-rig
 tr.inactive td { color: var(--faint); }
 
 /* Dil seçimi */
+.meter { height: 10px; border-radius: 6px; background: var(--line-2); overflow: hidden; margin-top: 6px; }
+.meter i { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+.meter.hot i { background: var(--warn); }
 .wordmark { color: var(--accent); letter-spacing: .08em; }
 .lang-sel { width: auto; min-height: 0; padding: 4px 8px; font-size: 14px; }
 .lang-row { display: flex; justify-content: flex-end; margin: -4px 0 -8px; }

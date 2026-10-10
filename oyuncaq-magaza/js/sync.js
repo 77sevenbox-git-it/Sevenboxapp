@@ -84,9 +84,13 @@
       case 'Naməlum əməliyyat': return _t('Naməlum əməliyyat');
       case 'Naməlum açar': return _t('Naməlum açar');
       case 'Server məşğuldur, sonra təkrar olunacaq': return _t('Server məşğuldur, sonra təkrar olunacaq');
+      case 'Təsdiq lazımdır': return _t('Təsdiq lazımdır');
+      case 'Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq': return _t('Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq');
       case 'Bildiriş ünvanı tanınmır': return _t('Bildiriş ünvanı tanınmır');
       case 'Bu cihaz bildiriş üçün qeydiyyatdan keçməyib': return _t('Bu cihaz bildiriş üçün qeydiyyatdan keçməyib');
-      default: return e;
+      default:
+        var m24 = /^Son arxivləşdirmədən 24 saat keçməyib \((.+) UTC\)$/.exec(e || '');
+        return m24 ? _t('Son arxivləşdirmədən 24 saat keçməyib ({0} UTC)', [m24[1]]) : e;
     }
   }
 
@@ -122,12 +126,16 @@
   }
 
   // Sinxron dövrü olmayan tək əməliyyat (bildiriş qeydiyyatı və s.). Server qoşulmayıbsa xəta.
-  function api(action, extra) {
+  function api(action, extra, opts) {
     return config().then(function (c) {
       if (!c.url || !c.token) throw new Error(_t('Server qoşulmayıb'));
-      return post(c.url, Object.assign({ action: action, token: c.token, device: c.device }, extra || {}), { timeout: 25000 });
+      return post(c.url, Object.assign({ action: action, token: c.token, device: c.device }, extra || {}), { timeout: opts && opts.timeout || 25000 });
     });
   }
+
+  // Arxivləşdirmə (Code.gs v7): Admin ekranı. Status sürətlidir; arxivləşdirmə Drive-da fayl nüsxəsi yaradır, ona görə uzun gözləmə (Apps Script limiti 6 dəq)
+  function archiveStatus() { return api('archive.status'); }
+  function archiveRun() { return api('archive.run', { confirm: 'ARXIV' }, { timeout: 340000 }); }
 
   /* ---------- Nömrə aralıqları ---------- */
   function remaining(b) {
@@ -326,6 +334,6 @@
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, api: api, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);
