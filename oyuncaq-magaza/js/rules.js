@@ -1,6 +1,7 @@
 /* Biznes qaydaları (BRD v1.2). Saf funksiyalar: verilənlər bazasına və ekrana toxunmur, testlə yoxlanılır. */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var Money = root.Money || (typeof require !== 'undefined' ? require('./money.js') : null);
 
   var TZ = 'Asia/Baku';
@@ -10,24 +11,24 @@
 
   /* ---------- Rollar və icazələr (FR-110..113) ---------- */
   var PERMISSIONS = {
-    'pos.sell': 'Satış etmək',
-    'pos.discount.request': 'Endirim sorğusu',
-    'pos.discount.approve': 'Endirimi təsdiqləmək',
-    'pos.line.delete': 'Çekdən sətir silmək',
-    'pos.return.request': 'Qaytarma sorğusu',
-    'pos.return.approve': 'Qaytarmanı təsdiqləmək',
-    'shift.open_close': 'Növbə açıb bağlamaq',
-    'product.view': 'Məhsullara baxmaq',
-    'product.edit': 'Məhsul yaratmaq və dəyişmək',
-    'stock.receive': 'Mal qəbul etmək (qalığı artırmaq)',
-    'product.price.set': 'Satış qiymətini təyin etmək',
-    'product.cost.view': 'Alış qiymətini görmək',
-    'label.print': 'Etiket çap etmək',
-    'report.view': 'Hesabatlara baxmaq',
-    'supplier.view': 'Təchizatçılara və təchizatçı hesabatına baxmaq',
-    'supplier.manage': 'Təchizatçı əlavə etmək və dəyişmək',
-    'admin.users': 'İstifadəçiləri idarə etmək',
-    'admin.permissions': 'İcazə matrisini dəyişmək'
+    'pos.sell': _t('Satış etmək'),
+    'pos.discount.request': _t('Endirim sorğusu'),
+    'pos.discount.approve': _t('Endirimi təsdiqləmək'),
+    'pos.line.delete': _t('Çekdən sətir silmək'),
+    'pos.return.request': _t('Qaytarma sorğusu'),
+    'pos.return.approve': _t('Qaytarmanı təsdiqləmək'),
+    'shift.open_close': _t('Növbə açıb bağlamaq'),
+    'product.view': _t('Məhsullara baxmaq'),
+    'product.edit': _t('Məhsul yaratmaq və dəyişmək'),
+    'stock.receive': _t('Mal qəbul etmək (qalığı artırmaq)'),
+    'product.price.set': _t('Satış qiymətini təyin etmək'),
+    'product.cost.view': _t('Alış qiymətini görmək'),
+    'label.print': _t('Etiket çap etmək'),
+    'report.view': _t('Hesabatlara baxmaq'),
+    'supplier.view': _t('Təchizatçılara və təchizatçı hesabatına baxmaq'),
+    'supplier.manage': _t('Təchizatçı əlavə etmək və dəyişmək'),
+    'admin.users': _t('İstifadəçiləri idarə etmək'),
+    'admin.permissions': _t('İcazə matrisini dəyişmək')
   };
 
   var DEFAULT_MATRIX = {
@@ -54,7 +55,7 @@
     return out;
   }
 
-  var ROLE_NAMES = { admin: 'Admin', menecer: 'Menecer', kassir: 'Kassir', muhasib: 'Mühasib' };
+  var ROLE_NAMES = { admin: _t('Admin'), menecer: _t('Menecer'), kassir: _t('Kassir'), muhasib: _t('Mühasib') };
 
   function can(matrix, role, perm) {
     var list = (matrix || DEFAULT_MATRIX)[role];
@@ -71,8 +72,8 @@
   }
 
   function validateDiscountPercent(p) {
-    if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return 'Endirim faizi 0-dan böyük olmalıdır';
-    if (p > MAX_DISCOUNT_PERCENT) return 'Endirim ' + MAX_DISCOUNT_PERCENT + '%-dən çox ola bilməz';
+    if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return _t('Endirim faizi 0-dan böyük olmalıdır');
+    if (p > MAX_DISCOUNT_PERCENT) return _t('Endirim {0}%-dən çox ola bilməz', [MAX_DISCOUNT_PERCENT]);
     return null;
   }
 
@@ -101,30 +102,30 @@
   // p: {method: 'cash'|'bank'|'mixed', total, cashReceived, bankAmount, bankType: 'pos'|'transfer'}
   function validatePayment(p) {
     var total = p.total;
-    if (!(total > 0)) return { ok: false, error: 'Çek boşdur' };
+    if (!(total > 0)) return { ok: false, error: _t('Çek boşdur') };
 
     if (p.method === 'cash') {
-      if (p.cashReceived == null) return { ok: false, error: 'Alınan məbləği yazın' };
-      if (p.cashReceived < total) return { ok: false, error: 'Alınan məbləğ yekundan azdır' };
+      if (p.cashReceived == null) return { ok: false, error: _t('Alınan məbləği yazın') };
+      if (p.cashReceived < total) return { ok: false, error: _t('Alınan məbləğ yekundan azdır') };
       return { ok: true, cashPart: total, bankPart: 0, cashReceived: p.cashReceived, change: p.cashReceived - total };
     }
 
     if (p.method === 'bank') {
-      if (p.bankType !== 'pos' && p.bankType !== 'transfer') return { ok: false, error: 'POS kart və ya köçürmə seçin' };
+      if (p.bankType !== 'pos' && p.bankType !== 'transfer') return { ok: false, error: _t('POS kart və ya köçürmə seçin') };
       return { ok: true, cashPart: 0, bankPart: total, cashReceived: 0, change: 0 };
     }
 
     if (p.method === 'mixed') {
-      if (p.bankType !== 'pos' && p.bankType !== 'transfer') return { ok: false, error: 'Bank hissəsinin növünü seçin' };
-      if (!(p.bankAmount > 0)) return { ok: false, error: 'Bank hissəsini yazın' };
-      if (p.bankAmount >= total) return { ok: false, error: 'Bank hissəsi yekundan az olmalıdır, əks halda "Bank" seçin' };
+      if (p.bankType !== 'pos' && p.bankType !== 'transfer') return { ok: false, error: _t('Bank hissəsinin növünü seçin') };
+      if (!(p.bankAmount > 0)) return { ok: false, error: _t('Bank hissəsini yazın') };
+      if (p.bankAmount >= total) return { ok: false, error: _t('Bank hissəsi yekundan az olmalıdır, əks halda "Bank" seçin') };
       var cashPart = total - p.bankAmount;
       // Alınan nağd yazılmayıbsa, nağd hissə dəqiq alınıb sayılır (qalıq verilmir)
       var recv = p.cashReceived == null ? cashPart : p.cashReceived;
-      if (recv < cashPart) return { ok: false, error: 'Nağd alınan məbləğ nağd hissədən azdır' };
+      if (recv < cashPart) return { ok: false, error: _t('Nağd alınan məbləğ nağd hissədən azdır') };
       return { ok: true, cashPart: cashPart, bankPart: p.bankAmount, cashReceived: recv, change: recv - cashPart };
     }
-    return { ok: false, error: 'Ödəniş üsulu seçilməyib' };
+    return { ok: false, error: _t('Ödəniş üsulu seçilməyib') };
   }
 
   /* ---------- Tarix (Asia/Baku) ---------- */

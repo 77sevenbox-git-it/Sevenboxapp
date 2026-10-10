@@ -1,6 +1,6 @@
 /* Service worker: tətbiq fayllarını keşdə saxlayır ki, internet olmadan açılsın (FR-100). */
-var CACHE = 'magaza-v9';
-var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/fifo.js', 'js/db.js',
+var CACHE = 'magaza-v10';
+var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/i18n.js', 'js/lang-ru.js', 'js/lang-en.js', 'js/lang-tr.js', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/fifo.js', 'js/db.js',
   'js/services.js', 'js/replica.js', 'js/sync.js', 'js/notify.js', 'js/ui.js', 'js/print.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/badge-96.png'];
 
 self.addEventListener('install', function (e) {
@@ -9,7 +9,7 @@ self.addEventListener('install', function (e) {
 
 self.addEventListener('activate', function (e) {
   e.waitUntil(caches.keys().then(function (keys) {
-    return Promise.all(keys.filter(function (k) { return k !== CACHE; }).map(function (k) { return caches.delete(k); }));
+    return Promise.all(keys.filter(function (k) { return /^magaza-v/.test(k) && k !== CACHE; }).map(function (k) { return caches.delete(k); }));   // 'magaza-prefs' (dil seçimi) silinmir
   }).then(function () { return self.clients.claim(); }));
 });
 
@@ -38,15 +38,29 @@ self.addEventListener('message', function (e) {
   if (e.data && e.data.type === 'expect-push') expectUntil = Date.now() + 60000;
 });
 
+// Bildirişin dili: səhifə seçilmiş dili "magaza-prefs" keşinə yazır (SW-nin localStorage-ı yoxdur)
+var PUSH_TEXT = {
+  az: ['Təsdiq sorğusu', 'Kassadan menecer təsdiqi gözlənilir. Tətbiqi açın.'],
+  ru: ['Запрос на подтверждение', 'Кассир ждёт подтверждения менеджера. Откройте приложение.'],
+  en: ['Approval request', 'The cashier is waiting for manager approval. Open the app.'],
+  tr: ['Onay isteği', 'Kasiyer yönetici onayını bekliyor. Uygulamayı açın.']
+};
+function pushLang() {
+  return caches.open('magaza-prefs').then(function (c) { return c.match('lang'); })
+    .then(function (r) { return r ? r.text() : 'az'; }).catch(function () { return 'az'; })
+    .then(function (l) { return PUSH_TEXT[l] ? l : 'az'; });
+}
+
 self.addEventListener('push', function (e) {
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
+  e.waitUntil(Promise.all([self.clients.matchAll({ type: 'window', includeUncontrolled: true }), pushLang()]).then(function (r) {
+    var list = r[0], lang = r[1];
     var watching = list.some(function (c) { return c.visibilityState === 'visible' && c.focused; });
     if (watching && Date.now() > expectUntil) return;
-    return self.registration.showNotification('Təsdiq sorğusu', {
-      body: 'Kassadan menecer təsdiqi gözlənilir. Tətbiqi açın.',
+    return self.registration.showNotification(PUSH_TEXT[lang][0], {
+      body: PUSH_TEXT[lang][1],
       icon: 'icons/icon-192.png',        // böyük rəngli ikon
       badge: 'icons/badge-96.png',       // statusbardakı kiçik ikon: şəffaf fonda ağ siluet (rəngli şəkil boş boz kvadrat kimi görünür)
-      tag: 'approval', renotify: true, requireInteraction: true, vibrate: [200, 100, 200], lang: 'az',
+      tag: 'approval', renotify: true, requireInteraction: true, vibrate: [200, 100, 200], lang: lang,
       data: { url: './index.html#approvals' }
     });
   }));

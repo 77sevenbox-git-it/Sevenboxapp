@@ -6,6 +6,7 @@
    Cihazın bildiriş seçimi yalnız bu cihazın localStorage-ındadır (mag.notify). Çıxış edəndə və ya rol təsdiq icazəsini itirəndə cihaz serverdə söndürülür. */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var PREF = 'mag.notify';
   var APPROVAL_PERMS = ['pos.line.delete', 'pos.discount.approve', 'pos.return.approve'];   // bu icazələrdən biri olan rol təsdiq sorğusu alır
   var ICON = 'icons/icon-192.png', BADGE = 'icons/badge-96.png';
@@ -26,9 +27,9 @@
     return { ok: !reason, reason: reason, ios: ios };
   }
   function supportMessage(sp) {
-    if (sp.reason === 'insecure') return 'Bildiriş yalnız təhlükəsiz (https) ünvanda işləyir';
-    if (sp.reason === 'ios') return 'iPhone/iPad-də bildiriş yalnız tətbiq ana ekrana əlavə edilibsə işləyir: Safari → Paylaş → "Ana ekrana əlavə et", sonra oradan açın (iOS 16.4 və yuxarı)';
-    return 'Bu brauzer bildirişi dəstəkləmir. Chrome, Edge və ya Firefox-un yeni versiyasından istifadə edin';
+    if (sp.reason === 'insecure') return _t('Bildiriş yalnız təhlükəsiz (https) ünvanda işləyir');
+    if (sp.reason === 'ios') return _t('iPhone/iPad-də bildiriş yalnız tətbiq ana ekrana əlavə edilibsə işləyir: Safari → Paylaş → "Ana ekrana əlavə et", sonra oradan açın (iOS 16.4 və yuxarı)');
+    return _t('Bu brauzer bildirişi dəstəkləmir. Chrome, Edge və ya Firefox-un yeni versiyasından istifadə edin');
   }
   function permission() { return root.Notification ? root.Notification.permission : 'denied'; }
   function wants(user, matrix) {
@@ -53,7 +54,7 @@
 
   function registration() {
     return Promise.resolve(nav().serviceWorker.getRegistration()).then(function (r) {
-      if (!r) throw new Error('Xidmət işçisi (service worker) işləmir. Səhifəni yeniləyin (Ctrl+F5); tətbiq https ünvanından açılmalıdır');
+      if (!r) throw new Error(_t('Xidmət işçisi (service worker) işləmir. Səhifəni yeniləyin (Ctrl+F5); tətbiq https ünvanından açılmalıdır'));
       return r;
     });
   }
@@ -61,10 +62,10 @@
   // Server cavabındakı texniki xətaları başa düşülən mətnə çevirir
   function friendly(e) {
     var m = (e && e.message) || String(e);
-    if (/Naməlum əməliyyat/.test(m)) return 'Server skripti köhnədir: Code.gs-in v6 versiyasını yapışdırın, setup() işlədin və "New version" deploy edin';
-    if (/BigInt/.test(m)) return 'Apps Script-də V8 runtime aktiv deyil (BigInt yoxdur): Project Settings → "Chrome V8 runtime" seçin, sonra New version deploy edin. Sinxron təsirlənmir, yalnız bildiriş işləmir';
-    if (/UrlFetchApp|permission|authoriz/i.test(m)) return 'Apps Script-ə xarici sorğu icazəsi verilməyib: redaktorda setup() işlədin, "Connect to an external service" icazəsini təsdiqləyin və yenidən "New version" deploy edin';
-    if (/Server qoşulmayıb/.test(m)) return 'Əvvəl serveri qoşun (İcazələr → Mağaza və server)';
+    if (/Naməlum əməliyyat/.test(m)) return _t('Server skripti köhnədir: Code.gs-in v6 versiyasını yapışdırın, setup() işlədin və "New version" deploy edin');
+    if (/BigInt/.test(m)) return _t('Apps Script-də V8 runtime aktiv deyil (BigInt yoxdur): Project Settings → "Chrome V8 runtime" seçin, sonra New version deploy edin. Sinxron təsirlənmir, yalnız bildiriş işləmir');
+    if (/UrlFetchApp|permission|authoriz/i.test(m)) return _t('Apps Script-ə xarici sorğu icazəsi verilməyib: redaktorda setup() işlədin, "Connect to an external service" icazəsini təsdiqləyin və yenidən "New version" deploy edin');
+    if (/Server qoşulmayıb/.test(m)) return _t('Əvvəl serveri qoşun (İcazələr → Mağaza və server)');
     return m;
   }
 
@@ -109,14 +110,14 @@
   function enable() {
     var sp = support();
     if (!sp.ok) return Promise.reject(new Error(supportMessage(sp)));
-    if (!S().currentUser()) return Promise.reject(new Error('Daxil olun'));
+    if (!S().currentUser()) return Promise.reject(new Error(_t('Daxil olun')));
     // requestPermission istifadəçi klikindən dərhal sonra çağırılmalıdır (başqa gözləmədən əvvəl)
     var asked = permission() === 'granted' ? Promise.resolve('granted') : Promise.resolve(root.Notification.requestPermission());
     return asked.then(function (p) {
-      if (p !== 'granted') throw new Error(p === 'denied' ? 'Bildiriş bloklanıb. Brauzerin ünvan sətrindəki qıfıl işarəsi → Bildirişlər → "İcazə ver", sonra yenidən basın' : 'Bildiriş icazəsi verilmədi');
+      if (p !== 'granted') throw new Error(p === 'denied' ? _t('Bildiriş bloklanıb. Brauzerin ünvan sətrindəki qıfıl işarəsi → Bildirişlər → "İcazə ver", sonra yenidən basın') : _t('Bildiriş icazəsi verilmədi'));
       return S().getMatrix();
     }).then(function (m) {
-      if (!wants(S().currentUser(), m)) throw new Error('Bu rolun təsdiq sorğusu almaq icazəsi yoxdur');
+      if (!wants(S().currentUser(), m)) throw new Error(_t('Bu rolun təsdiq sorğusu almaq icazəsi yoxdur'));
       lastSig = '';
       setPref({ on: true });
       return ensureRegistered(true);
@@ -140,7 +141,7 @@
   // Tətbiq açıqdır, amma ekranda deyil: yerli bildiriş (push lazım deyil)
   function localAlert(summary) {
     if (!support().ok || permission() !== 'granted' || !pref().on) return Promise.resolve(false);
-    return registration().then(function (reg) { return show(reg, 'Təsdiq sorğusu', summary || 'Kassadan menecer təsdiqi gözlənilir', 'approval', { requireInteraction: true, vibrate: [200, 100, 200] }).then(function () { return true; }); })
+    return registration().then(function (reg) { return show(reg, _t('Təsdiq sorğusu'), summary || _t('Kassadan menecer təsdiqi gözlənilir'), 'approval', { requireInteraction: true, vibrate: [200, 100, 200] }).then(function () { return true; }); })
       .catch(function () { return false; });
   }
 
@@ -148,11 +149,11 @@
   function test() {
     var res = { local: false, localError: null, server: null, serverError: null };
     return registration().then(function (reg) {
-      return show(reg, 'Mağaza İS — test', 'Bildirişlər bu cihazda işləyir.', 'test', { requireInteraction: false })
+      return show(reg, _t('Mağaza İS — test'), _t('Bildirişlər bu cihazda işləyir.'), 'test', { requireInteraction: false })
         .then(function () { res.local = true; }, function (e) { res.localError = e.message; })
         .then(function () { return reg.pushManager.getSubscription(); })
         .then(function (sub) {
-          if (!sub) { res.serverError = 'Bu cihaz push üçün qoşulmayıb. "Aktiv et" düyməsini basın'; return; }
+          if (!sub) { res.serverError = _t('Bu cihaz push üçün qoşulmayıb. "Aktiv et" düyməsini basın'); return; }
           try { if (reg.active) reg.active.postMessage({ type: 'expect-push' }); } catch (e) { /* mühüm deyil */ }
           return api('push.test').then(function (r) { res.server = { ok: !!r.sent, status: r.status, detail: r.detail }; }, function (e) { res.serverError = friendly(e); });
         });
@@ -185,34 +186,34 @@
     function render() {
       return state().then(function (st) {
         UI.clear(box); UI.clear(out); UI.clear(buttons);
-        box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, 'Kassir təsdiq sorğusu göndərəndə (sətir silmə, endirim, qaytarma) bu cihaza bildiriş gəlsin. Hər menecer cihazında bir dəfə aktiv edilir.'));
+        box.appendChild(h('p', { class: 'muted', style: 'margin:0' }, _t('Kassir təsdiq sorğusu göndərəndə (sətir silmə, endirim, qaytarma) bu cihaza bildiriş gəlsin. Hər menecer cihazında bir dəfə aktiv edilir.')));
         box.appendChild(out);
         box.appendChild(buttons);
         if (!st.support.ok) { out.appendChild(line(false, supportMessage(st.support))); return; }
-        out.appendChild(line(st.permission === 'granted' ? true : st.permission === 'denied' ? false : null, st.permission === 'granted' ? 'Brauzer icazəsi verilib' : st.permission === 'denied' ? 'Brauzer bildirişi bloklayıb (ünvan sətrindəki qıfıldan açın)' : 'Brauzer icazəsi hələ verilməyib'));
-        out.appendChild(line(st.on && st.subscribed, st.on && st.subscribed ? 'Bu cihaz bildirişə qoşulub' : 'Bu cihaz bildirişə qoşulmayıb'));
-        if (!st.wants) out.appendChild(line(false, 'Bu rolun təsdiq sorğusu almaq icazəsi yoxdur (Menecer və ya Admin daxil olmalıdır)'));
+        out.appendChild(line(st.permission === 'granted' ? true : st.permission === 'denied' ? false : null, st.permission === 'granted' ? _t('Brauzer icazəsi verilib') : st.permission === 'denied' ? _t('Brauzer bildirişi bloklayıb (ünvan sətrindəki qıfıldan açın)') : _t('Brauzer icazəsi hələ verilməyib')));
+        out.appendChild(line(st.on && st.subscribed, st.on && st.subscribed ? _t('Bu cihaz bildirişə qoşulub') : _t('Bu cihaz bildirişə qoşulmayıb')));
+        if (!st.wants) out.appendChild(line(false, _t('Bu rolun təsdiq sorğusu almaq icazəsi yoxdur (Menecer və ya Admin daxil olmalıdır)')));
         if (st.on && st.subscribed) {
-          buttons.appendChild(h('button', { class: 'btn', type: 'button', id: 'nt-test', onclick: runTest }, 'Test bildirişi göndər'));
-          buttons.appendChild(h('button', { class: 'btn danger', type: 'button', id: 'nt-off', onclick: function () { disable().then(render); } }, 'Söndür'));
+          buttons.appendChild(h('button', { class: 'btn', type: 'button', id: 'nt-test', onclick: runTest }, _t('Test bildirişi göndər')));
+          buttons.appendChild(h('button', { class: 'btn danger', type: 'button', id: 'nt-off', onclick: function () { disable().then(render); } }, _t('Söndür')));
         } else if (st.wants) {
           buttons.appendChild(h('button', { class: 'btn primary', type: 'button', id: 'nt-on', onclick: function (ev) {
             var b = ev.currentTarget; b.disabled = true;
-            enable().then(function () { UI.toast('Bildiriş aktiv edildi', ''); return render(); }, function (e) { UI.toast(e.message, 'bad'); out.appendChild(line(false, e.message)); b.disabled = false; });
-          } }, 'Aktiv et'));
+            enable().then(function () { UI.toast(_t('Bildiriş aktiv edildi'), ''); return render(); }, function (e) { UI.toast(e.message, 'bad'); out.appendChild(line(false, e.message)); b.disabled = false; });
+          } }, _t('Aktiv et')));
         }
       });
     }
     function runTest(ev) {
-      var b = ev.currentTarget; b.disabled = true; b.textContent = 'Göndərilir…';
+      var b = ev.currentTarget; b.disabled = true; b.textContent = _t('Göndərilir…');
       test().then(function (r) {
-        b.disabled = false; b.textContent = 'Test bildirişi göndər';
-        out.appendChild(line(r.local, r.local ? 'Bu cihazda bildiriş göstərildi (ikon və səs yoxlanılır)' : 'Bu cihazda bildiriş göstərilmədi: ' + (r.localError || 'naməlum səbəb')));
-        if (r.server) out.appendChild(line(r.server.ok, r.server.ok ? 'Server push xidmətinə göndərdi (cavab ' + r.server.status + '). 5–15 saniyəyə "Təsdiq sorğusu" bildirişi gəlməlidir; tətbiqi başqa tabə keçirin' : 'Push xidməti rədd etdi (cavab ' + r.server.status + '): ' + (r.server.detail || '') + '. Söndürüb yenidən aktiv edin'));
+        b.disabled = false; b.textContent = _t('Test bildirişi göndər');
+        out.appendChild(line(r.local, r.local ? _t('Bu cihazda bildiriş göstərildi (ikon və səs yoxlanılır)') : _t('Bu cihazda bildiriş göstərilmədi: {0}', [(r.localError || _t('naməlum səbəb'))])));
+        if (r.server) out.appendChild(line(r.server.ok, r.server.ok ? _t('Server push xidmətinə göndərdi (cavab {0}). 5–15 saniyəyə "Təsdiq sorğusu" bildirişi gəlməlidir; tətbiqi başqa tabə keçirin', [r.server.status]) : _t('Push xidməti rədd etdi (cavab {0}): {1}. Söndürüb yenidən aktiv edin', [r.server.status, (r.server.detail || '')])));
         else if (r.serverError) out.appendChild(line(false, r.serverError));
       });
     }
-    UI.modal({ title: 'Bildirişlər', body: box, buttons: [{ text: 'Bağla' }] });
+    UI.modal({ title: _t('Bildirişlər'), body: box, buttons: [{ text: _t('Bağla') }] });
     render();
   }
 

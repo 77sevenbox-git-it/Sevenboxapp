@@ -60,7 +60,8 @@ tr.neg td { background: var(--warn-soft); }
 /* Kassa */
 .pos { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; }
 .pos-main { flex: 999 1 640px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
-.pos-side { flex: 1 1 360px; display: flex; flex-direction: column; gap: 14px; }
+.pos-side { flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+@media (max-width: 480px) { .pos { padding: 12px; gap: 14px; } .pos-side { flex-basis: 100%; } }   /* telefon: yan panel altına düşür, səhifə yana sürüşmür */
 .scan { font-family: var(--mono); font-size: 22px; padding: 14px 16px; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface); width: 100%; }
 .scan:focus { outline: none; box-shadow: 0 0 0 4px rgba(31, 95, 173, .2); }
 .scan-msg { min-height: 24px; font-size: 15px; }
@@ -159,3 +160,7 @@ td.del, th.del { width: 44px; text-align: center; padding-left: 4px; padding-rig
 .conflicts { margin: 0; padding-left: 18px; color: var(--bad); font-size: 14px; }
 .pin-reset { font-family: var(--mono); font-size: 34px; letter-spacing: 6px; text-align: center; padding: 12px; background: var(--ground); border-radius: 10px; }
 tr.inactive td { color: var(--faint); }
+
+/* Dil seçimi */
+.lang-sel { width: auto; min-height: 0; padding: 4px 8px; font-size: 14px; }
+.lang-row { display: flex; justify-content: flex-end; margin: -4px 0 -8px; }

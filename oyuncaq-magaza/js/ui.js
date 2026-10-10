@@ -1,6 +1,7 @@
 /* Kiçik UI köməkçiləri: element yaratma, bildiriş, modal, PIN təsdiqi, çap. */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
 
   function h(tag, attrs) {
     var el = document.createElement(tag);
@@ -34,11 +35,25 @@
     setTimeout(function () { t.remove(); }, kind === 'bad' ? 7000 : 3500);
   }
 
+  // Təsdiq sorğusunun mətni: summary həmişə Azərbaycanca saxlanılır (köhnə cihazlar üçün), tk/tp isə şablon və dəyərlərdir ki,
+  // menecer sorğunu öz interfeys dilində görsün (kassir rusca, menecer azərbaycanca işləyə bilər).
+  function req(kind, key, params) { return { kind: kind, summary: _t(key, params, 'az'), tk: key, tp: params }; }
+  function reqText(a) { return a && a.tk ? _t(a.tk, a.tp) : (a && a.summary) || ''; }
+
+  // Dil seçimi (cihaza aiddir). Dəyişəndə səhifə yenilənir: giriş (sessionStorage) və yarımçıq çek saxlanılır.
+  function langSwitch() {
+    var I = root.I18n; if (!I) return null;
+    var sel = h('select', { class: 'input lang-sel', id: 'lang-sel', 'aria-label': 'Language / Язык / Dil / Dil', title: 'Language / Язык / Dil' },
+      I.langs.map(function (l) { return h('option', { value: l.code, selected: l.code === I.lang() }, l.name); }));
+    sel.addEventListener('change', function () { if (I.setLang(sel.value)) root.location.reload(); });
+    return sel;
+  }
+
   // Gözləyən təsdiq sorğuları üçün daimi zolaq (pəncərə bağlansa da görünür). Qaytarır: {remove}
   function pendingBanner(text, onCancel) {
     var host = document.querySelector('.pending-host');
     if (!host) { host = h('div', { class: 'pending-host', role: 'status', 'aria-live': 'polite' }); document.body.appendChild(host); }
-    var cancel = onCancel ? h('button', { class: 'btn small', type: 'button', onclick: function () { onCancel(); } }, 'Ləğv et') : null;
+    var cancel = onCancel ? h('button', { class: 'btn small', type: 'button', onclick: function () { onCancel(); } }, _t('Ləğv et')) : null;
     var el = h('div', { class: 'pending' }, h('span', { class: 'spin', 'aria-hidden': 'true' }), h('span', { class: 'grow' }, text), cancel);
     host.appendChild(el);
     return { remove: function () { el.remove(); } };
@@ -64,7 +79,7 @@
     function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } }
     var foot = h('div', { class: 'foot' });
     var errBox = h('div', { class: 'modal-err', role: 'alert', hidden: true });
-    (opts.buttons || [{ text: 'Bağla' }]).forEach(function (b) {
+    (opts.buttons || [{ text: _t('Bağla') }]).forEach(function (b) {
       var btn = h('button', { class: 'btn ' + (b.kind || ''), type: b.submit ? 'submit' : 'button' }, b.text);
       btn.addEventListener('click', function (e) {
         e.preventDefault();
@@ -110,10 +125,10 @@
         var canRequest = !!(req && url);
         var input = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', autocomplete: 'off', id: 'appr-pin', maxlength: '8' });
         var status = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status', id: 'appr-status' },
-          canRequest ? 'Menecer PIN-ini yazın və ya sorğu göndərin: menecer öz cihazında təsdiqləyəcək.' : 'Menecer PIN-ini yazın.');
+          canRequest ? _t('Menecer PIN-ini yazın və ya sorğu göndərin: menecer öz cihazında təsdiqləyəcək.') : _t('Menecer PIN-ini yazın.'));
         var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
           h('p', { style: 'margin:0' }, detail),
-          h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, 'Menecer PIN-i'), input), status);
+          h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, _t('Menecer PIN-i')), input), status);
         var done = false, detached = false, pendingId = null, poll = null, banner = null, m = null;
         var handle = { abort: function () { if (pendingId && !done) S.cancelApproval(pendingId); end(null, null); } };
 
@@ -132,32 +147,32 @@
           poll = setInterval(function () {
             S.checkApproval(pendingId).then(function (c) {
               if (done) return;
-              if (c.state === 'approved') end(c.approver, 'Menecer təsdiqlədi', '');
-              else if (c.state === 'rejected') end(null, 'Menecer sorğunu rədd etdi', 'bad');
+              if (c.state === 'approved') end(c.approver, _t('Menecer təsdiqlədi'), '');
+              else if (c.state === 'rejected') end(null, _t('Menecer sorğunu rədd etdi'), 'bad');
               else if (c.state === 'cancelled') end(null, null);
-              else if (c.state !== 'pending') end(null, 'Sorğunun vaxtı bitdi', 'bad');
+              else if (c.state !== 'pending') end(null, _t('Sorğunun vaxtı bitdi'), 'bad');
             }).catch(function () { /* şəbəkə xətası: növbəti yoxlamada təkrar */ });
           }, 1000);
         }
 
-        var buttons = [{ text: 'İmtina' }];
+        var buttons = [{ text: _t('İmtina') }];
         if (canRequest) {
-          buttons.push({ text: 'Menecerə sorğu göndər', onClick: function () {
+          buttons.push({ text: _t('Menecerə sorğu göndər'), onClick: function () {
             if (pendingId) return;
-            if (root.navigator && root.navigator.onLine === false) throw new Error('Sorğu üçün internet lazımdır. Menecer PIN-i ilə təsdiqləyin');
-            return S.requestApproval(req.kind, perm, req.summary).then(function (rec) {
+            if (root.navigator && root.navigator.onLine === false) throw new Error(_t('Sorğu üçün internet lazımdır. Menecer PIN-i ilə təsdiqləyin'));
+            return S.requestApproval(req.kind, perm, req.summary, req.tk, req.tp).then(function (rec) {
               pendingId = rec.id;
               detached = true; pendingHandles.push(handle);
               m.close();                                   // pəncərə getsin, yerinə "göndərildi" mesajı və gözləmə zolağı
-              banner = pendingBanner('Sorğu menecerə göndərildi, cavab gözlənilir: ' + req.summary, function () {
-                S.cancelApproval(pendingId); end(null, 'Sorğu ləğv edildi', '');
+              banner = pendingBanner(_t('Sorğu menecerə göndərildi, cavab gözlənilir: {0}', [reqText(req)]), function () {
+                S.cancelApproval(pendingId); end(null, _t('Sorğu ləğv edildi'), '');
               });
-              toast('Sorğu menecerə göndərildi', '');
+              toast(_t('Sorğu menecerə göndərildi'), '');
               startPoll();
             });
           } });
         }
-        buttons.push({ text: 'Təsdiqlə', kind: 'primary', submit: true, onClick: function (close) {
+        buttons.push({ text: _t('Təsdiqlə'), kind: 'primary', submit: true, onClick: function (close) {
           return S.approveWithPin(input.value, perm).then(function (u) {
             done = true; stopPoll();
             if (pendingId) S.cancelApproval(pendingId);
@@ -182,18 +197,22 @@
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 
-  function fmtDate(iso) {
-    return new Intl.DateTimeFormat('az-AZ', { timeZone: 'Asia/Baku', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
+  function locale(lang) { return root.I18n ? root.I18n.locale(lang) : 'az-AZ'; }
+  function fmtDate(iso, lang) {
+    return new Intl.DateTimeFormat(locale(lang), { timeZone: 'Asia/Baku', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
+  }
+  function fmtTime(iso, lang) {
+    return new Intl.DateTimeFormat(locale(lang), { timeZone: 'Asia/Baku', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso));
   }
 
-  var BANK_TYPE = { pos: 'POS kart', transfer: 'Karta köçürmə' };
-  var METHOD = { cash: 'Nağd', bank: 'Bank', mixed: 'Qarışıq' };
+  var BANK_TYPE = { pos: _t('POS kart'), transfer: _t('Karta köçürmə') };
+  var METHOD = { cash: _t('Nağd'), bank: _t('Bank'), mixed: _t('Qarışıq') };
 
   function receiptHtml(sale, store, opts) { return root.Print.receiptHtml(sale, store, opts); }
   function returnReceiptHtml(ret, sale, store) { return root.Print.returnReceiptHtml(ret, sale, store); }
   function labelsHtml(items, opts) { return root.Print.labelsHtml(items, opts); }
   function receiptWrap(inner) { return root.Print.wrap(inner); }
 
-  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate,
+  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
     receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);

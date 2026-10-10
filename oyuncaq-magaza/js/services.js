@@ -2,6 +2,7 @@
    Hər yazı əməliyyatı: icazə yoxlanır → atomik tranzaksiya → audit → outbox (serverə sinxron üçün). */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var DB = root.DB, Rules = root.Rules, Money = root.Money, Barcode = root.Barcode;
 
   function err(msg, code) { var e = new Error(msg); e.code = code || 'error'; return e; }
@@ -30,15 +31,15 @@
   function requirePerm(perm, user) {
     var live = !user;
     user = user || session.user;
-    if (!user) return Promise.reject(err('Daxil olun', 'auth'));
+    if (!user) return Promise.reject(err(_t('Daxil olun'), 'auth'));
     var perms = [].concat(perm);
     return Promise.all([matrix(), live ? DB.get('users', user.id) : Promise.resolve(null)]).then(function (r) {
       if (live) {
         var u = r[1];
-        if (!u || !u.active) throw err('Hesabınız söndürülüb. Yenidən daxil olun', 'auth');
+        if (!u || !u.active) throw err(_t('Hesabınız söndürülüb. Yenidən daxil olun'), 'auth');
         user.role = u.role; user.name = u.name;
       }
-      if (!perms.some(function (p) { return Rules.can(r[0], user.role, p); })) throw err('Bu əməliyyata icazəniz yoxdur: ' + (Rules.PERMISSIONS[perms[0]] || perms[0]), 'forbidden');
+      if (!perms.some(function (p) { return Rules.can(r[0], user.role, p); })) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [(Rules.PERMISSIONS[perms[0]] || perms[0])]), 'forbidden');
       return user;
     });
   }
@@ -70,7 +71,7 @@
           var v = ranges[0][0]++;
           return t.put('meta', { key: 'block:' + key, value: { ranges: ranges } }).then(function () { return v; });
         }
-        throw err('Nömrə ehtiyatı bitib. İnternetə qoşulun və bir neçə saniyə gözləyin', 'seq_exhausted');
+        throw err(_t('Nömrə ehtiyatı bitib. İnternetə qoşulun və bir neçə saniyə gözləyin'), 'seq_exhausted');
       }
       return t.get('meta', key).then(function (m) {
         var v2 = (m ? m.value : 0) + 1;
@@ -196,7 +197,7 @@
 
   function verifyPin(userId, pin) {
     return DB.get('users', userId).then(function (u) {
-      if (!u || !u.active) throw err('İstifadəçi tapılmadı');
+      if (!u || !u.active) throw err(_t('İstifadəçi tapılmadı'));
       return hashPin(pin, u.salt).then(function (h) { return { u: u, ok: h === u.pinHash }; });
     });
   }
@@ -204,7 +205,7 @@
   var failed = {};
   function login(userId, pin) {
     var f = failed[userId] || { n: 0, until: 0 };
-    if (Date.now() < f.until) return Promise.reject(err('Çox səhv cəhd. ' + Math.ceil((f.until - Date.now()) / 60000) + ' dəqiqə gözləyin', 'locked'));
+    if (Date.now() < f.until) return Promise.reject(err(_t('Çox səhv cəhd. {0} dəqiqə gözləyin', [Math.ceil((f.until - Date.now()) / 60000)]), 'locked'));
     return verifyPin(userId, pin).then(function (r) {
       if (r.ok) return r;
       // PIN başqa cihazda dəyişdirilmiş ola bilər: istifadəçiləri serverdən yeniləyib bir də yoxlayırıq
@@ -216,7 +217,7 @@
         f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } // SEC-06
         failed[userId] = f;
         return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.failed', { userId: userId }, null); })
-          .then(function () { throw err('PIN səhvdir'); });
+          .then(function () { throw err(_t('PIN səhvdir')); });
       }
       failed[userId] = { n: 0, until: 0 };
       session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
@@ -249,9 +250,9 @@
   function currentUser() { return session.user; }
 
   function validateNewPin(newPin, oldPin) {
-    if (!/^\d{4,8}$/.test(newPin)) return 'PIN 4–8 rəqəm olmalıdır';
-    if (newPin === oldPin) return 'Yeni PIN köhnə PIN ilə eyni ola bilməz';
-    if (/^(\d)\1+$/.test(newPin) || '0123456789'.indexOf(newPin) !== -1 || '9876543210'.indexOf(newPin) !== -1) return 'Çox sadə PIN seçməyin';
+    if (!/^\d{4,8}$/.test(newPin)) return _t('PIN 4–8 rəqəm olmalıdır');
+    if (newPin === oldPin) return _t('Yeni PIN köhnə PIN ilə eyni ola bilməz');
+    if (/^(\d)\1+$/.test(newPin) || '0123456789'.indexOf(newPin) !== -1 || '9876543210'.indexOf(newPin) !== -1) return _t('Çox sadə PIN seçməyin');
     return null;
   }
 
@@ -259,10 +260,10 @@
   function changePin(oldPin, newPin) {
     var bad = validateNewPin(newPin, oldPin); if (bad) return Promise.reject(err(bad));
     var me = session.user;
-    if (!me) return Promise.reject(err('Daxil olun', 'auth'));
+    if (!me) return Promise.reject(err(_t('Daxil olun'), 'auth'));
     return DB.get('users', me.id).then(function (u) {
       return hashPin(oldPin, u.salt).then(function (h) {
-        if (h !== u.pinHash) throw err('Köhnə PIN səhvdir');
+        if (h !== u.pinHash) throw err(_t('Köhnə PIN səhvdir'));
         var salt = newSalt();
         return hashPin(newPin, salt).then(function (nh) {
           u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = nowAfter(u.updatedAt);
@@ -278,7 +279,7 @@
   function resetPin(userId) {
     return requirePerm('admin.users').then(function (admin) {
       return DB.get('users', userId).then(function (u) {
-        if (!u) throw err('İstifadəçi tapılmadı');
+        if (!u) throw err(_t('İstifadəçi tapılmadı'));
         var temp = tempPin();
         var salt = newSalt();
         return hashPin(temp, salt).then(function (h) {
@@ -296,9 +297,9 @@
   function nameKey(n) { return cleanName(n).toLocaleLowerCase('az'); }
   function validateUserName(name, users, selfId) {
     var n = cleanName(name);
-    if (n.length < 2) return 'Ad ən azı 2 simvol olmalıdır';
-    if (n.length > 40) return 'Ad 40 simvoldan uzun ola bilməz';
-    if (users.some(function (u) { return u.id !== selfId && nameKey(u.name) === nameKey(n); })) return 'Bu adda istifadəçi artıq var';
+    if (n.length < 2) return _t('Ad ən azı 2 simvol olmalıdır');
+    if (n.length > 40) return _t('Ad 40 simvoldan uzun ola bilməz');
+    if (users.some(function (u) { return u.id !== selfId && nameKey(u.name) === nameKey(n); })) return _t('Bu adda istifadəçi artıq var');
     return null;
   }
 
@@ -307,7 +308,7 @@
       return DB.getAll('users').then(function (users) {
         var bad = validateUserName(d && d.name, users);
         if (bad) throw err(bad);
-        if (!d || !Rules.ROLE_NAMES[d.role]) throw err('Rol seçin');
+        if (!d || !Rules.ROLE_NAMES[d.role]) throw err(_t('Rol seçin'));
         var temp = tempPin(), salt = newSalt();
         return hashPin(temp, salt).then(function (h) {
           var at = now();
@@ -325,22 +326,22 @@
     return requirePerm('admin.users').then(function (admin) {
       return DB.getAll('users').then(function (users) {
         var cur = users.filter(function (u) { return u.id === id; })[0];
-        if (!cur) throw err('İstifadəçi tapılmadı');
+        if (!cur) throw err(_t('İstifadəçi tapılmadı'));
         var next = Object.assign({}, cur);
         if (patch.name != null) {
           var bad = validateUserName(patch.name, users, id); if (bad) throw err(bad);
           next.name = cleanName(patch.name);
         }
         if (patch.role != null) {
-          if (!Rules.ROLE_NAMES[patch.role]) throw err('Rol səhvdir');
+          if (!Rules.ROLE_NAMES[patch.role]) throw err(_t('Rol səhvdir'));
           next.role = patch.role;
         }
         if (patch.active != null) next.active = !!patch.active;
         if (next.name === cur.name && next.role === cur.role && next.active === cur.active) return { user: cur, unchanged: true };
-        if (id === admin.id && !next.active) throw err('Öz hesabınızı söndürə bilməzsiniz');
+        if (id === admin.id && !next.active) throw err(_t('Öz hesabınızı söndürə bilməzsiniz'));
         var wasAdmin = cur.active && cur.role === 'admin', stillAdmin = next.active && next.role === 'admin';
         if (wasAdmin && !stillAdmin && !users.some(function (u) { return u.id !== id && u.active && u.role === 'admin'; })) {
-          throw err('Sistemdə ən azı bir aktiv Admin qalmalıdır');
+          throw err(_t('Sistemdə ən azı bir aktiv Admin qalmalıdır'));
         }
         next.updatedAt = nowAfter(cur.updatedAt);
         return DB.atomic(['users', 'audit', 'outbox'], function (t) {
@@ -378,7 +379,7 @@
       return Promise.all(candidates.map(function (u) { return hashPin(pin, u.salt).then(function (h) { return h === u.pinHash ? u : null; }); }))
         .then(function (res) {
           var u = res.filter(Boolean)[0];
-          if (!u) throw err('PIN yanlışdır və ya bu şəxsin təsdiq icazəsi yoxdur');
+          if (!u) throw err(_t('PIN yanlışdır və ya bu şəxsin təsdiq icazəsi yoxdur'));
           return { id: u.id, name: u.name, role: u.role };
         });
     });
@@ -396,12 +397,12 @@
   }
 
   function validateProductInput(d) {
-    if (!d.name || !String(d.name).trim()) return 'Məhsulun adı boşdur';
-    if (d.price == null || d.price <= 0) return 'Satış qiyməti 0-dan böyük olmalıdır';
+    if (!d.name || !String(d.name).trim()) return _t('Məhsulun adı boşdur');
+    if (d.price == null || d.price <= 0) return _t('Satış qiyməti 0-dan böyük olmalıdır');
     if (d.mfrBarcode) {
       // İstehsalçı barkodunun uzunluğu/formatı məhdudlaşdırılmır (EAN, UPC, Code128, hərf-rəqəm). Yalnız öz barkodlarımızla qarışmasın.
-      if (/\s/.test(d.mfrBarcode)) return 'İstehsalçı barkodunda boşluq ola bilməz';
-      if (Barcode.isStoreBarcode(d.mfrBarcode) || Barcode.isReceiptBarcode(d.mfrBarcode)) return 'Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil';
+      if (/\s/.test(d.mfrBarcode)) return _t('İstehsalçı barkodunda boşluq ola bilməz');
+      if (Barcode.isStoreBarcode(d.mfrBarcode) || Barcode.isReceiptBarcode(d.mfrBarcode)) return _t('Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil');
     }
     return null;
   }
@@ -411,12 +412,12 @@
     return requirePerm('product.edit').then(function (user) {
       var v = validateProductInput(d); if (v) throw err(v);
       return matrix().then(function (m) {
-        if (!Rules.can(m, user.role, 'product.price.set')) throw err('Satış qiymətini yalnız Menecer və Admin təyin edir');
+        if (!Rules.can(m, user.role, 'product.price.set')) throw err(_t('Satış qiymətini yalnız Menecer və Admin təyin edir'));
         var warnings = [];
         return DB.atomic(['products', 'meta', 'priceHistory', 'audit', 'outbox'], function (t) {
           var p0 = d.mfrBarcode ? t.byIndex('products', 'mfrBarcode', d.mfrBarcode) : Promise.resolve([]);
           return p0.then(function (dups) {
-            if (dups.length) warnings.push('Bu istehsalçı barkodu artıq var: ' + dups.map(function (x) { return x.name; }).join(', '));
+            if (dups.length) warnings.push(_t('Bu istehsalçı barkodu artıq var: {0}', [dups.map(function (x) { return x.name; }).join(', ')]));
             return nextSeq(t, 'productSeq');
           }).then(function (seq) {
             var p = {
@@ -443,12 +444,12 @@
         var warnings = [];
         return DB.atomic(['products', 'priceHistory', 'audit', 'outbox'], function (t) {
           return t.get('products', id).then(function (p) {
-            if (!p) throw err('Məhsul tapılmadı');
+            if (!p) throw err(_t('Məhsul tapılmadı'));
             var next = Object.assign({}, p);
             ['name', 'category', 'brand', 'ageGroup', 'minStock', 'active'].forEach(function (k) { if (k in changes) next[k] = changes[k]; });
             if ('mfrBarcode' in changes) next.mfrBarcode = changes.mfrBarcode || '';
             if ('price' in changes && changes.price !== p.price) {
-              if (!canPrice) throw err('Satış qiymətini yalnız Menecer və Admin təyin edir');
+              if (!canPrice) throw err(_t('Satış qiymətini yalnız Menecer və Admin təyin edir'));
               next.price = changes.price;
             }
             var v = validateProductInput(next); if (v) throw err(v);
@@ -456,7 +457,7 @@
             next.updatedAt = at; next.updatedDev = device;
             var chk = next.mfrBarcode && next.mfrBarcode !== p.mfrBarcode ? t.byIndex('products', 'mfrBarcode', next.mfrBarcode) : Promise.resolve([]);
             return chk.then(function (dups) {
-              if (dups.length) warnings.push('Bu istehsalçı barkodu artıq var: ' + dups.map(function (x) { return x.name; }).join(', '));
+              if (dups.length) warnings.push(_t('Bu istehsalçı barkodu artıq var: {0}', [dups.map(function (x) { return x.name; }).join(', ')]));
               return t.put('products', next);
             }).then(function () {
               if (next.price !== p.price) return t.put('priceHistory', { id: DB.uid('ph'), productId: id, type: 'sale', old: p.price, new: next.price, userId: user.id, at: now() });
@@ -471,11 +472,11 @@
   /* ---------- Təchizatçılar ---------- */
   function validateSupplier(d, suppliers, selfId) {
     var n = cleanName(d.name);
-    if (n.length < 2) return 'Təchizatçının adı ən azı 2 simvol olmalıdır';
-    if (n.length > 60) return 'Ad 60 simvoldan uzun ola bilməz';
-    if (suppliers.some(function (s) { return s.id !== selfId && nameKey(s.name) === nameKey(n); })) return 'Bu adda təchizatçı artıq var';
-    if (String(d.phone || '').length > 40) return 'Telefon çox uzundur';
-    if (String(d.note || '').length > 300) return 'Qeyd 300 simvoldan uzun ola bilməz';
+    if (n.length < 2) return _t('Təchizatçının adı ən azı 2 simvol olmalıdır');
+    if (n.length > 60) return _t('Ad 60 simvoldan uzun ola bilməz');
+    if (suppliers.some(function (s) { return s.id !== selfId && nameKey(s.name) === nameKey(n); })) return _t('Bu adda təchizatçı artıq var');
+    if (String(d.phone || '').length > 40) return _t('Telefon çox uzundur');
+    if (String(d.note || '').length > 300) return _t('Qeyd 300 simvoldan uzun ola bilməz');
     return null;
   }
 
@@ -505,7 +506,7 @@
     return requirePerm('supplier.manage').then(function (user) {
       return DB.getAll('suppliers').then(function (all) {
         var cur = all.filter(function (s) { return s.id === id; })[0];
-        if (!cur) throw err('Təchizatçı tapılmadı');
+        if (!cur) throw err(_t('Təchizatçı tapılmadı'));
         var next = Object.assign({}, cur);
         ['name', 'phone', 'note'].forEach(function (k) { if (patch[k] != null) next[k] = k === 'name' ? cleanName(patch[k]) : String(patch[k]).trim(); });
         if (patch.active != null) next.active = !!patch.active;
@@ -524,13 +525,13 @@
   // unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür. supplierId verilməyibsə partiya "təchizatçısız"dır.
   function receiveStock(productId, qty, unitCost, note, supplierId) {
     return requirePerm('stock.receive').then(function (user) {
-      if (!Number.isInteger(qty) || qty <= 0) throw err('Say müsbət tam ədəd olmalıdır');
-      if (unitCost != null && !(unitCost >= 0)) throw err('Alış qiyməti səhvdir');
+      if (!Number.isInteger(qty) || qty <= 0) throw err(_t('Say müsbət tam ədəd olmalıdır'));
+      if (unitCost != null && !(unitCost >= 0)) throw err(_t('Alış qiyməti səhvdir'));
       return DB.atomic(['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'audit', 'outbox'], function (t) {
         return Promise.all([t.get('products', productId), supplierId ? t.get('suppliers', supplierId) : Promise.resolve(null)]).then(function (r) {
           var p = r[0], sup = r[1];
-          if (!p) throw err('Məhsul tapılmadı');
-          if (supplierId && (!sup || !sup.active)) throw err('Təchizatçı tapılmadı və ya söndürülüb');
+          if (!p) throw err(_t('Məhsul tapılmadı'));
+          if (supplierId && (!sup || !sup.active)) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
           if (unitCost == null) unitCost = p.lastCost || 0;
           var before = p.stock, at = now(), lotId = DB.uid('lot');
           Object.assign(p, Rules.applyReceipt(p, qty, unitCost));
@@ -574,7 +575,7 @@
             var p = a.products[pid];
             return { productId: pid, name: st.pnames[pid] || pid, soldQty: p.soldQty, returnedQty: p.returnedQty, qty: p.qty, revenue: p.revenue, cost: seeCost ? p.cost : null, profit: seeCost ? p.revenue - p.cost : null };
           }).sort(function (x, y) { return y.qty - x.qty; });
-          return { supplierId: k || null, name: k ? (st.names[k] || 'Silinmiş təchizatçı') : 'Təchizatçısız (köhnə qalıq / mənfi satış)', soldQty: a.soldQty, returnedQty: a.returnedQty, qty: a.qty,
+          return { supplierId: k || null, name: k ? (st.names[k] || _t('Silinmiş təchizatçı')) : _t('Təchizatçısız (köhnə qalıq / mənfi satış)'), soldQty: a.soldQty, returnedQty: a.returnedQty, qty: a.qty,
             revenue: a.revenue, cost: seeCost ? a.cost : null, profit: seeCost ? a.revenue - a.cost : null, onHandQty: h.qty, onHandValue: seeCost ? Math.round(h.value) : null, products: prods };
         }).filter(function (x) { return x.supplierId || x.soldQty || x.returnedQty || x.onHandQty; })
           .sort(function (a, b) { return (a.supplierId ? 0 : 1) - (b.supplierId ? 0 : 1) || b.qty - a.qty || a.name.localeCompare(b.name, 'az'); });
@@ -649,19 +650,19 @@
   // openingNote: başlanğıc nağd əvvəlki növbənin qalığından fərqlidirsə izah məcburidir (fərq auditdə qalır)
   function openShift(openingCash, openingNote) {
     return requirePerm('shift.open_close').then(function (user) {
-      if (!(openingCash >= 0)) throw err('Başlanğıc nağdı yazın');
+      if (!(openingCash >= 0)) throw err(_t('Başlanğıc nağdı yazın'));
       return currentShift().then(function (cur) {
-        if (cur) throw err('Artıq açıq növbə var');
+        if (cur) throw err(_t('Artıq açıq növbə var'));
         return lastClosedShift();
       }).then(function (prev) {
         var expected = prev && prev.countedCash != null ? prev.countedCash : null;
         var diff = expected == null ? 0 : openingCash - expected;
         if (diff !== 0 && !(openingNote && String(openingNote).trim())) {
-          throw err('Əvvəlki növbədən qalıq ' + Money.format(expected) + ' ₼ idi. Fərqli məbləğ üçün izah yazın');
+          throw err(_t('Əvvəlki növbədən qalıq {0} ₼ idi. Fərqli məbləğ üçün izah yazın', [Money.format(expected)]));
         }
         return DB.atomic(['shifts', 'audit', 'outbox'], function (t) {
           return t.byIndex('shifts', 'status', 'open').then(function (open) {
-            if (open.length) throw err('Artıq açıq növbə var');
+            if (open.length) throw err(_t('Artıq açıq növbə var'));
             var s = { id: DB.uid('sh'), status: 'open', openedAt: now(), openedBy: user.id, openedByName: user.name, openingCash: openingCash };
             if (expected != null) { s.prevShiftId = prev.id; s.prevCash = expected; s.openingDiff = diff; if (diff !== 0) s.openingNote = String(openingNote).trim(); }
             return t.put('shifts', s).then(function () { return log(t, 'shift.opened', { shift: s }, user); }).then(function () { return s; });
@@ -688,11 +689,11 @@
 
   function cashMove(type, amount, reason, approver) {
     return requirePerm('shift.open_close').then(function (user) {
-      if (!(amount > 0)) throw err('Məbləğ səhvdir');
-      if (!reason) throw err('Səbəbi yazın');
-      if (type === 'out' && !approver) throw err('Kassadan məxaric menecer təsdiqi tələb edir');
+      if (!(amount > 0)) throw err(_t('Məbləğ səhvdir'));
+      if (!reason) throw err(_t('Səbəbi yazın'));
+      if (type === 'out' && !approver) throw err(_t('Kassadan məxaric menecer təsdiqi tələb edir'));
       return currentShift().then(function (s) {
-        if (!s) throw err('Növbə açıq deyil');
+        if (!s) throw err(_t('Növbə açıq deyil'));
         return DB.atomic(['cashMoves', 'audit', 'outbox'], function (t) {
           var m = { id: DB.uid('cm'), shiftId: s.id, type: type, amount: amount, reason: reason, at: now(), userId: user.id, approvedBy: approver ? approver.id : null };
           return t.put('cashMoves', m).then(function () { return log(t, 'cash.' + type, { move: m }, user); }).then(function () { return m; });
@@ -706,7 +707,7 @@
       function diffCheck(s) {
         return shiftReport(s).then(function (rep) {
           var diff = countedCash - rep.expectedCash;
-          if (diff !== 0 && !note) throw err('Kassa fərqi var (' + Money.format(diff) + ' ₼). İzah yazın');
+          if (diff !== 0 && !note) throw err(_t('Kassa fərqi var ({0} ₼). İzah yazın', [Money.format(diff)]));
           return rep;
         });
       }
@@ -714,11 +715,11 @@
       // Oflayndırsa gözləmə olmur; internet yavaşdırsa ekranda "yoxlanılır" göstəricisi var.
       var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(8000) : Promise.resolve();
       return pull.then(currentShift).then(function (s) {
-        if (!s) throw err('Açıq növbə yoxdur');
+        if (!s) throw err(_t('Açıq növbə yoxdur'));
         return Promise.all([diffCheck(s), DB.getAll('outbox')]).then(function (r) {
           var rep = r[0];
           if (r[1].length && root.navigator && root.navigator.onLine === false) {
-            throw err('Sinxronlaşmamış ' + r[1].length + ' qeyd var. İnternet qayıdana qədər növbə bağlanmır (FR-104)');
+            throw err(_t('Sinxronlaşmamış {0} qeyd var. İnternet qayıdana qədər növbə bağlanmır (FR-104)', [r[1].length]));
           }
           var diff = countedCash - rep.expectedCash;
           s.status = 'closed'; s.closedAt = now(); s.closedBy = user.id; s.countedCash = countedCash; s.expectedCash = rep.expectedCash; s.diff = diff; s.note = note || ''; s.report = rep;
@@ -734,23 +735,23 @@
   // cart: [{productId, qty}], discount: {percent, approvedBy}|null, payment: rules.validatePayment girişi
   function checkout(cart, discount, payment) {
     return requirePerm('pos.sell').then(function (user) {
-      if (!cart.length) throw err('Çek boşdur');
+      if (!cart.length) throw err(_t('Çek boşdur'));
       if (discount) {
         var dv = Rules.validateDiscountPercent(discount.percent); if (dv) throw err(dv);
-        if (!discount.approvedBy) throw err('Endirim menecer tərəfindən təsdiqlənməyib');
+        if (!discount.approvedBy) throw err(_t('Endirim menecer tərəfindən təsdiqlənməyib'));
       }
       return currentShift().then(function (shift) {
-        if (!shift) throw err('Satış üçün növbəni açın');
+        if (!shift) throw err(_t('Satış üçün növbəni açın'));
         return DB.atomic(['products', 'sales', 'meta', 'stockMoves', 'audit', 'outbox'], function (t) {
           return Promise.all(cart.map(function (c) { return t.get('products', c.productId); })).then(function (products) {
             var lines = [];
             var negatives = [];
             for (var i = 0; i < cart.length; i++) {
               var p = products[i];
-              if (!p || !p.active) throw err('Məhsul satışda deyil');
-              if (!Number.isInteger(cart[i].qty) || cart[i].qty <= 0) throw err('Say səhvdir: ' + p.name);
+              if (!p || !p.active) throw err(_t('Məhsul satışda deyil'));
+              if (!Number.isInteger(cart[i].qty) || cart[i].qty <= 0) throw err(_t('Say səhvdir: {0}', [p.name]));
               var chk = Rules.negativeStockCheck(p, cart[i].qty);
-              if (chk.blocked) throw err('"' + p.name + '" qalığı yoxdur və artıq ' + Rules.NEGATIVE_SALE_LIMIT + ' mənfi çekdə satılıb. Mal qəbulu daxil edin', 'negative_blocked');
+              if (chk.blocked) throw err(_t('"{0}" qalığı yoxdur və artıq {1} mənfi çekdə satılıb. Mal qəbulu daxil edin', [p.name, Rules.NEGATIVE_SALE_LIMIT]), 'negative_blocked');
               if (chk.needsNegative) negatives.push(p.id);
               lines.push({ productId: p.id, name: p.name, storeBarcode: p.storeBarcode, price: p.price, qty: cart[i].qty, unitCost: p.avgCost, negative: chk.needsNegative });
             }
@@ -813,43 +814,43 @@
   function validateReturn(saleId, items) {
     return Promise.all([DB.get('sales', saleId), returnedQtyBySale(saleId)]).then(function (r) {
       var sale = r[0], prev = r[1];
-      if (!sale) throw err('Çek tapılmadı');
+      if (!sale) throw err(_t('Çek tapılmadı'));
       var win = Rules.returnWindow(sale.at, now());
-      if (win.expired) throw err('Çekin qaytarma müddəti bitib (' + win.daysPassed + ' gün keçib, limit ' + Rules.RETURN_DAYS + ' gün)', 'expired');
+      if (win.expired) throw err(_t('Çekin qaytarma müddəti bitib ({0} gün keçib, limit {1} gün)', [win.daysPassed, Rules.RETURN_DAYS]), 'expired');
       var any = false;
       items.forEach(function (it) {
         if (!it.qty) return;
         var l = sale.lines[it.lineIndex];
-        if (!l) throw err('Sətir tapılmadı');
-        if (!(it.qty > 0) || Math.floor(it.qty) !== it.qty) throw err('"' + l.name + '": say tam müsbət ədəd olmalıdır');
+        if (!l) throw err(_t('Sətir tapılmadı'));
+        if (!(it.qty > 0) || Math.floor(it.qty) !== it.qty) throw err(_t('"{0}": say tam müsbət ədəd olmalıdır', [l.name]));
         var can = Rules.returnableQty(l.qty, prev.map[it.lineIndex]);
-        if (it.qty > can) throw err('"' + l.name + '": satılıb ' + l.qty + ', əvvəl qaytarılıb ' + (prev.map[it.lineIndex] || 0) + ' — ən çox ' + can + ' ədəd qaytarmaq olar');
+        if (it.qty > can) throw err(_t('"{0}": satılıb {1}, əvvəl qaytarılıb {2} — ən çox {3} ədəd qaytarmaq olar', [l.name, l.qty, (prev.map[it.lineIndex] || 0), can]));
         any = true;
       });
-      if (!any) throw err('Qaytarılacaq say yazın');
+      if (!any) throw err(_t('Qaytarılacaq say yazın'));
       return true;
     });
   }
 
   function createReturn(saleId, items, approver, reason) {
     return requirePerm('pos.return.request').then(function (user) {
-      if (!approver) throw err('Qaytarma menecer təsdiqi tələb edir');
+      if (!approver) throw err(_t('Qaytarma menecer təsdiqi tələb edir'));
       return Promise.all([DB.get('sales', saleId), returnedQtyBySale(saleId), currentShift()]).then(function (r) {
         var sale = r[0], prev = r[1], shift = r[2];
-        if (!sale) throw err('Çek tapılmadı');
-        if (!shift) throw err('Qaytarma üçün növbəni açın');
+        if (!sale) throw err(_t('Çek tapılmadı'));
+        if (!shift) throw err(_t('Qaytarma üçün növbəni açın'));
         var win = Rules.returnWindow(sale.at, now());
-        if (win.expired) throw err('Çekin qaytarma müddəti bitib (' + win.daysPassed + ' gün keçib, limit ' + Rules.RETURN_DAYS + ' gün)', 'expired');
+        if (win.expired) throw err(_t('Çekin qaytarma müddəti bitib ({0} gün keçib, limit {1} gün)', [win.daysPassed, Rules.RETURN_DAYS]), 'expired');
         var lines = [];
         items.forEach(function (it) {
           if (!it.qty) return;
           var l = sale.lines[it.lineIndex];
-          if (!l) throw err('Sətir tapılmadı');
+          if (!l) throw err(_t('Sətir tapılmadı'));
           var can = Rules.returnableQty(l.qty, prev.map[it.lineIndex]);
-          if (it.qty > can) throw err('"' + l.name + '" üzrə ən çox ' + can + ' ədəd qaytarmaq olar');
+          if (it.qty > can) throw err(_t('"{0}" üzrə ən çox {1} ədəd qaytarmaq olar', [l.name, can]));
           lines.push({ lineIndex: it.lineIndex, productId: l.productId, name: l.name, price: l.price, qty: it.qty });
         });
-        if (!lines.length) throw err('Qaytarılacaq məhsul seçin');
+        if (!lines.length) throw err(_t('Qaytarılacaq məhsul seçin'));
         var amount = Rules.refundAmount(lines, sale.discount ? sale.discount.percent : 0);
         // Pul ilkin üsulla: əvvəlcə nağd hissəyə qədər nağd, qalanı banka
         var cashLeft = Math.max(0, sale.payment.cashPart - prev.cashRefunded);
@@ -881,7 +882,7 @@
   function setMatrix(m) {
     return requirePerm('admin.permissions').then(function (user) {
       // Admin özünü icazə idarəsindən kənarlaşdıra bilməz
-      if (m.admin.indexOf('admin.permissions') === -1) throw err('Admin icazə idarəsini özündən götürə bilməz');
+      if (m.admin.indexOf('admin.permissions') === -1) throw err(_t('Admin icazə idarəsini özündən götürə bilməz'));
       var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
         return t.get('meta', 'matrix').then(function (old) {
@@ -911,10 +912,10 @@
   function isFresh(a) { return Date.now() - Date.parse(a.at) < APPROVAL_TTL; }
 
   // kind: 'line_delete' | 'sale_cancel' | 'discount' | ..., perm: təsdiq üçün lazım olan icazə, summary: menecerə göstərilən mətn
-  function requestApproval(kind, perm, summary) {
+  function requestApproval(kind, perm, summary, tk, tp) {
     var me = session.user;
-    if (!me) return Promise.reject(err('Daxil olun', 'auth'));
-    var rec = { id: DB.uid('ap'), kind: kind, perm: perm, summary: summary, requestedBy: { id: me.id, name: me.name, role: me.role }, at: now(), status: 'pending', device: device };
+    if (!me) return Promise.reject(err(_t('Daxil olun'), 'auth'));
+    var rec = { id: DB.uid('ap'), kind: kind, perm: perm, summary: summary, tk: tk || null, tp: tp || null, requestedBy: { id: me.id, name: me.name, role: me.role }, at: now(), status: 'pending', device: device };
     return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
       return t.put('approvals', rec).then(function () { return log(t, 'approval.requested', { approval: rec }, me, rec.at); }).then(function () { return rec; });
     });
@@ -927,13 +928,13 @@
   }
 
   function decideApproval(id, decision) {
-    if (decision !== 'approved' && decision !== 'rejected') return Promise.reject(err('Qərar səhvdir'));
+    if (decision !== 'approved' && decision !== 'rejected') return Promise.reject(err(_t('Qərar səhvdir')));
     return DB.get('approvals', id).then(function (a) {
-      if (!a) throw err('Sorğu tapılmadı');
+      if (!a) throw err(_t('Sorğu tapılmadı'));
       return requirePerm(a.perm).then(function (me) {
-        if (a.requestedBy.id === me.id) throw err('Öz sorğunuzu təsdiqləyə bilməzsiniz');
-        if (a.status !== 'pending') throw err('Sorğuya artıq cavab verilib');
-        if (!isFresh(a)) throw err('Sorğunun vaxtı bitib');
+        if (a.requestedBy.id === me.id) throw err(_t('Öz sorğunuzu təsdiqləyə bilməzsiniz'));
+        if (a.status !== 'pending') throw err(_t('Sorğuya artıq cavab verilib'));
+        if (!isFresh(a)) throw err(_t('Sorğunun vaxtı bitib'));
         var at = now();
         return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
           a.status = decision; a.decidedBy = { id: me.id, name: me.name, role: me.role }; a.decidedAt = at;

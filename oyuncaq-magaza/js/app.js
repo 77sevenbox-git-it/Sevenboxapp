@@ -1,18 +1,19 @@
 /* Tətbiqin girişi: marşrutlar, menyu, status sətri. */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-4';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-5';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
-    { id: 'pos', label: 'Kassa', perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
-    { id: 'returns', label: 'Qaytarma', perm: 'pos.return.request', render: function (el) { root.Screens.returns(el); } },
-    { id: 'products', label: 'Məhsullar', perm: 'product.view', render: function (el) { root.Screens.products(el); } },
-    { id: 'suppliers', label: 'Təchizatçılar', perm: 'supplier.view', render: function (el) { root.Screens.suppliers(el); } },
-    { id: 'sales', label: 'Çeklər', perm: 'report.view', render: function (el) { root.Screens.sales(el); } },
-    { id: 'shift', label: 'Növbə', perm: 'shift.open_close', render: function (el) { root.Screens.shift(el); } },
-    { id: 'admin', label: 'İcazələr', perm: 'admin.permissions', render: function (el) { root.Screens.admin(el); } }
+    { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
+    { id: 'returns', label: _t('Qaytarma'), perm: 'pos.return.request', render: function (el) { root.Screens.returns(el); } },
+    { id: 'products', label: _t('Məhsullar'), perm: 'product.view', render: function (el) { root.Screens.products(el); } },
+    { id: 'suppliers', label: _t('Təchizatçılar'), perm: 'supplier.view', render: function (el) { root.Screens.suppliers(el); } },
+    { id: 'sales', label: _t('Çeklər'), perm: 'report.view', render: function (el) { root.Screens.sales(el); } },
+    { id: 'shift', label: _t('Növbə'), perm: 'shift.open_close', render: function (el) { root.Screens.shift(el); } },
+    { id: 'admin', label: _t('İcazələr'), perm: 'admin.permissions', render: function (el) { root.Screens.admin(el); } }
   ];
 
   var app = { matrix: null, route: null };
@@ -23,7 +24,7 @@
   function go(id) {
     var list = allowed();
     var r = list.find(function (x) { return x.id === id; }) || list[0];
-    if (!r) { UI.clear(main).appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, 'Bu rol üçün açıq ekran yoxdur.'))); return; }
+    if (!r) { UI.clear(main).appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, _t('Bu rol üçün açıq ekran yoxdur.')))); return; }
     app.route = r.id;
     root.Screens._refresh = null;
     if (location.hash !== '#' + r.id) history.replaceState(null, '', '#' + r.id);
@@ -49,17 +50,17 @@
       var online = navigator.onLine;
       var sy = root.Sync.status();
       UI.clear(statusEl);
-      statusEl.appendChild(h('span', null, h('span', { class: 'dot' + (online ? '' : ' off') }), online ? 'Onlayn' : 'Oflayn'));
-      if (online && sy.rttAvg) statusEl.appendChild(h('span', { class: 'muted', title: 'Google Apps Script serverinin orta cavab müddəti. Cihazlar arasında yenilik təxminən bunun 2–3 qatı qədər gecikir' }, 'Server ' + (sy.rttAvg / 1000).toFixed(1) + ' san'));
-      statusEl.appendChild(h('span', { class: 'muted', title: 'Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın' }, 'v' + BUILD));
-      if (r[1]) statusEl.appendChild(h('span', { class: 'badge', title: 'Serverə göndərilməmiş qeydlər' }, r[1] + ' sinxron gözləyir'));
-      if (sy.ok === false) statusEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, 'Sinxron xətası'));
-      if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, 'Sorğular (' + r[3].length + ')'));
-      statusEl.appendChild(h('span', null, r[0] ? 'Növbə açıq · ' + UI.fmtDate(r[0].openedAt).split(', ').pop() : 'Növbə bağlı'));
+      statusEl.appendChild(h('span', null, h('span', { class: 'dot' + (online ? '' : ' off') }), online ? _t('Onlayn') : _t('Oflayn')));
+      if (online && sy.rttAvg) statusEl.appendChild(h('span', { class: 'muted', title: _t('Google Apps Script serverinin orta cavab müddəti. Cihazlar arasında yenilik təxminən bunun 2–3 qatı qədər gecikir') }, _t('Server {0} san', [(sy.rttAvg / 1000).toFixed(1)])));
+      statusEl.appendChild(h('span', { class: 'muted', title: _t('Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın') }, 'v' + BUILD));
+      if (r[1]) statusEl.appendChild(h('span', { class: 'badge', title: _t('Serverə göndərilməmiş qeydlər') }, _t('{0} sinxron gözləyir', [r[1]])));
+      if (sy.ok === false) statusEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, _t('Sinxron xətası')));
+      if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, _t('Sorğular ({0})', [r[3].length])));
+      statusEl.appendChild(h('span', null, r[0] ? _t('Növbə açıq · {0}', [UI.fmtTime(r[0].openedAt)]) : _t('Növbə bağlı')));
       statusEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
-      if (app.matrix && root.Notify.wants(u, app.matrix)) statusEl.appendChild(h('button', { class: 'btn small', id: 'notify-btn', title: 'Təsdiq sorğusu gələndə telefona/brauzerə bildiriş', onclick: function () { root.Notify.modal(); } }, 'Bildiriş'));
-      statusEl.appendChild(h('button', { class: 'btn small', id: 'print-settings', title: 'Bu cihazın printeri: kağız eni, etiket ölçüsü, test çapı', onclick: function () { root.Print.settingsModal(); } }, 'Çap'));
-      statusEl.appendChild(h('button', { class: 'btn small', onclick: logout }, 'Çıxış'));
+      if (app.matrix && root.Notify.wants(u, app.matrix)) statusEl.appendChild(h('button', { class: 'btn small', id: 'notify-btn', title: _t('Təsdiq sorğusu gələndə telefona/brauzerə bildiriş'), onclick: function () { root.Notify.modal(); } }, _t('Bildiriş')));
+      statusEl.appendChild(h('button', { class: 'btn small', id: 'print-settings', title: _t('Bu cihazın printeri: kağız eni, etiket ölçüsü, test çapı'), onclick: function () { root.Print.settingsModal(); } }, _t('Çap')));
+      statusEl.appendChild(h('button', { class: 'btn small', onclick: logout }, _t('Çıxış')));
       document.querySelector('.brand b').textContent = r[2].name;
       document.querySelector('.brand .muted').textContent = r[2].registerName;
 
@@ -68,8 +69,8 @@
       if (seenRequests) {
         var fresh = r[3].filter(function (a) { return !seenRequests[a.id]; });
         if (fresh.length) {
-          UI.toast('Yeni təsdiq sorğusu: ' + fresh[0].summary); UI.beep(true);
-          if (document.hidden) root.Notify.localAlert(fresh[0].summary);       // pəncərə arxa plandadır: sistem bildirişi
+          UI.toast(_t('Yeni təsdiq sorğusu: {0}', [UI.reqText(fresh[0])])); UI.beep(true);
+          if (document.hidden) root.Notify.localAlert(UI.reqText(fresh[0]));       // pəncərə arxa plandadır: sistem bildirişi
         }
       }
       seenRequests = ids;
@@ -85,7 +86,7 @@
     if (t.users) {
       // Hesab söndürülübsə / PIN sıfırlanıbsa bu cihazda dərhal çıxış; ad və ya rol dəyişibsə menyu yenilənir
       chain = S.refreshSession().then(function (st) {
-        if (st === 'gone') { UI.toast('Hesabınız dəyişdirilib və ya söndürülüb. Yenidən daxil olun', 'bad'); logout(); return false; }
+        if (st === 'gone') { UI.toast(_t('Hesabınız dəyişdirilib və ya söndürülüb. Yenidən daxil olun'), 'bad'); logout(); return false; }
         if (st === 'changed') t.matrix = true;
         return true;
       });
@@ -114,10 +115,10 @@
     shell = document.getElementById('app');
     UI.clear(shell);
     seenRequests = null;
-    nav = h('nav', { class: 'nav', 'aria-label': 'Bölmələr' });
+    nav = h('nav', { class: 'nav', 'aria-label': _t('Bölmələr') });
     statusEl = h('div', { class: 'status' });
     main = h('main', { id: 'main' });
-    shell.appendChild(h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('b', null, ''), h('span', { class: 'muted', style: 'font-size:14px' }, '')), nav, statusEl));
+    shell.appendChild(h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('b', null, ''), h('span', { class: 'muted', style: 'font-size:14px' }, '')), nav, statusEl, UI.langSwitch()));
     shell.appendChild(main);
     refreshStatus();
     var wantApprovals = location.hash === '#approvals';       // bildirişə klikdən açılıb
@@ -155,6 +156,8 @@
   setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)
   root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else refreshStatus(); });
 
+  document.title = _t('Mağaza İS — Kassa');
+  if (root.I18n) root.I18n.remember(root.I18n.lang());   // service worker bildirişi bu dildə göstərsin
   S.init().then(function () {
     root.Sync.start();
     // Yeniləmə çıxış etdirməsin: sessiya hələ etibarlıdırsa birbaşa işçi ekrana qayıdırıq
@@ -163,7 +166,7 @@
       return S.getMatrix().then(function (m) { app.matrix = m; startShell(); });
     });
   }).catch(function (e) {
-    document.getElementById('app').textContent = 'Başlatma xətası: ' + e.message;
+    document.getElementById('app').textContent = _t('Başlatma xətası: {0}', [e.message]);
   });
 
   if ('serviceWorker' in navigator && location.protocol === 'https:' && !root.__NO_SW__) {

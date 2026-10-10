@@ -3,6 +3,7 @@
    Qaydalar: istifadəçi/məhsul/ayar dəyişikliklərində "son yazan qalib" (updatedAt / hadisə vaxtı), qalıq isə hadisələrin cəmindən formalaşır. */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var DB = root.DB, Rules = root.Rules;
   var EPOCH = '1970-01-01T00:00:00.000Z';
   var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'meta', 'audit'];
@@ -75,7 +76,7 @@
       return t.byIndex('products', 'storeBarcode', p.storeBarcode).then(function (dups) {
         if (dups.length) {
           // İki cihaz eyni barkodu vermiş (nömrə aralığı təyin olunmamış köhnə rejim). Barkod unikal olmalıdır, ona görə məhsul yazılmır, istifadəçiyə bildirilir.
-          return note(t, { kind: 'barcode', message: 'Eyni mağaza barkodu iki məhsulda: "' + p.name + '" və "' + dups[0].name + '" (' + p.storeBarcode + ')', productId: p.id });
+          return note(t, { kind: 'barcode', message: _t('Eyni mağaza barkodu iki məhsulda: "{0}" və "{1}" ({2})', [p.name, dups[0].name, p.storeBarcode]), productId: p.id });
         }
         sum.touched.products = true;
         return t.put('products', p);
@@ -149,7 +150,7 @@
     return t.get('sales', sale.id).then(function (cur) {
       if (cur) return;
       return t.byIndex('sales', 'receiptNo', sale.receiptNo).then(function (dups) {
-        var chain = dups.length ? note(t, { kind: 'receipt', message: 'Çek № ' + sale.receiptNo + ' iki cihazda verilib (hər ikisi saxlanıldı)', saleId: sale.id }) : Promise.resolve();
+        var chain = dups.length ? note(t, { kind: 'receipt', message: _t('Çek № {0} iki cihazda verilib (hər ikisi saxlanıldı)', [sale.receiptNo]), saleId: sale.id }) : Promise.resolve();
         return chain.then(function () {
           return each(sale.lines, function (l, i) {
             return t.get('products', l.productId).then(function (p) {
@@ -248,7 +249,7 @@
           // Bir hadisənin məntiq xətası bütün səhifəni dayandırmasın; IndexedDB xətaları isə tranzaksiyanı ləğv edir və təkrar cəhd olunur
           return Promise.resolve().then(function () { return applyOne(t, ev, sum); }).catch(function (e) {
             if (typeof DOMException !== 'undefined' && e instanceof DOMException) throw e;
-            return note(t, { kind: 'apply', message: 'Hadisə tətbiq olunmadı (' + ev.type + '): ' + (e && e.message), eventId: ev.id });
+            return note(t, { kind: 'apply', message: _t('Hadisə tətbiq olunmadı ({0}): {1}', [ev.type, (e && e.message)]), eventId: ev.id });
           });
         }).then(function () { return t.put('meta', { key: 'syncCursor', value: next }); });
       });

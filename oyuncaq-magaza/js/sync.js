@@ -8,6 +8,7 @@
    - nömrə aralığı sinxron sorğusunun içində gəlir (əlavə sorğu yoxdur). */
 (function (root) {
   'use strict';
+  var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var DB = root.DB, Replica = root.Replica;
 
   // Testlərdə dəyişdirilə bilər (Sync.timing)
@@ -36,11 +37,11 @@
 
   // Ünvanın formasını yoxlayır: ən çox rast gələn səhvlər redaktor linki və /dev ünvanıdır
   function checkUrl(url) {
-    if (!url) return 'Ünvan boşdur';
+    if (!url) return _t('Ünvan boşdur');
     if (!/^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(url)) {
-      if (/\/dev$/.test(url)) return 'Bu /dev ünvanıdır, o yalnız sizin brauzerinizdə işləyir. Deploy → Manage deployments bölməsindən /exec ilə bitən ünvanı götürün';
-      if (/script\.google\.com\/(home|d\/)/.test(url)) return 'Bu Apps Script redaktorunun linkidir. Deploy → Manage deployments → Web app URL lazımdır';
-      return 'Ünvan https://script.google.com/macros/s/…/exec formasında olmalıdır';
+      if (/\/dev$/.test(url)) return _t('Bu /dev ünvanıdır, o yalnız sizin brauzerinizdə işləyir. Deploy → Manage deployments bölməsindən /exec ilə bitən ünvanı götürün');
+      if (/script\.google\.com\/(home|d\/)/.test(url)) return _t('Bu Apps Script redaktorunun linkidir. Deploy → Manage deployments → Web app URL lazımdır');
+      return _t('Ünvan https://script.google.com/macros/s/…/exec formasında olmalıdır');
     }
     return null;
   }
@@ -48,11 +49,11 @@
   // "Failed to fetch" brauzerin ümumi xətasıdır; ən çox səbəbləri istifadəçiyə izah edirik
   function explain(e) {
     var m = e && e.message || String(e);
-    if (e && e.timeout) return m + '. İnterneti yoxlayın; Apps Script bəzən yavaş cavab verir, sinxron özü təkrar cəhd edəcək';
+    if (e && e.timeout) return _t('{0}. İnterneti yoxlayın; Apps Script bəzən yavaş cavab verir, sinxron özü təkrar cəhd edəcək', [m]);
     if (/Failed to fetch|NetworkError|Load failed/i.test(m)) {
-      return 'Server cavab vermədi. Ən çox səbəb: Deploy-da "Who has access" = "Anyone" deyil (yalnız Google hesabına girmiş brauzerdə işləyir, digər brauzerdə yox). Yoxlama: ünvanı gizli pəncərədə açın, {"ok":true} görünməlidir. Kodu dəyişəndən sonra "New version" deploy etmək də lazımdır';
+      return _t('Server cavab vermədi. Ən çox səbəb: Deploy-da "Who has access" = "Anyone" deyil (yalnız Google hesabına girmiş brauzerdə işləyir, digər brauzerdə yox). Yoxlama: ünvanı gizli pəncərədə açın, {"ok":true} görünməlidir. Kodu dəyişəndən sonra "New version" deploy etmək də lazımdır');
     }
-    if (/Unexpected token|JSON/i.test(m)) return 'Server JSON əvəzinə səhifə qaytardı (çox güman Google giriş səhifəsi və ya Apps Script limiti). Deploy-da "Who has access" = "Anyone" olmalıdır';
+    if (/Unexpected token|JSON/i.test(m)) return _t('Server JSON əvəzinə səhifə qaytardı (çox güman Google giriş səhifəsi və ya Apps Script limiti). Deploy-da "Who has access" = "Anyone" olmalıdır');
     return m;
   }
 
@@ -63,12 +64,12 @@
       var done = false, t0 = Date.now();
       function fin(fn, v) { if (done) return; done = true; clearTimeout(tm); fn(v); }
       var tm = setTimeout(function () {
-        var e = new Error('Server ' + Math.round(ms / 1000) + ' san ərzində cavab vermədi'); e.timeout = true;
+        var e = new Error(_t('Server {0} san ərzində cavab vermədi', [Math.round(ms / 1000)])); e.timeout = true;
         fin(reject, e); if (ac) ac.abort();
       }, ms);
-      if (handle) handle.abort = function () { var e = new Error('Sorğu dayandırıldı'); e.aborted = true; fin(reject, e); if (ac) ac.abort(); };
+      if (handle) handle.abort = function () { var e = new Error(_t('Sorğu dayandırıldı')); e.aborted = true; fin(reject, e); if (ac) ac.abort(); };
       if (ac) init.signal = ac.signal;
-      fetch(url, init).then(function (r) { if (!r.ok) throw new Error('Server ' + r.status); return r.json(); })
+      fetch(url, init).then(function (r) { if (!r.ok) throw new Error(_t('Server {0}', [r.status])); return r.json(); })
         .then(function (res) {
           var d = Date.now() - t0; rtt.last = d; rtt.avg = rtt.avg ? Math.round(rtt.avg * 0.7 + d * 0.3) : d;
           fin(resolve, res);
@@ -76,12 +77,25 @@
     });
   }
 
+  // Server (Code.gs) xəta mətnlərini Azərbaycanca qaytarır; bilinənlər istifadəçinin dilinə çevrilir (Code.gs-i yenidən yerləşdirməyə ehtiyac yoxdur)
+  function srvErr(e) {
+    switch (e) {
+      case 'JSON səhvdir': return _t('JSON səhvdir');
+      case 'Naməlum əməliyyat': return _t('Naməlum əməliyyat');
+      case 'Naməlum açar': return _t('Naməlum açar');
+      case 'Server məşğuldur, sonra təkrar olunacaq': return _t('Server məşğuldur, sonra təkrar olunacaq');
+      case 'Bildiriş ünvanı tanınmır': return _t('Bildiriş ünvanı tanınmır');
+      case 'Bu cihaz bildiriş üçün qeydiyyatdan keçməyib': return _t('Bu cihaz bildiriş üçün qeydiyyatdan keçməyib');
+      default: return e;
+    }
+  }
+
   // Apps Script CORS preflight qəbul etmir, ona görə text/plain göndəririk
   function post(url, body, opts) {
     opts = opts || {};
     return request(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) }, opts.timeout || T.timeout, opts.handle)
       .then(function (res) {
-        if (!res.ok) throw new Error(res.error === 'İcazə yoxdur' ? 'Açar uyğun gəlmir: tətbiqdəki açar Script properties-dəki SYNC_TOKEN ilə eyni olmalıdır' : (res.error || 'Server xətası'));
+        if (!res.ok) throw new Error(res.error === 'İcazə yoxdur' ? _t('Açar uyğun gəlmir: tətbiqdəki açar Script properties-dəki SYNC_TOKEN ilə eyni olmalıdır') : (srvErr(res.error) || _t('Server xətası')));
         return res;
       });
   }
@@ -92,14 +106,14 @@
     var pingP = post(url, { action: 'ping', token: token }, { timeout: T.pingTimeout });
     pingP.catch(function () { /* nəticəsi aşağıda gözlənilir; GET xətası daha informativdir */ });
     return request(url, { method: 'GET' }, T.pingTimeout, null).then(function (res) {
-      if (!res.ok || res.service !== 'magaza-is') throw new Error('Cavab gəldi, amma bu, mağaza skripti deyil');
-      if (!res.tokenSet) throw new Error('Skriptdə SYNC_TOKEN təyin olunmayıb (Project Settings → Script properties)');
-      if ((res.version || 0) < 3) throw new Error('Skriptin köhnə versiyası işləyir. Yeni Code.gs-i yapışdırın və Deploy → Manage deployments → Edit → New version seçin');
-      if (res.missingSheets && res.missingSheets.length) throw new Error('Cədvəllərdə çatışmayan vərəqlər: ' + res.missingSheets.join(', ') + '. setup() funksiyasını işə salın');
+      if (!res.ok || res.service !== 'magaza-is') throw new Error(_t('Cavab gəldi, amma bu, mağaza skripti deyil'));
+      if (!res.tokenSet) throw new Error(_t('Skriptdə SYNC_TOKEN təyin olunmayıb (Project Settings → Script properties)'));
+      if ((res.version || 0) < 3) throw new Error(_t('Skriptin köhnə versiyası işləyir. Yeni Code.gs-i yapışdırın və Deploy → Manage deployments → Edit → New version seçin'));
+      if (res.missingSheets && res.missingSheets.length) throw new Error(_t('Cədvəllərdə çatışmayan vərəqlər: {0}. setup() funksiyasını işə salın', [res.missingSheets.join(', ')]));
       return pingP;
     }).then(function (p) {
       var v = (p && p.version) || 0;
-      return 'Bağlantı işləyir' + (v < 6 ? '. Diqqət: skript köhnədir (v' + v + '). ' + (v < 4 ? 'Sürətli sinxron və keş düzəlişi, ' : '') + (v < 5 ? 'təchizatçı/partiya cədvəllərinin Sheets-ə yazılması, ' : '') + 'telefona bildiriş üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)' : '');
+      return _t('Bağlantı işləyir{0}', [(v < 6 ? _t('. Diqqət: skript köhnədir (v{0}). {1}{2}telefona bildiriş üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)', [v, (v < 4 ? _t('Sürətli sinxron və keş düzəlişi, ') : ''), (v < 5 ? _t('təchizatçı/partiya cədvəllərinin Sheets-ə yazılması, ') : '')]) : '')]);
     }).catch(function (e) { throw new Error(explain(e)); });
   }
 
@@ -110,7 +124,7 @@
   // Sinxron dövrü olmayan tək əməliyyat (bildiriş qeydiyyatı və s.). Server qoşulmayıbsa xəta.
   function api(action, extra) {
     return config().then(function (c) {
-      if (!c.url || !c.token) throw new Error('Server qoşulmayıb');
+      if (!c.url || !c.token) throw new Error(_t('Server qoşulmayıb'));
       return post(c.url, Object.assign({ action: action, token: c.token, device: c.device }, extra || {}), { timeout: 25000 });
     });
   }
@@ -301,7 +315,7 @@
   // Yeni cihazı qoşmaq: yoxla → saxla → serverdən bütün məlumatı çək
   function connect(url, token) {
     url = String(url || '').trim(); token = String(token || '').trim();
-    if (!token) return Promise.reject(new Error('Açarı (SYNC_TOKEN) yazın'));
+    if (!token) return Promise.reject(new Error(_t('Açarı (SYNC_TOKEN) yazın')));
     return verify(url, token).then(function () { return setEndpoint(url, token); }).then(function () { return cycle(); }).then(function (r) {
       if (r.error) throw new Error(r.error);
       return r;
