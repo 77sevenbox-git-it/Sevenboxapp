@@ -1,5 +1,5 @@
 /**
- * Mağaza İS — Google Apps Script backend (v6).
+ * 7BOXS — Google Apps Script backend (v7).
  * Kassaların hadisələrini (outbox) qəbul edib Google Sheets-ə yazır və digər cihazların hadisələrini geri verir (pull).
  *
  * Quraşdırma / yeniləmə:
@@ -12,6 +12,10 @@
  *     ("Connect to an external service") — təsdiqləyin, sonra New version deploy edin. Bildirişi istəməsəniz də qalan hər şey işləyir.
  *     Kodu dəyişdikdən sonra: Deploy → Manage deployments → ✏️ → Version: New version → Deploy (ünvan dəyişmir).
  *
+ * Arxivləşdirmə (v7): Admin → İcazələr → Arxiv (və ya redaktorda archiveNow()). Köhnə qeydlər arxiv faylına (cədvəlin nüsxəsi) köçürülür,
+ * canlı cədvəldə son 45 gün qalır; cihazlar bunu hiss etmir (kursor mütləq nömrədir, köhnə hadisələr arxiv faylından oxunur).
+ * Arxiv fayllarını SİLMƏYİN: yeni cihaz və uzun müddət oflayn qalan cihaz tarixçəni onlardan oxuyur.
+ *
  * Təhlükəsizlik (SEC-15): Sheets faylını yalnız Admin-lə paylaşın. "Users" vərəqində PIN-lərin duzlu hash-ı var.
  * Yazı yalnız bu skript vasitəsilə olur.
  */
@@ -20,10 +24,19 @@
 // Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
-var VERSION = 6;
+var VERSION = 7;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
+var GRID_LIMIT = 10000000;       // Google Sheets: bir faylda 10 milyon xana. BOŞ xanalar da sayılır (vərəqin şəbəkə ölçüsü)
+var ROW_SLACK = 300;             // vərəqin sonunda saxlanan boş sətir ehtiyatı
+var ARCHIVE_KEEP_DAYS = 45;      // arxivləşdirəndə canlı cədvəldə qalan son günlər
+var ARCHIVE_MIN_GAP = 24 * 3600000;   // iki arxivləşdirmə arasında ən az müddət (təsadüfi təkrar basmaya qarşı)
+var ARCHIVE_MIN_CUT = 200;       // bundan az köhnə hadisə varsa arxivləşdirmə edilmir
+var ARCHIVE_BUSY = 'Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq';
+// Yalnız əlavə olunan vərəqlər və vaxt sütunu (1-dən). SaleLines vaxtı yoxdur: Sales-ə tabe olaraq kəsilir.
+var APPEND_ONLY = [{ name: 'Sales', time: 3 }, { name: 'Returns', time: 4 }, { name: 'StockReceipts', time: 1 },
+  { name: 'Shifts', time: 3 }, { name: 'CashMoves', time: 6 }, { name: 'Audit', time: 1 }];
 
 function db() {
   var active = SpreadsheetApp.getActiveSpreadsheet();
@@ -58,11 +71,14 @@ function setup() {
   Object.keys(SHEETS).forEach(function (name) {
     var sh = ss.getSheetByName(name) || ss.insertSheet(name);
     var cols = SHEETS[name].length;
+    var maxCols = sh.getMaxColumns();
+    if (maxCols < cols) sh.insertColumnsAfter(maxCols, cols - maxCols);
     sh.getRange(1, 1, 1, cols).setValues([SHEETS[name]]);   // yeni sütunlar əlavə olunubsa başlıq yenilənir
     sh.setFrozenRows(1);
+    trimGrid(sh, cols);          // boş artıq sütun/sətirlər silinir: Sheets limiti (10 milyon) boş xanaları da sayır
   });
   CacheService.getScriptCache().remove('evTotal');
-  Logger.log('Hazırdır: "' + ss.getName() + '" faylında ' + Object.keys(SHEETS).length + ' vərəq yoxlanıldı.');
+  Logger.log('Hazırdır: "' + ss.getName() + '" faylında ' + Object.keys(SHEETS).length + ' vərəq yoxlanıldı. Xana sayı (limit ' + GRID_LIMIT + '): ' + gridCells(ss));
 }
 
 function json(obj) {
@@ -136,8 +152,28 @@ Table.prototype.upsert = function (row) {
   hit.ts = ts;
   return true;
 };
+// Vərəqin şəbəkəsindən kənara yazmaq xəta verir: lazım olanda sətir əlavə edilir (ehtiyatla birlikdə, API çağırışı seyrək olsun)
+function ensureRows(sh, lastNeeded) {
+  var max = sh.getMaxRows();
+  if (max < lastNeeded) sh.insertRowsAfter(max, lastNeeded - max + ROW_SLACK);
+}
+// Boş artıq sütunları və sətirləri silir (dolu xanalara toxunmur)
+function trimGrid(sh, usedCols) {
+  var lastRow = Math.max(sh.getLastRow(), 1), keepRows = lastRow + ROW_SLACK, maxRows = sh.getMaxRows();
+  if (maxRows > keepRows) sh.deleteRows(keepRows + 1, maxRows - keepRows);
+  var keepCols = Math.max(sh.getLastColumn(), usedCols || 1, 1), maxCols = sh.getMaxColumns();
+  if (maxCols > keepCols) sh.deleteColumns(keepCols + 1, maxCols - keepCols);
+}
+function gridCells(ss) {
+  var n = 0, list = ss.getSheets();
+  for (var i = 0; i < list.length; i++) n += list[i].getMaxRows() * list[i].getMaxColumns();
+  return n;
+}
 Table.prototype.flush = function () {
-  if (this.pending.length) this.sh.getRange(this.base + 1, 1, this.pending.length, this.width).setValues(this.pending);
+  if (this.pending.length) {
+    ensureRows(this.sh, this.base + this.pending.length);
+    this.sh.getRange(this.base + 1, 1, this.pending.length, this.width).setValues(this.pending);
+  }
   for (var i = 0; i < this.edits.length; i++) this.sh.getRange(this.edits[i].row, 1, 1, this.width).setValues([this.edits[i].values]);
 };
 
@@ -179,11 +215,15 @@ function doPost(e) {
       case 'ping': return json({ ok: true, version: VERSION });
       case 'sync': return json(handleSync(body));
       case 'allocate': return json(handleAllocate(body));
+      case 'archive.status': return json(archiveStatus());
+      case 'archive.run':
+        if (body.confirm !== 'ARXIV') return json({ ok: false, error: 'Təsdiq lazımdır' });
+        return json(archiveRun({}));
       case 'push.key': case 'push.register': case 'push.unregister': case 'push.test': return json(handlePush(body));
       default: return json({ ok: false, error: 'Naməlum əməliyyat' });
     }
   } catch (err) {
-    return json({ ok: false, error: String(err) });
+    return json({ ok: false, error: String(err && err.message ? err.message : err) });
   }
 }
 
@@ -197,7 +237,7 @@ function handleSync(body) {
   if (items.length > MAX_ITEMS) return { ok: false, error: 'Bir sorğuda ən çox ' + MAX_ITEMS + ' hadisə' };
 
   var acked = [], blocks = [], fresh = [];
-  var total, ss;
+  var total, ss, st;
   if (!items.length && !wantAlloc) {
     // Sürətli yol: yeni hadisə yoxdursa cədvəl açılmır (təxminən 0,1–0,3 san)
     var cached = cacheTotal();
@@ -207,6 +247,7 @@ function handleSync(body) {
     if (!lock.tryLock(25000)) return { ok: false, error: 'Server məşğuldur, sonra təkrar olunacaq' };
     try {
       ss = db();
+      st = archFix();                            // yarımçıq arxivləşdirmə varsa sağaldılır
       if (items.length) {
         total = appendItems(ss, items, acked, device, fresh);
         cacheTotal(total);                       // kilid altında: sonrakı yazı bunu ancaq irəli apara bilər
@@ -218,9 +259,11 @@ function handleSync(body) {
   }
 
   ss = ss || db();
+  st = st || archRead();                         // kilidsiz yol: arxivləşdirmə gedirsə "gözləyin"
   if (fresh.length) notifyApprovals(ss, fresh);       // kilid buraxıldıqdan sonra; xəta sinxronu pozmur
   var events = sheet(ss, 'Events');
-  if (total === undefined) total = Math.max(events.getLastRow() - 1, 0);
+  // Kursor MÜTLƏQ nömrədir (arxivə köçürülmüş hadisələr də sayılır): arxivləşdirmə cihazların kursorunu dəyişmir
+  if (total === undefined) total = st.base + Math.max(events.getLastRow() - 1, 0);
   else total = Math.max(total, 0);
 
   // Müştərinin kursoru serverdən irəlidədirsə (cədvəl təmizlənibsə), kursor geri qaytarılır
@@ -229,8 +272,9 @@ function handleSync(body) {
 
   var out = [], next = since;
   if (total > since) {
-    var n = Math.min(limit, total - since);
-    var rows = events.getRange(since + 2, 1, n, 7).getValues();
+    var src = archSource(ss, st, events, since, total);      // canlı cədvəl və ya arxiv faylı
+    var n = Math.min(limit, src.end - since);
+    var rows = src.sh.getRange(since - src.off + 2, 1, n, 7).getValues();
     for (var i = 0; i < rows.length; i++) {
       next = since + i + 1;
       var r = rows[i];
@@ -239,6 +283,9 @@ function handleSync(body) {
       try { data = JSON.parse(r[5]); } catch (err) { data = null; }
       out.push({ seq: next, id: rid(r[0]), at: iso(r[1]), type: String(r[2]), userId: String(r[3] || ''), device: String(r[6] || ''), data: data });
     }
+    // Oxuyarkən arxivləşdirmə başlayıbsa sətirlər sürüşə bilərdi: nəticə atılır, cihaz təkrar soruşur
+    var st2 = archState();
+    if (st2.trim || st2.base !== st.base) throw new Error(ARCHIVE_BUSY);
   }
   return { ok: true, acked: acked, events: out, next: next, more: total > next, blocks: blocks, now: new Date().toISOString() };
 }
@@ -247,7 +294,7 @@ function handleSync(body) {
 function appendItems(ss, items, acked, device, fresh) {
   var batch = new Batch(ss);
   var ev = batch.table('Events');
-  var total = Math.max(ev.base - 1, 0);
+  var total = archState().base + Math.max(ev.base - 1, 0);      // mütləq say (arxivə köçürülənlər daxil)
 
   // Təkrar yoxlaması: son SEEN_WINDOW hadisənin id-ləri. Daha köhnə vaxtlı hadisə gələrsə, dəqiq axtarış edilir.
   var first = Math.max(2, ev.base - SEEN_WINDOW + 1);
@@ -329,16 +376,158 @@ function derivedMax(ss, key) {
   var name = key === 'productSeq' ? 'Products' : 'Sales';
   var col = key === 'productSeq' ? 6 : 2;
   var sh = ss.getSheetByName(name);
-  if (!sh || sh.getLastRow() < 2) return 0;
-  var vals = sh.getRange(2, col, sh.getLastRow() - 1, 1).getValues();
   var m = 0;
+  if (!sh || sh.getLastRow() < 2) return key === 'receiptSeq' ? (archState().maxReceipt || 0) : 0;
+  var vals = sh.getRange(2, col, sh.getLastRow() - 1, 1).getValues();
   for (var i = 0; i < vals.length; i++) {
     var v = rid(vals[i][0]);
     var n = key === 'productSeq' ? parseInt(v.substr(2, 10), 10) : parseInt(v, 10);
     if (n > m) m = n;
   }
+  if (key === 'receiptSeq') m = Math.max(m, archState().maxReceipt || 0);      // arxivə köçürülmüş çeklərin ən böyük nömrəsi
   return m;
 }
+
+/* ---------- Arxivləşdirmə ----------
+   Problem: Google Sheets bir faylda 10 milyon xanaya icazə verir və BOŞ xanaları da sayır. Hər çek ~60+ xana yazır, ona görə vaxt keçdikcə fayl dolur və sinxron dayanır.
+   Həll (log rotasiyası): Events və əlavə olunan vərəqlərin köhnə sətirləri cədvəlin NÜSXƏSİNƏ (arxiv faylı) köçürülür, canlı cədvəldə son ARCHIVE_KEEP_DAYS gün qalır.
+   - Kursor mütləq nömrədir: Script property "ARCHIVE" = { base, segs, last, maxReceipt, trim }.
+     Canlı Events-in 2-ci sətri = mütləq hadisə #base. Cihaz kursoru base-dən kiçikdirsə (yeni cihaz / uzun oflayn), hadisələr uyğun arxiv faylından oxunur.
+   - Nüsxə tam yoxlanılmayınca heç nə silinmir; silinmədən əvvəl "trim" markeri yazılır (iş yarımçıq qalsa növbəti sorğu özü sağaldır).
+   - Oxuyan sorğu arxivləşdirmə ilə toqquşsa nəticə atılır ("gözləyin"), cihaz bir az sonra təkrar soruşur.
+   - Hamısı skript kilidi altında gedir; bu müddətdə (adətən 10–60 san) digər sorğular "Server məşğuldur" alıb təkrar cəhd edir. İşdən sonra edin. */
+function archState() {
+  var st = { base: 0, segs: [], last: '', maxReceipt: 0, trim: null };
+  var raw = PropertiesService.getScriptProperties().getProperty('ARCHIVE');
+  if (raw) {
+    try {
+      var o = JSON.parse(raw);
+      st.base = Number(o.base) || 0; st.segs = Array.isArray(o.segs) ? o.segs : []; st.last = String(o.last || '');
+      st.maxReceipt = Number(o.maxReceipt) || 0; st.trim = o.trim && typeof o.trim === 'object' ? o.trim : null;
+    } catch (e) { /* pozulmuş dəyər: ilkin vəziyyət (Events toxunulmaz qalır) */ }
+  }
+  return st;
+}
+function archSave(st) { PropertiesService.getScriptProperties().setProperty('ARCHIVE', JSON.stringify(st)); }
+function archApply(st) {
+  var tr = st.trim;
+  st.base += tr.cut; st.segs.push(tr.seg); st.maxReceipt = Math.max(st.maxReceipt, tr.maxReceipt || 0); st.last = tr.at; st.trim = null;
+  archSave(st);
+}
+// Kilid ALTINDA çağırılır: yarımçıq qalmış arxivləşdirməni sağaldır
+function archRecover(st) {
+  var tr = st.trim, live = Math.max(sheet(db(), 'Events').getLastRow() - 1, 0);
+  if (live === tr.live - tr.cut) archApply(st);                      // sətirlər silinib, vəziyyət yazılmayıb: tamamlanır
+  else if (live === tr.live) { st.trim = null; archSave(st); }       // heç nə silinməyib: marker təmizlənir (nüsxə faylı artıq qalır)
+  else throw new Error('Arxiv vəziyyəti uyğunsuzdur (canlı ' + live + ', gözlənilən ' + tr.live + ' və ya ' + (tr.live - tr.cut) + '): əl ilə yoxlayın');
+}
+function archFix() { var st = archState(); if (st.trim) { archRecover(st); st = archState(); } return st; }
+// Kilidsiz oxuma yolu: arxivləşdirmə gedirsə gözləməyi tələb edir; yarımçıq qalıbsa (kilid boşdur) sağaldır
+function archRead() {
+  var st = archState();
+  if (!st.trim) return st;
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(3000)) throw new Error(ARCHIVE_BUSY);
+  try { return archFix(); } finally { lock.releaseLock(); }
+}
+
+// since mütləq nömrəsindəki hadisələrin oxunacağı vərəq: {sh, off (vərəqin 2-ci sətrinin mütləq nömrəsi), end (bu vərəqdən oxunan son mütləq nömrə, daxil deyil)}
+function archSource(ss, st, events, since, total) {
+  if (since >= st.base) return { sh: events, off: st.base, end: total };
+  var k = -1;
+  for (var i = 0; i < st.segs.length; i++) if (st.segs[i].f <= since) k = i;
+  if (k < 0) throw new Error('Arxiv faylı tapılmadı: hadisə #' + since);
+  var seg = st.segs[k], end = k + 1 < st.segs.length ? st.segs[k + 1].f : st.base, file, sh;
+  try { file = SpreadsheetApp.openById(seg.i); } catch (e) { throw new Error('Arxiv faylı açıla bilmədi (' + seg.i + '): ' + e); }
+  sh = file.getSheetByName('Events');
+  if (!sh) throw new Error('Arxiv faylında "Events" vərəqi yoxdur (' + seg.i + ')');
+  return { sh: sh, off: seg.f, end: Math.min(end, seg.t) };
+}
+
+// Başdan ardıcıl, cutoff-dan köhnə sətirlərin sayı (boş vaxtda dayanır)
+function oldPrefix(sh, timeCol, cutoff) {
+  var n = Math.max(sh.getLastRow() - 1, 0);
+  if (!n) return 0;
+  var vals = sh.getRange(2, timeCol, n, 1).getValues(), i = 0;
+  while (i < n && vals[i][0] !== '' && iso(vals[i][0]) < cutoff) i++;
+  return i;
+}
+
+function archiveStatus() {
+  var ss = db(), st = archRead(), cells = gridCells(ss);
+  var live = Math.max(sheet(ss, 'Events').getLastRow() - 1, 0), sales = Math.max(sheet(ss, 'Sales').getLastRow() - 1, 0);
+  return {
+    ok: true, version: VERSION, cells: cells, limit: GRID_LIMIT, pct: Math.round(cells / GRID_LIMIT * 1000) / 10,
+    base: st.base, live: live, total: st.base + live, sales: sales, last: st.last, keepDays: ARCHIVE_KEEP_DAYS,
+    nextAt: st.last ? new Date(Date.parse(st.last) + ARCHIVE_MIN_GAP).toISOString() : '',
+    segs: st.segs.map(function (g) { return { id: g.i, url: 'https://docs.google.com/spreadsheets/d/' + g.i, from: g.f, to: g.t, at: g.a, moved: g.n }; })
+  };
+}
+
+// opts: { keepDays, force } (force yalnız redaktordan: veb sorğu onu göndərə bilmir)
+function archiveRun(opts) {
+  opts = opts || {};
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) throw new Error('Server məşğuldur, sonra təkrar olunacaq');
+  try {
+    var ss = db(), st = archFix(), nowMs = Date.now(), at = new Date(nowMs).toISOString();
+    if (!opts.force && st.last && nowMs - Date.parse(st.last) < ARCHIVE_MIN_GAP) throw new Error('Son arxivləşdirmədən 24 saat keçməyib (' + st.last.slice(0, 16).replace('T', ' ') + ' UTC)');
+    if (JSON.stringify(st).length > 7500) throw new Error('Arxiv siyahısı doldu (Script properties həddi): köhnə arxivləri birləşdirmək lazımdır');
+    var keep = opts.keepDays != null ? Math.max(Number(opts.keepDays) || 0, 0) : ARCHIVE_KEEP_DAYS;
+    var cutoff = new Date(nowMs - keep * 86400000).toISOString();
+
+    // 1) Nə köçürüləcək (hələ heç nə dəyişmir)
+    var ev = sheet(ss, 'Events'), live = Math.max(ev.getLastRow() - 1, 0);
+    var cut = Math.min(oldPrefix(ev, 5, cutoff), live - SEEN_WINDOW);      // son SEEN_WINDOW hadisə canlı qalır: təkrar yoxlaması işləsin
+    if (cut < (opts.force ? 1 : ARCHIVE_MIN_CUT)) return { ok: true, archived: false, reason: 'Arxivləşdirməyə dəyər köhnə qeyd yoxdur (' + keep + ' gündən köhnə: ' + Math.max(cut, 0) + ' hadisə)', cells: gridCells(ss) };
+    var plan = [], removedSales = {}, haveSales = false;
+    APPEND_ONLY.forEach(function (p) {
+      var sh = sheet(ss, p.name), k = oldPrefix(sh, p.time, cutoff);
+      if (p.name === 'Sales' && k) { var ids = sh.getRange(2, 1, k, 1).getValues(); for (var i = 0; i < k; i++) removedSales[rid(ids[i][0])] = true; haveSales = true; }
+      plan.push({ name: p.name, sh: sh, k: k });
+    });
+    var sl = sheet(ss, 'SaleLines'), nsl = Math.max(sl.getLastRow() - 1, 0), kl = 0;
+    if (haveSales && nsl) { var sids = sl.getRange(2, 1, nsl, 1).getValues(); while (kl < nsl && removedSales[rid(sids[kl][0])]) kl++; }
+    plan.push({ name: 'SaleLines', sh: sl, k: kl });
+    var maxReceipt = derivedMax(ss, 'receiptSeq');      // silinəcək çeklərin ən böyük nömrəsi yadda qalır (nömrə təkrarlanmasın)
+
+    // 2) Tam nüsxə (Drive-da yeni fayl) və yoxlama: nüsxə tam deyilsə HEÇ NƏ silinmir
+    var name = '7BOXS — Arxiv ' + at.slice(0, 10) + ' (hadisə ' + (st.base + 1) + '–' + (st.base + live) + ')';
+    var copy = ss.copy(name);
+    ['Events', 'Sales', 'SaleLines'].forEach(function (n) {
+      var a = sheet(ss, n).getLastRow(), cs = copy.getSheetByName(n), b = cs ? cs.getLastRow() : -1;
+      if (a !== b) throw new Error('Arxiv nüsxəsi tam deyil (' + n + ': ' + b + '/' + a + '). Köhnə qeydlər silinmədi');
+    });
+
+    // 3) Marker → Events-dən köhnə sətirlər → vəziyyət. Marker yazıldıqdan sonra iş yarımçıq qalsa archRecover sağaldır.
+    st.trim = { live: live, cut: cut, at: at, maxReceipt: maxReceipt, seg: { i: copy.getId(), f: st.base, t: st.base + live, a: at, n: cut } };
+    archSave(st);
+    try { ev.deleteRows(2, cut); } catch (e) { st.trim = null; archSave(st); throw e; }
+    archApply(st);
+
+    // 4) Əlavə olunan vərəqlər (xəta olsa belə Events artıq düzgündür) + boş şəbəkənin kəsilməsi
+    var removed = { Events: cut }, warnings = [];
+    plan.forEach(function (p) {
+      if (!p.k) return;
+      try { p.sh.deleteRows(2, p.k); removed[p.name] = p.k; } catch (e) { warnings.push(p.name + ': ' + e); }
+    });
+    ss.getSheets().forEach(function (sh) {
+      var spec = SHEETS[sh.getName()];
+      if (!spec) return;
+      try { trimGrid(sh, spec.length); } catch (e) { warnings.push(sh.getName() + ' (şəbəkə): ' + e); }
+    });
+    var audit = new Table(ss, 'Audit');
+    audit.add([at, 'server.archive', '', JSON.stringify({ file: copy.getId(), name: name, removed: removed, base: st.base, warnings: warnings })]);
+    audit.flush();
+    return { ok: true, archived: true, name: name, id: copy.getId(), url: copy.getUrl(), removed: removed, base: st.base, live: live - cut, cells: gridCells(ss), warnings: warnings };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Redaktorda "Run": arxivləşdirmə (Admin ekranındakı düymə ilə eynidir). Nəticə Execution log-da.
+function archiveNow() { var r = archiveRun({}); Logger.log(JSON.stringify(r)); return r; }
+function archiveStatusLog() { var r = archiveStatus(); Logger.log(JSON.stringify(r)); return r; }
 
 /* ---------- Hadisəni oxunaqlı vərəqlərə yazır ---------- */
 function project(batch, it) {

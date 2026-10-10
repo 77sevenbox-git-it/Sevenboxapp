@@ -162,20 +162,40 @@ td.del, th.del { width: 44px; text-align: center; padding-left: 4px; padding-rig
 tr.inactive td { color: var(--faint); }
 
 /* Dil seçimi */
+.wordmark { color: var(--accent); letter-spacing: .08em; }
 .lang-sel { width: auto; min-height: 0; padding: 4px 8px; font-size: 14px; }
 .lang-row { display: flex; justify-content: flex-end; margin: -4px 0 -8px; }
 
-/* Açılış (yükləmə) ekranı və ekran keçidləri. Hərəkət azaldılıbsa (prefers-reduced-motion) animasiya sönür. */
-.boot { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; animation: fade-in .3s ease backwards; }
-.boot-ring { position: relative; width: 64px; height: 64px; }
-.boot-ring::before, .boot-ring::after { content: ''; position: absolute; inset: 0; border-radius: 50%; }
-.boot-ring::before { border: 4px solid var(--line); }
-.boot-ring::after { border: 4px solid transparent; border-top-color: var(--accent); border-right-color: var(--accent); animation: spin .9s cubic-bezier(.5, .15, .5, .85) infinite; }
-.boot-name { font-weight: 600; font-size: 18px; letter-spacing: .02em; color: var(--ink-2); }
-.boot-dots i { display: inline-block; font-style: normal; opacity: .25; animation: boot-dot 1.2s ease-in-out infinite; }
-.boot-dots i:nth-child(2) { animation-delay: .2s; }
-.boot-dots i:nth-child(3) { animation-delay: .4s; }
-@keyframes boot-dot { 0%, 80%, 100% { opacity: .25; transform: none; } 40% { opacity: 1; transform: translateY(-3px); } }
+/* Açılış (yükləmə) ekranı: 7 oyuncaq blok yuxarıdan düşüb yığılır, sonra dalğa kimi atlanır; "7BOXS" hərf-hərf yüksəlir.
+   Hərəkət azaldılıbsa (prefers-reduced-motion) hamısı sakit və görünən qalır. */
+.boot { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; animation: fade-in .3s ease backwards; }
+.boot-blocks { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 8px; }
+.boot-blocks > div { display: flex; gap: 6px; }
+.boot-blocks i { --c: var(--accent); --d: 0s; transform-origin: 50% 100%; display: block; width: 34px; height: 34px; border-radius: 8px; background: var(--c);
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, .16), inset 0 3px 0 rgba(255, 255, 255, .28), 0 3px 6px rgba(27, 27, 31, .14);
+  animation: block-drop .6s cubic-bezier(.3, 1.5, .5, 1) var(--d) backwards, block-hop 1.8s ease-in-out calc(var(--d) + 1s) infinite; }
+.boot-blocks > div:nth-child(2) i:nth-child(1) { --c: #1F5FAD; --d: .05s; }
+.boot-blocks > div:nth-child(2) i:nth-child(2) { --c: #E4572E; --d: .15s; }
+.boot-blocks > div:nth-child(2) i:nth-child(3) { --c: #F2B134; --d: .25s; }
+.boot-blocks > div:nth-child(2) i:nth-child(4) { --c: #2E9E6B; --d: .35s; }
+.boot-blocks > div:nth-child(1) i:nth-child(1) { --c: #8E5BD0; --d: .5s; }
+.boot-blocks > div:nth-child(1) i:nth-child(2) { --c: #E8608A; --d: .6s; }
+.boot-blocks > div:nth-child(1) i:nth-child(3) { --c: #17A2B8; --d: .7s; }
+.boot-name { display: flex; font-size: 32px; font-weight: 700; letter-spacing: .1em; color: var(--ink); padding-left: .1em; }
+.boot-name b { display: inline-block; font-weight: inherit; animation: letter-rise .5s cubic-bezier(.2, .8, .2, 1) backwards; }
+.boot-name b:nth-child(1) { color: var(--accent); animation-delay: .9s; }
+.boot-name b:nth-child(2) { animation-delay: .96s; }
+.boot-name b:nth-child(3) { animation-delay: 1.02s; }
+.boot-name b:nth-child(4) { animation-delay: 1.08s; }
+.boot-name b:nth-child(5) { animation-delay: 1.14s; }
+.boot-dots { display: flex; gap: 7px; height: 8px; }
+.boot-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); opacity: .3; animation: boot-dot 1.2s ease-in-out 1.2s infinite backwards; }
+.boot-dots i:nth-child(2) { animation-delay: 1.4s; }
+.boot-dots i:nth-child(3) { animation-delay: 1.6s; }
+@keyframes block-drop { 0% { opacity: 0; transform: translateY(-150px) rotate(-14deg); } 55% { opacity: 1; } 70% { transform: translateY(0) scale(1.12, .84); } 100% { transform: none; } }
+@keyframes block-hop { 0%, 40%, 100% { transform: none; } 20% { transform: translateY(-9px); } }
+@keyframes letter-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes boot-dot { 0%, 80%, 100% { opacity: .3; transform: none; } 40% { opacity: 1; transform: translateY(-4px); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes screen-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
 @keyframes modal-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
@@ -186,6 +206,6 @@ tr.inactive td { color: var(--faint); }
 .modal { animation: modal-in .22s cubic-bezier(.2, .7, .2, 1) backwards; }
 @media (prefers-reduced-motion: reduce) {
   .boot, .screen-in, .fade-in, .login .card, .modal-back, .modal { animation: none; }
-  .boot-ring::after { animation-duration: 2.4s; }
-  .boot-dots i { animation: none; opacity: .6; }
+  .boot-blocks i, .boot-name b, .boot-dots i { animation: none; }
+  .boot-dots i { opacity: .6; }
 }

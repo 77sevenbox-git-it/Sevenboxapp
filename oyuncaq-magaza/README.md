@@ -1,4 +1,4 @@
-# Mağaza İS — Kassa (MVP, mərhələ 1)
+# 7BOXS — Kassa (MVP, mərhələ 1)
 
 Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build addımı yoxdur: fayllar GitHub Pages və ya istənilən statik hostda olduğu kimi işləyir.
 

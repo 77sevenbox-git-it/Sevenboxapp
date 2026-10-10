@@ -12,7 +12,7 @@ function makeBackend(opts) {
   const logs = [];
   const pushLog = [];
   const backendRef = {};
-  const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, sheets: {} };
+  const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, sheets: {}, spreadsheets: {} };
 
   class Range {
     constructor(sh, r, c, nr, nc) { Object.assign(this, { sh, r, c, nr, nc }); }
@@ -60,22 +60,74 @@ function makeBackend(opts) {
   function unq(v) { return typeof v === 'string' && v[0] === "'" ? v.slice(1) : v; }
 
   class Sheet {
-    constructor(name) { this.name = name; this.rows = []; this.frozen = 0; }
+    constructor(name, owner) { this.name = name; this.owner = owner; this.rows = []; this.frozen = 0; this.maxRows = 1000; this.maxCols = 26; }
+    getName() { return this.name; }
     getLastRow() { calls.sheetApi++; let n = this.rows.length; while (n > 0 && this.rows[n - 1].every(v => v === '' || v === undefined)) n--; return n; }
+    getLastColumn() {
+      calls.sheetApi++; let m = 0;
+      for (const r of this.rows) for (let j = r.length - 1; j >= m; j--) if (r[j] !== '' && r[j] !== undefined) { m = j + 1; break; }
+      return m;
+    }
+    getMaxRows() { calls.sheetApi++; return this.maxRows; }
+    getMaxColumns() { calls.sheetApi++; return this.maxCols; }
     getRange(r, c, nr, nc) {
       if (r < 1 || c < 1) throw new Error('getRange: koordinat səhvdir');
-      return new Range(this, r, c, nr || 1, nc || 1);
+      nr = nr || 1; nc = nc || 1;
+      if (r + nr - 1 > this.maxRows || c + nc - 1 > this.maxCols) throw new Error('The coordinates or dimensions of the range are outside the dimensions of the sheet.');
+      return new Range(this, r, c, nr, nc);
     }
-    appendRow(row) { calls.sheetApi++; this.rows.push(row.map(unq)); }
+    appendRow(row) {
+      calls.sheetApi++;
+      let n = this.rows.length; while (n > 0 && this.rows[n - 1].every(v => v === '' || v === undefined)) n--;
+      if (row.length > this.maxCols) throw new Error('appendRow: sütun sayı şəbəkədən çoxdur');
+      this.rows.length = n; this.rows.push(row.map(unq));
+      if (this.rows.length > this.maxRows) this.maxRows = this.rows.length;
+    }
+    insertRowsAfter(pos, n) { calls.sheetApi++; this.maxRows += n; if (pos < this.rows.length) this.rows.splice(pos, 0, ...Array.from({ length: n }, () => [])); }
+    insertColumnsAfter(pos, n) { calls.sheetApi++; this.maxCols += n; for (const r of this.rows) r.splice(pos, 0, ...Array(n).fill('')); }
+    deleteRows(start, n) {
+      calls.sheetApi++;
+      if (this.failOn === 'deleteRows') throw new Error('deleteRows xətası (təqlid)');
+      if (start < 1 || n < 1 || start + n - 1 > this.maxRows) throw new Error('deleteRows: aralıq səhvdir');
+      if (n >= this.maxRows) throw new Error('Bütün sətirləri silmək olmaz');
+      this.rows.splice(start - 1, n); this.maxRows -= n;
+    }
+    deleteColumns(start, n) {
+      calls.sheetApi++;
+      if (start < 1 || n < 1 || start + n - 1 > this.maxCols) throw new Error('deleteColumns: aralıq səhvdir');
+      if (n >= this.maxCols) throw new Error('Bütün sütunları silmək olmaz');
+      for (const r of this.rows) r.splice(start - 1, n);
+      this.maxCols -= n;
+    }
     setFrozenRows(n) { this.frozen = n; }
     insertSheetCheck() {}
   }
+  let ssSeq = 0;
   class Spreadsheet {
-    getName() { return 'Mağaza İS — Verilənlər bazası (test)'; }
-    getSheetByName(n) { return store.sheets[n] || null; }
-    insertSheet(n) { return (store.sheets[n] = new Sheet(n)); }
+    constructor(id, name) { this.id = id; this.name = name || 'Mağaza İS — Verilənlər bazası (test)'; this.sheets = {}; }
+    getId() { return this.id; }
+    getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id; }
+    getName() { return this.name; }
+    getSheetByName(n) { return this.sheets[n] || null; }
+    getSheets() { return Object.keys(this.sheets).map(k => this.sheets[k]); }
+    insertSheet(n) { return (this.sheets[n] = new Sheet(n, this)); }
+    // Faylın nüsxəsi (Drive-da yeni fayl): bütün vərəqlər, ölçülər və dəyərlər kopyalanır
+    copy(name) {
+      calls.sheetApi++;
+      if (backendRef.failCopy) throw new Error('copy xətası (təqlid)');
+      const c = new Spreadsheet('ss-copy-' + (++ssSeq), name);
+      for (const k of Object.keys(this.sheets)) {
+        const o = this.sheets[k], n = new Sheet(k, c);
+        n.rows = o.rows.map(r => r.slice()); n.frozen = o.frozen; n.maxRows = o.maxRows; n.maxCols = o.maxCols;
+        c.sheets[k] = n;
+      }
+      store.spreadsheets[c.id] = c;
+      return c;
+    }
   }
-  const ss = new Spreadsheet();
+  const ss = new Spreadsheet('ss-main');
+  store.spreadsheets = { 'ss-main': ss };
+  store.sheets = ss.sheets;
 
   const sandbox = {
     console, JSON, Date, Math, String, Number, Object, Array, parseInt, parseFloat, isNaN, RegExp, Error,
@@ -85,7 +137,7 @@ function makeBackend(opts) {
       computeDigest: (alg, text) => Array.from(nodeCrypto.createHash('sha256').update(String(text), 'utf8').digest()).map(b => b > 127 ? b - 256 : b),   // Apps Script işarəli bayt qaytarır
       getUuid: () => nodeCrypto.randomUUID()
     },
-    SpreadsheetApp: { getActiveSpreadsheet: () => null, openById: () => { calls.openById++; return ss; } },
+    SpreadsheetApp: { getActiveSpreadsheet: () => null, openById: id => { calls.openById++; return store.spreadsheets[id] || ss; } },
     PropertiesService: { getScriptProperties: () => ({ getProperty: k => (k in store.props ? store.props[k] : null), setProperty: (k, v) => { store.props[k] = v; } }) },
     CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = v; }, remove: k => { delete store.cache[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
@@ -112,6 +164,8 @@ function makeBackend(opts) {
     calls, store, sandbox, logs, pushLog,
     get: () => JSON.parse(sandbox.doGet().text),
     post(body) { calls.requests++; return JSON.parse(sandbox.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text); },
+    // Sheets limiti (10 milyon) BOŞ xanaları da sayır: bütün vərəqlərin şəbəkə ölçüsü
+    grid(fileId) { const f = store.spreadsheets[fileId || 'ss-main']; return f.getSheets().reduce((n, sh) => n + sh.maxRows * sh.maxCols, 0); },
     rows(name) { const sh = store.sheets[name]; return sh ? sh.rows.slice(1).filter(r => r.some(v => v !== '' && v !== undefined)) : []; },
     // fetch təqlidi: Sync.js-in istifadə etdiyi formada
     fetch() {

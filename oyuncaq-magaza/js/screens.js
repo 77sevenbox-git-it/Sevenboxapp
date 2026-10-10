@@ -17,7 +17,7 @@
     var submitBtn = h('button', { class: 'btn primary', type: 'submit' }, _t('Daxil ol'));
     var form = h('form', { class: 'card' },
       h('div', { class: 'lang-row' }, UI.langSwitch()),
-      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
+      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
       list,
       h('div', { class: 'field' }, h('label', { for: 'pin' }, _t('PIN')), pin),
       submitBtn,

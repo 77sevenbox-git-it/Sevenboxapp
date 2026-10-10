@@ -149,7 +149,7 @@
   function test() {
     var res = { local: false, localError: null, server: null, serverError: null };
     return registration().then(function (reg) {
-      return show(reg, _t('Mağaza İS — test'), _t('Bildirişlər bu cihazda işləyir.'), 'test', { requireInteraction: false })
+      return show(reg, _t('7BOXS — test'), _t('Bildirişlər bu cihazda işləyir.'), 'test', { requireInteraction: false })
         .then(function () { res.local = true; }, function (e) { res.localError = e.message; })
         .then(function () { return reg.pushManager.getSubscription(); })
         .then(function (sub) {
