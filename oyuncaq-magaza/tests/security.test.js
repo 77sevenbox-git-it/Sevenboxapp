@@ -393,7 +393,7 @@ async function risk(name, fn) {
 
   await must('girişsiz çağırışlar məlumat qaytarmır: istifadəçi siyahısı yalnız id/ad/rol; hash/duz çıxmır', async () => {
     const d = await boot(be); d.Services.logout();
-    const us = await d.Services.listUsers(); us.forEach(u => assert.deepStrictEqual(Object.keys(u).sort(), ['id', 'name', 'role']));
+    const us = await d.Services.listUsers(); us.forEach(u => { assert.deepStrictEqual(Object.keys(u).sort(), ['cred', 'id', 'name', 'role']); assert.ok(u.cred === 'pin' || u.cred === 'password'); });   // cred: yalnız forma (hash/duz yox)
     const all = await d.Services.listAllUsers().then(x => x, e => 'rədd'); if (all !== 'rədd') all.forEach(u => assert.ok(!('pinHash' in u) && !('salt' in u), 'listAllUsers hash qaytarır'));
   });
 

@@ -57,7 +57,7 @@ var SHEETS = {
   Shifts: ['id', 'status', 'openedAt', 'openedBy', 'openingCash', 'closedAt', 'closedBy', 'expectedCash', 'countedCash', 'diff', 'note'],
   CashMoves: ['id', 'shiftId', 'type', 'amount', 'reason', 'at', 'userId', 'approvedBy'],
   Audit: ['at', 'type', 'userId', 'json'],
-  Users: ['id', 'name', 'role', 'active', 'mustChangePin', 'updatedAt', 'salt', 'pinHash'],
+  Users: ['id', 'name', 'role', 'active', 'mustChangePin', 'updatedAt', 'salt', 'pinHash', 'cred'],
   Settings: ['key', 'value', 'updatedAt'],
   Push: ['device', 'userId', 'userName', 'role', 'perms', 'endpoint', 'active', 'updatedAt', 'lastStatus', 'lastAt']
 };
@@ -579,11 +579,14 @@ function project(batch, it) {
     }
     case 'user.upserted': {
       var u = d.user;
-      batch.table('Users').upsert([u.id, u.name, u.role, u.active, u.mustChangePin, u.updatedAt, u.salt, u.pinHash]);
+      batch.table('Users').upsert([u.id, u.name, u.role, u.active, u.mustChangePin, u.updatedAt, u.salt, u.pinHash, credOf(u)]);
       break;
     }
     case 'admin.matrix_changed':
       batch.table('Settings').upsert(['matrix', JSON.stringify(d.after), it.at]);
+      break;
+    case 'admin.auth_policy_changed':
+      batch.table('Settings').upsert(['authPolicy', JSON.stringify(d.after), it.at]);      // rol üzrə giriş forması: pin / password
       break;
     case 'admin.store_changed':
       batch.table('Settings').upsert(['store', JSON.stringify(d.store), it.at]);
@@ -620,8 +623,10 @@ function resetAdminPin() {
 function redact(type, d) {
   if (type !== 'user.upserted' || !d.user) return d;
   var u = d.user;
-  return { reason: d.reason, user: { id: u.id, name: u.name, role: u.role, active: u.active, mustChangePin: u.mustChangePin, updatedAt: u.updatedAt } };
+  return { reason: d.reason, user: { id: u.id, name: u.name, role: u.role, active: u.active, mustChangePin: u.mustChangePin, cred: credOf(u), updatedAt: u.updatedAt } };
 }
+// Hazırkı giriş forması hash-ın formatından: "p1$…" = şifrə (PBKDF2), qalanı PIN (SHA-256). Cədvəldə oxunaqlılıq üçündür, cihazlar özləri hesablayır.
+function credOf(u) { return /^p1\$\d+\$[0-9a-f]{64}$/.test(String(u && u.pinHash || '')) ? 'password' : 'pin'; }
 
 
 /* ---------- Bildiriş: Web Push (VAPID) ----------

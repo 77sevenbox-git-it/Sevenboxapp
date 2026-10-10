@@ -120,15 +120,19 @@
   function approve(title, detail, perm, req) {
     var S = root.Services, Sync = root.Sync;
     var cfg = req && Sync ? Sync.endpoint() : Promise.resolve('');
-    return cfg.then(function (url) {
+    // Təsdiq edə bilən şəxslərdən kimsə şifrə formasındadırsa sahə həm PIN, həm şifrə qəbul edir (rəqəm klaviaturası və 8 simvol limiti olmadan)
+    var formP = S.approverForm ? S.approverForm(perm).catch(function () { return 'pin'; }) : Promise.resolve('pin');
+    return Promise.all([cfg, formP]).then(function (cf) {
+      var url = cf[0], any = cf[1] === 'any';
       return new Promise(function (resolve) {
         var canRequest = !!(req && url);
-        var input = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', autocomplete: 'off', id: 'appr-pin', maxlength: '8' });
+        var input = h('input', { class: 'input mono', type: 'password', inputmode: any ? 'text' : 'numeric', autocomplete: 'off', id: 'appr-pin', maxlength: any ? null : '8' });
         var status = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status', id: 'appr-status' },
-          canRequest ? _t('Menecer PIN-ini yazın və ya sorğu göndərin: menecer öz cihazında təsdiqləyəcək.') : _t('Menecer PIN-ini yazın.'));
+          any ? (canRequest ? _t('Menecerin PIN-ini və ya şifrəsini yazın, ya da sorğu göndərin: menecer öz cihazında təsdiqləyəcək.') : _t('Menecerin PIN-ini və ya şifrəsini yazın.'))
+            : canRequest ? _t('Menecer PIN-ini yazın və ya sorğu göndərin: menecer öz cihazında təsdiqləyəcək.') : _t('Menecer PIN-ini yazın.'));
         var body = h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
           h('p', { style: 'margin:0' }, detail),
-          h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, _t('Menecer PIN-i')), input), status);
+          h('div', { class: 'field' }, h('label', { for: 'appr-pin' }, any ? _t('Menecer PIN-i və ya şifrəsi') : _t('Menecer PIN-i')), input), status);
         var done = false, detached = false, pendingId = null, poll = null, banner = null, m = null;
         var handle = { abort: function () { if (pendingId && !done) S.cancelApproval(pendingId); end(null, null); } };
 

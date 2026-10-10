@@ -81,7 +81,7 @@ async function t(name, fn) {
     await A.Services.changePin('1234', '5821');
     await A.Sync.cycle();
     const row = be.rows('Users').find(r => r[0] === 'u_admin');
-    assert.strictEqual(row.length, 8);
+    assert.strictEqual(row.length, 9);                      // 9-cu sütun: cred (pin|password)
     assert.strictEqual(row[4], false);                       // mustChangePin
     assert.notStrictEqual(row[5], A.Services.EPOCH);         // updatedAt yenilənib
     adminHashA = (await A.DB.get('users', 'u_admin')).pinHash;

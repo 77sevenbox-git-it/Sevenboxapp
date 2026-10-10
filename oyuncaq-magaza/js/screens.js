@@ -12,6 +12,16 @@
     UI.clear(el);
     var chosen = null;
     var pin = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', id: 'pin', maxlength: '8', autocomplete: 'off', style: 'font-size:22px' });
+    var pinLabel = h('label', { for: 'pin' }, _t('PIN'));
+    var creds = {};          // istifadəçi id → hazırkı giriş forması ('pin' | 'password')
+    // Seçilmiş istifadəçinin hazırkı formasına görə sahə: PIN (rəqəm klaviaturası, ≤8) və ya şifrə (mətn klaviaturası, uzunluq limiti yoxdur)
+    function setForm(cred) {
+      var pw = cred === 'password';
+      pin.setAttribute('inputmode', pw ? 'text' : 'numeric');
+      if (pw) pin.removeAttribute('maxlength'); else pin.setAttribute('maxlength', '8');
+      pinLabel.textContent = pw ? _t('Şifrə') : _t('PIN');
+      pin.value = '';
+    }
     var list = h('div', { class: 'users', role: 'group', 'aria-label': _t('İstifadəçi') });
     var foot = h('div', { class: 'muted', style: 'font-size:13px' });
     var submitBtn = h('button', { class: 'btn primary', type: 'submit' }, _t('Daxil ol'));
@@ -19,7 +29,7 @@
       h('div', { class: 'lang-row' }, UI.langSwitch()),
       h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
       list,
-      h('div', { class: 'field' }, h('label', { for: 'pin' }, _t('PIN')), pin),
+      h('div', { class: 'field' }, pinLabel, pin),
       submitBtn,
       foot);
     form.addEventListener('submit', function (e) {
@@ -28,12 +38,17 @@
       // Səhv PIN-də PIN-in başqa cihazda dəyişib-dəyişmədiyi serverdən yoxlanılır (2–3 san): bu müddətdə düymə "Yoxlanılır…" göstərir
       submitBtn.disabled = true; submitBtn.textContent = _t('Yoxlanılır…');
       function ready() { submitBtn.disabled = false; submitBtn.textContent = _t('Daxil ol'); }
-      S.login(chosen, pin.value).then(function (u) { pin.value = ''; ready(); onDone(u); }).catch(function (err) { ready(); pin.value = ''; pin.focus(); UI.toast(err.message, 'bad'); });
+      S.login(chosen, pin.value).then(function (u) { pin.value = ''; ready(); onDone(u); }).catch(function (err) {
+        ready(); pin.value = ''; pin.focus(); UI.toast(err.message, 'bad');
+        // Giriş forması başqa cihazda dəyişmiş ola bilər (PIN ↔ şifrə): siyahı yenilənir ki, sahə düzgün növdə olsun
+        S.listUsers().then(function (us) { us.forEach(function (x) { creds[x.id] = x.cred; }); if (chosen && creds[chosen]) { var was = pinLabel.textContent; setForm(creds[chosen]); if (pinLabel.textContent !== was) UI.toast(_t('Bu istifadəçinin giriş forması dəyişib. Yeni formada yazın'), 'bad'); } });
+      });
     });
     S.listUsers().then(function (users) {
       users.forEach(function (u) {
+        creds[u.id] = u.cred;
         var b = h('button', { type: 'button', 'aria-pressed': 'false', onclick: function () {
-          chosen = u.id; Array.prototype.forEach.call(list.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); }); pin.focus();
+          chosen = u.id; Array.prototype.forEach.call(list.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); }); setForm(creds[u.id]); pin.focus();
         } }, u.name, h('small', null, R.ROLE_NAMES[u.role]));
         list.appendChild(b);
       });
@@ -66,30 +81,32 @@
     });
   }
 
-  // İlk giriş: yeni PIN. Tam səhifədir, arxa fonda heç bir iş ekranı yoxdur. true = PIN dəyişdi, false = çıxış.
+  // Məcburi kod dəyişməsi: ilk giriş, Admin müvəqqəti kod verib, və ya rolun giriş forması dəyişib (PIN ↔ şifrə). Tam səhifədir, arxa fonda heç bir iş ekranı yoxdur.
+  // true = kod dəyişdi, false = çıxış.
   function forcePinChange(el) {
-    return new Promise(function (resolve) {
+    return S.myCredTarget().then(function (tg) { return new Promise(function (resolve) {
+      var toPw = tg.form === 'password', fromPw = tg.current === 'password';
       UI.clear(el);
-      var o = h('input', { class: 'input mono', type: 'password', id: 'op', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
-      var n1 = h('input', { class: 'input mono', type: 'password', id: 'np1', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
-      var n2 = h('input', { class: 'input mono', type: 'password', id: 'np2', inputmode: 'numeric', maxlength: '8', autocomplete: 'off' });
+      function field(id, pw) { return h('input', { class: 'input mono', type: 'password', id: id, inputmode: pw ? 'text' : 'numeric', maxlength: pw ? null : '8', autocomplete: 'off' }); }
+      var o = field('op', fromPw), n1 = field('np1', toPw), n2 = field('np2', toPw);
       var form = h('form', { class: 'card' },
-        h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, S.currentUser().name), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Yeni PIN təyin edin'))),
-        h('p', { class: 'muted', style: 'margin:0' }, _t('İşə başlamazdan əvvəl yalnız sizə məlum olan 4–8 rəqəmli PIN seçin.')),
-        h('div', { class: 'field' }, h('label', { for: 'op' }, _t('Hazırkı PIN')), o),
-        h('div', { class: 'field' }, h('label', { for: 'np1' }, _t('Yeni PIN')), n1),
-        h('div', { class: 'field' }, h('label', { for: 'np2' }, _t('Yeni PIN təkrar')), n2),
+        h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, S.currentUser().name), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, toPw ? _t('Yeni şifrə təyin edin') : _t('Yeni PIN təyin edin'))),
+        h('p', { class: 'muted', style: 'margin:0' }, toPw ? _t('İşə başlamazdan əvvəl yalnız sizə məlum olan şifrə seçin: ən azı {0} simvol, 1 böyük hərf, 1 kiçik hərf, 1 rəqəm və 1 işarə.', [R.PASSWORD_MIN]) : _t('İşə başlamazdan əvvəl yalnız sizə məlum olan 4–8 rəqəmli PIN seçin.')),
+        tg.current !== tg.form ? h('p', { class: 'muted', id: 'form-changed', style: 'margin:0' }, _t('Administrator bu rol üçün giriş formasını dəyişib. Hazırkı kodunuzla daxil oldunuz, indi yenisini seçin.')) : null,
+        h('div', { class: 'field' }, h('label', { for: 'op' }, fromPw ? _t('Hazırkı şifrə') : _t('Hazırkı PIN')), o),
+        h('div', { class: 'field' }, h('label', { for: 'np1' }, toPw ? _t('Yeni şifrə') : _t('Yeni PIN')), n1),
+        h('div', { class: 'field' }, h('label', { for: 'np2' }, toPw ? _t('Yeni şifrə təkrar') : _t('Yeni PIN təkrar')), n2),
         h('button', { class: 'btn primary', type: 'submit' }, _t('Saxla və davam et')),
         h('button', { class: 'btn', type: 'button', id: 'pin-logout', onclick: function () { S.logout(); resolve(false); } }, _t('Çıxış')));
       form.addEventListener('submit', function (e) {
         e.preventDefault();
-        if (n1.value !== n2.value) return UI.toast(_t('Yeni PIN-lər eyni deyil'), 'bad');
-        S.changePin(o.value, n1.value).then(function () { UI.toast(_t('PIN dəyişdirildi')); resolve(true); })
+        if (n1.value !== n2.value) return UI.toast(toPw ? _t('Yeni şifrələr eyni deyil') : _t('Yeni PIN-lər eyni deyil'), 'bad');
+        S.changeCredential(o.value, n1.value).then(function () { UI.toast(toPw ? _t('Şifrə dəyişdirildi') : _t('PIN dəyişdirildi')); resolve(true); })
           .catch(function (err) { UI.toast(err.message, 'bad'); });
       });
       el.appendChild(h('div', { class: 'login' }, form));
       o.focus();
-    });
+    }); });
   }
 
   /* ================= Təsdiq sorğuları (menecer tərəfi) ================= */
@@ -769,6 +786,7 @@
         h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: function () {
           S.setMatrix(m).then(function () { root.App.matrix = m; UI.toast(_t('İcazələr yadda saxlanıldı')); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, _t('Yadda saxla'))),
+        authPolicyCard(),
         can('admin.users') ? usersCard() : null,
         settingsCard(r[1]),
         archiveCard()));
@@ -889,16 +907,50 @@
       h('h2', { style: 'margin:0;font-size:18px' }, _t('Arxiv (Google Sheets tutumu)')), body);
   }
 
+  // Admin: rola görə giriş forması. PIN (4–8 rəqəm) və ya şifrə (≥8 simvol, böyük+kiçik hərf, rəqəm, işarə). Dəyişəndə həmin roldakılar öz hazırkı kodu ilə daxil olur, sonra yenisini seçməlidirlər.
+  function authPolicyCard() {
+    var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, h('div', { class: 'muted' }, _t('Yüklənir…')));
+    var ROLE_ORDER = ['admin', 'menecer', 'kassir', 'muhasib'];
+    function load() {
+      return Promise.all([S.getAuthPolicy(), S.listAllUsers().catch(function () { return []; })]).then(function (r) {
+        var pol = r[0], users = r[1], sels = {};
+        var tb = h('tbody');
+        ROLE_ORDER.forEach(function (role) {
+          var sel = h('select', { class: 'input', id: 'ap-' + role, 'aria-label': R.ROLE_NAMES[role] },
+            h('option', { value: 'pin', selected: pol[role] === 'pin' }, _t('PIN (4–8 rəqəm)')),
+            h('option', { value: 'password', selected: pol[role] === 'password' }, _t('Şifrə (hərf, rəqəm, işarə)')));
+          sels[role] = sel;
+          var pending = users.filter(function (u) { return u.active && u.role === role && u.cred !== pol[role]; }).length;
+          tb.appendChild(h('tr', { 'data-role': role }, h('td', null, R.ROLE_NAMES[role]), h('td', null, sel),
+            h('td', { class: 'muted' }, pending ? _t('{0} nəfər növbəti girişdə dəyişəcək', [pending]) : '')));
+        });
+        UI.clear(body);
+        body.appendChild(h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'auth-policy' }, h('thead', null, h('tr', null, h('th', null, _t('Rol')), h('th', null, _t('Giriş forması')), h('th', null, ''))), tb)));
+        body.appendChild(h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Şifrə qaydası: ən azı {0} simvol, 1 böyük hərf, 1 kiçik hərf, 1 rəqəm, 1 işarə. Forma dəyişəndə həmin roldakılar öz hazırkı kodu ilə daxil olur və dərhal yenisini seçməlidir. Açıq sessiyalar bağlanmır, məcburi dəyişmə növbəti girişdə olur.', [R.PASSWORD_MIN])));
+        body.appendChild(h('div', { class: 'row' }, h('button', { class: 'btn primary', id: 'ap-save', type: 'button', onclick: function () {
+          var next = {}; ROLE_ORDER.forEach(function (role) { next[role] = sels[role].value; });
+          S.setAuthPolicy(next).then(function (res) {
+            UI.toast(res.unchanged ? _t('Dəyişiklik yoxdur') : _t('Yadda saxlanıldı'));
+            load(); if (root.Screens._refresh) root.Screens._refresh();
+          }).catch(function (e) { UI.toast(e.message, 'bad'); });
+        } }, _t('Yadda saxla'))));
+      }).catch(function (e) { UI.clear(body); body.appendChild(h('div', { class: 'muted' }, e.message)); });
+    }
+    load();
+    return h('div', { class: 'card', id: 'auth-policy-card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('Giriş forması (rol üzrə)')), body);
+  }
+
   // Admin: istifadəçilər — yaratmaq, ad/rol dəyişmək, söndürmək, PIN sıfırlamaq
   function usersCard() {
     var tb = h('tbody');
     var ROLE_ORDER = ['admin', 'menecer', 'kassir', 'muhasib'];
     var me = S.currentUser();
 
-    function tempPinModal(title, name, temp) {
+    function tempPinModal(title, name, temp, form) {
       UI.modal({ title: title, body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
         h('div', { class: 'pin-reset', id: 'temp-pin' }, temp),
-        h('p', { class: 'muted', style: 'margin:0' }, _t('{0} üçün müvəqqəti PIN bir dəfə göstərilir. İndi ötürün: ilk girişdə özünün yeni PIN-ini seçəcək.', [name]))) });
+        h('p', { class: 'muted', style: 'margin:0' }, form === 'password' ? _t('{0} üçün müvəqqəti şifrə bir dəfə göstərilir. İndi ötürün: ilk girişdə özünün yeni şifrəsini seçəcək.', [name]) : _t('{0} üçün müvəqqəti PIN bir dəfə göstərilir. İndi ötürün: ilk girişdə özünün yeni PIN-ini seçəcək.', [name]))) });
     }
 
     function load() {
@@ -908,13 +960,14 @@
         });
         UI.clear(tb);
         users.forEach(function (u) {
-          var state = !u.active ? h('span', { class: 'badge off' }, _t('Söndürülüb')) : u.mustChangePin ? h('span', { class: 'badge' }, _t('PIN dəyişməlidir')) : h('span', { class: 'badge ok' }, _t('Aktiv'));
+          var state = !u.active ? h('span', { class: 'badge off' }, _t('Söndürülüb')) : u.mustChange ? h('span', { class: 'badge' }, u.target === 'password' ? _t('Şifrə dəyişməlidir') : _t('PIN dəyişməlidir')) : h('span', { class: 'badge ok' }, _t('Aktiv'));
+          var formTxt = (u.cred === 'password' ? _t('Şifrə') : _t('PIN')) + (u.cred !== u.target ? ' → ' + (u.target === 'password' ? _t('Şifrə') : _t('PIN')) : '');
           var isMe = me && u.id === me.id;
           tb.appendChild(h('tr', { 'data-user': u.name, class: u.active ? '' : 'inactive' },
-            h('td', null, u.name, isMe ? h('span', { class: 'muted' }, ' (siz)') : null), h('td', null, R.ROLE_NAMES[u.role]), h('td', null, state),
+            h('td', null, u.name, isMe ? h('span', { class: 'muted' }, ' (siz)') : null), h('td', null, R.ROLE_NAMES[u.role]), h('td', { class: 'muted' }, formTxt), h('td', null, state),
             h('td', { style: 'text-align:right;white-space:nowrap' },
               h('button', { class: 'btn small', type: 'button', 'data-act': 'edit', onclick: function () { edit(u); } }, _t('Redaktə')), ' ',
-              u.active ? h('button', { class: 'btn small', type: 'button', 'data-act': 'reset', onclick: function () { resetPin(u); } }, _t('PIN-i sıfırla')) : null, ' ',
+              u.active ? h('button', { class: 'btn small', type: 'button', 'data-act': 'reset', onclick: function () { resetPin(u); } }, u.target === 'password' ? _t('Şifrəni sıfırla') : _t('PIN-i sıfırla')) : null, ' ',
               isMe ? null : h('button', { class: 'btn small' + (u.active ? ' danger' : ''), type: 'button', 'data-act': 'toggle', onclick: function () { toggle(u); } }, u.active ? _t('Söndür') : _t('Aktiv et')))));
         });
       });
@@ -926,34 +979,44 @@
     }
 
     function create() {
-      var name = h('input', { class: 'input', id: 'u-name', maxlength: '40', autocomplete: 'off', placeholder: _t('Məs. Elvin Babayev') });
-      var role = roleSelect('kassir');
-      UI.modal({
-        title: _t('Yeni istifadəçi'),
-        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
-          h('div', { class: 'field' }, h('label', { for: 'u-name' }, _t('Ad və soyad')), name),
-          h('div', { class: 'field' }, h('label', { for: 'u-role' }, _t('Rol')), role),
-          h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Müvəqqəti PIN yaradılacaq; istifadəçi ilk girişdə öz PIN-ini seçir.'))),
-        buttons: [{ text: _t('İmtina') }, { text: _t('Yarat'), kind: 'primary', submit: true, onClick: function (close) {
-          return S.createUser({ name: name.value, role: role.value }).then(function (r) {
-            close(); load();
-            tempPinModal(_t('İstifadəçi yaradıldı'), r.user.name, r.tempPin);
-          });
-        } }]
+      S.getAuthPolicy().then(function (pol) {
+        var name = h('input', { class: 'input', id: 'u-name', maxlength: '40', autocomplete: 'off', placeholder: _t('Məs. Elvin Babayev') });
+        var role = roleSelect('kassir');
+        var hint = h('p', { class: 'muted', style: 'margin:0;font-size:13px', id: 'u-hint' });
+        function setHint() { hint.textContent = pol[role.value] === 'password' ? _t('Müvəqqəti şifrə yaradılacaq; istifadəçi ilk girişdə öz şifrəsini seçir.') : _t('Müvəqqəti PIN yaradılacaq; istifadəçi ilk girişdə öz PIN-ini seçir.'); }
+        role.addEventListener('change', setHint); setHint();
+        UI.modal({
+          title: _t('Yeni istifadəçi'),
+          body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+            h('div', { class: 'field' }, h('label', { for: 'u-name' }, _t('Ad və soyad')), name),
+            h('div', { class: 'field' }, h('label', { for: 'u-role' }, _t('Rol')), role), hint),
+          buttons: [{ text: _t('İmtina') }, { text: _t('Yarat'), kind: 'primary', submit: true, onClick: function (close) {
+            return S.createUser({ name: name.value, role: role.value }).then(function (r) {
+              close(); load();
+              tempPinModal(_t('İstifadəçi yaradıldı'), r.user.name, r.tempPin, r.cred);
+            });
+          } }]
+        });
       });
     }
 
     function edit(u) {
+      S.getAuthPolicy().then(function (pol) { editModal(u, pol); });
+    }
+    function editModal(u, pol) {
       var name = h('input', { class: 'input', id: 'u-name', maxlength: '40', autocomplete: 'off', value: u.name });
       var role = roleSelect(u.role);
       if (me && u.id === me.id) role.disabled = true;           // öz rolunu dəyişmək Admini sistemdən kənarlaşdıra bilər
+      var formHint = h('p', { class: 'muted', style: 'margin:0;font-size:13px', id: 'u-form-hint', hidden: true }, _t('Bu rolun giriş forması fərqlidir: istifadəçi növbəti girişdə öz hazırkı kodu ilə daxil olub yenisini seçəcək.'));
+      function setFormHint() { formHint.hidden = (pol[role.value] || 'pin') === u.cred; }
+      role.addEventListener('change', setFormHint); setFormHint();
       UI.modal({
         title: _t('Redaktə — {0}', [u.name]),
         body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
           h('div', { class: 'field' }, h('label', { for: 'u-name' }, _t('Ad və soyad')), name),
           h('div', { class: 'field' }, h('label', { for: 'u-role' }, _t('Rol')), role),
           me && u.id === me.id ? h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Öz rolunuzu dəyişə bilməzsiniz.')) :
-            h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Rol dəyişəndə istifadəçinin açıq cihazında menyu və icazələr bir neçə saniyəyə yenilənir.'))),
+            h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Rol dəyişəndə istifadəçinin açıq cihazında menyu və icazələr bir neçə saniyəyə yenilənir.')), formHint),
         buttons: [{ text: _t('İmtina') }, { text: _t('Yadda saxla'), kind: 'primary', submit: true, onClick: function (close) {
           return S.updateUser(u.id, { name: name.value, role: role.value }).then(function (r) {
             close(); load(); UI.toast(r.unchanged ? _t('Dəyişiklik yoxdur') : _t('Yadda saxlanıldı'));
@@ -975,11 +1038,12 @@
     }
 
     function resetPin(u) {
+      var pw = u.target === 'password';
       UI.modal({
-        title: _t('PIN-i sıfırla — {0}', [u.name]),
-        body: h('p', { style: 'margin:0' }, _t('Müvəqqəti PIN yaradılacaq. İstifadəçi ilk girişdə özünün yeni PIN-ini seçəcək. Köhnə PIN dərhal etibarsız olur.')),
+        title: pw ? _t('Şifrəni sıfırla — {0}', [u.name]) : _t('PIN-i sıfırla — {0}', [u.name]),
+        body: h('p', { style: 'margin:0' }, pw ? _t('Müvəqqəti şifrə yaradılacaq. İstifadəçi ilk girişdə özünün yeni şifrəsini seçəcək. Köhnə kod dərhal etibarsız olur.') : _t('Müvəqqəti PIN yaradılacaq. İstifadəçi ilk girişdə özünün yeni PIN-ini seçəcək. Köhnə PIN dərhal etibarsız olur.')),
         buttons: [{ text: _t('İmtina') }, { text: _t('Sıfırla'), kind: 'danger', submit: true, onClick: function (close) {
-          return S.resetPin(u.id).then(function (temp) { close(); tempPinModal(_t('Müvəqqəti PIN'), u.name, temp); load(); });
+          return S.resetPin(u.id).then(function (temp) { close(); tempPinModal(pw ? _t('Müvəqqəti şifrə') : _t('Müvəqqəti PIN'), u.name, temp, u.target); load(); });
         } }]
       });
     }
@@ -990,7 +1054,7 @@
       h('div', { style: 'padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap' },
         h('h2', { style: 'margin:0;font-size:18px' }, _t('İstifadəçilər')),
         h('button', { class: 'btn primary small', type: 'button', id: 'user-add', onclick: create }, _t('+ Yeni istifadəçi'))),
-      h('table', null, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Rol')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb));
+      h('table', null, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Rol')), h('th', null, _t('Giriş forması')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb));
   }
 
   root.Screens = { login: login, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, admin: admin,

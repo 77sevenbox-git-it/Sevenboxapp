@@ -58,6 +58,28 @@
     return out;
   }
 
+  // Giriş forması (rol üzrə Admin seçir): 'pin' (4–8 rəqəm) və ya 'password' (böyük + kiçik hərf, rəqəm, işarə; ən azı 8 simvol)
+  var AUTH_FORMS = ['pin', 'password'];
+  var DEFAULT_AUTH = { admin: 'pin', menecer: 'pin', kassir: 'pin', muhasib: 'pin' };
+  var PASSWORD_MIN = 8, PASSWORD_MAX = 128;
+  // Parolun qaydaları. Hərf: Unicode (ə, ğ, ı, ö, ü, ş, ç də sayılır). İşarə: hərf, rəqəm və boşluq olmayan istənilən simvol. Boşluq qadağandır (mobil klaviatura səssiz əlavə edə bilər).
+  function passwordProblem(p) {
+    p = String(p == null ? '' : p);
+    if (/\s/.test(p)) return _t('Şifrədə boşluq ola bilməz');
+    if (p.length < PASSWORD_MIN) return _t('Şifrə ən azı {0} simvol olmalıdır', [PASSWORD_MIN]);
+    if (p.length > PASSWORD_MAX) return _t('Şifrə {0} simvoldan uzun ola bilməz', [PASSWORD_MAX]);
+    if (!/\p{Lu}/u.test(p)) return _t('Şifrədə ən azı 1 böyük hərf olmalıdır');
+    if (!/\p{Ll}/u.test(p)) return _t('Şifrədə ən azı 1 kiçik hərf olmalıdır');
+    if (!/[0-9]/.test(p)) return _t('Şifrədə ən azı 1 rəqəm olmalıdır');
+    if (!/[^\p{L}\p{N}\s]/u.test(p)) return _t('Şifrədə ən azı 1 işarə olmalıdır (məs. ! ? . # $ %)');
+    return null;
+  }
+  // Siyasət: yalnız tanınan rollar və formalar; çatışmayan rol "pin" sayılır
+  function normalizeAuth(p) {
+    var out = Object.assign({}, DEFAULT_AUTH);
+    if (p && typeof p === 'object') Object.keys(DEFAULT_AUTH).forEach(function (r) { if (AUTH_FORMS.indexOf(p[r]) !== -1) out[r] = p[r]; });
+    return out;
+  }
   var ROLE_NAMES = { admin: _t('Admin'), menecer: _t('Menecer'), kassir: _t('Kassir'), muhasib: _t('Mühasib') };
 
   function can(matrix, role, perm) {
@@ -182,6 +204,7 @@
   var Rules = {
     TZ: TZ, MAX_DISCOUNT_PERCENT: MAX_DISCOUNT_PERCENT, NEGATIVE_SALE_LIMIT: NEGATIVE_SALE_LIMIT, RETURN_DAYS: RETURN_DAYS,
     PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
+    AUTH_FORMS: AUTH_FORMS, DEFAULT_AUTH: DEFAULT_AUTH, PASSWORD_MIN: PASSWORD_MIN, passwordProblem: passwordProblem, normalizeAuth: normalizeAuth,
     cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
     validatePayment: validatePayment, localDate: localDate, returnWindow: returnWindow, returnableQty: returnableQty,
     refundAmount: refundAmount, expectedCash: expectedCash, shiftSummary: shiftSummary

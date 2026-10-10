@@ -30,8 +30,37 @@
     return root.crypto.subtle.digest('SHA-256', data).then(toHex);
   }
   function newSalt() { return toHex(root.crypto.getRandomValues(new Uint8Array(16))); }
+
+  // Şifrə (password) forması: PBKDF2-SHA256. Hash "p1$<təkrar sayı>$<hex>" kimi saxlanır: forma və təkrar sayı hash-ın özündən oxunur
+  // (təkrar sayını sonra artırmaq olar, köhnə hash-lar işləməyə davam edir). PIN: köhnə qaydada duz+SHA-256 (4–8 rəqəm üçün yavaş KDF mənasızdır, hücum yenə də saniyələrlədir).
+  var PBKDF2_ITER = 310000, PW_RE = /^p1\$(\d{5,7})\$([0-9a-f]{64})$/;
+  function pbkdf2(secret, salt, iter) {
+    var enc = new TextEncoder();
+    return root.crypto.subtle.importKey('raw', enc.encode(String(secret == null ? '' : secret).normalize('NFC')), 'PBKDF2', false, ['deriveBits']).then(function (k) {
+      return root.crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(salt), iterations: iter }, k, 256);
+    }).then(function (bits) { return 'p1$' + iter + '$' + toHex(bits); });
+  }
+  function credOf(u) { return PW_RE.test(String(u && u.pinHash || '')) ? 'password' : 'pin'; }       // istifadəçinin HAZIRKI giriş forması (hash formatından)
+  function hashFor(form, secret, salt) { return form === 'password' ? pbkdf2(secret, salt, PBKDF2_ITER) : hashPin(String(secret == null ? '' : secret), salt); }
+  // Yazılan kod istifadəçinin saxlanılan hash-ına uyğundur? (formanı hash-ın formatı müəyyən edir; yanlış formatlı/şübhəli təkrar sayı rədd olunur)
+  function checkSecret(u, secret) {
+    var m = PW_RE.exec(String(u.pinHash || ''));
+    if (!m) return hashPin(String(secret == null ? '' : secret), u.salt).then(function (h) { return h === u.pinHash; });
+    var iter = parseInt(m[1], 10);
+    if (iter < 10000 || iter > 1000000) return Promise.resolve(false);
+    return pbkdf2(secret, u.salt, iter).then(function (h) { return h === u.pinHash; });
+  }
   // Müvəqqəti PIN: kriptoqrafik təsadüfi 6 rəqəm (Math.random proqnozlaşdırıla bilər)
   function tempPin() { return String(100000 + (root.crypto.getRandomValues(new Uint32Array(1))[0] % 900000)); }
+  function randInt(n) { var a = new Uint32Array(1), lim = 4294967296 - (4294967296 % n); do { root.crypto.getRandomValues(a); } while (a[0] >= lim); return a[0] % n; }
+  // Müvəqqəti şifrə: 12 simvol (3 böyük, 4 kiçik, 3 rəqəm, 2 işarə; oxşar simvollar çıxarılıb), qarışdırılıb. Qaydalara həmişə uyğundur.
+  function tempPassword() {
+    function pick(s, k) { var o = []; for (var i = 0; i < k; i++) o.push(s.charAt(randInt(s.length))); return o; }
+    var out = [].concat(pick('ABCDEFGHJKLMNPQRSTUVWXYZ', 3), pick('abcdefghijkmnpqrstuvwxyz', 4), pick('23456789', 3), pick('!@#$%&*?+=', 2));
+    for (var i = out.length - 1; i > 0; i--) { var j = randInt(i + 1), x = out[i]; out[i] = out[j]; out[j] = x; }
+    return out.join('');
+  }
+  function tempFor(form) { return form === 'password' ? tempPassword() : tempPin(); }
 
   var session = { user: null };
 
@@ -215,16 +244,55 @@
   function deviceId() { return device; }
 
   /* ---------- Giriş ---------- */
+  // Giriş ekranı üçün: yalnız ad/rol və HAZIRKI giriş forması (pin/password); hash və duz heç vaxt
   function listUsers() {
     return DB.getAll('users').then(function (us) {
-      return us.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name, role: u.role }; });
+      return us.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name, role: u.role, cred: credOf(u) }; });
+    });
+  }
+
+  // Girişsiz çağırış heç nə qaytarmasın (daxili istifadə üçün getAuthPolicy login-in içində girişsiz də işləyir)
+  function whenLoggedIn(fn) { return function () { var a = arguments; if (!session.user) return Promise.reject(err(_t('Daxil olun'), 'auth')); return fn.apply(null, a); }; }
+  // Rol üzrə giriş forması siyasəti (Admin seçir). İlkin: hamı PIN.
+  function getAuthPolicy() { return DB.get('meta', 'authPolicy').then(function (m) { return Rules.normalizeAuth(m && m.value); }); }
+  // İstifadəçi hazırkı formasından fərqli formaya keçməlidir (siyasət dəyişib / rolu dəyişib) və ya Admin müvəqqəti kod verib
+  function needsChange(u, policy) { return !!u.mustChangePin || credOf(u) !== (policy[u.role] || 'pin'); }
+  function setAuthPolicy(next) {
+    return requirePerm('admin.permissions').then(function (user) {
+      if (!next || typeof next !== 'object') throw err(_t('Giriş forması səhvdir'));
+      var keys = Object.keys(next);
+      if (keys.some(function (r) { return !Rules.DEFAULT_AUTH.hasOwnProperty(r) || Rules.AUTH_FORMS.indexOf(next[r]) === -1; })) throw err(_t('Giriş forması səhvdir'));
+      var at = now();
+      return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
+        return t.get('meta', 'authPolicy').then(function (old) {
+          var before = Rules.normalizeAuth(old && old.value);
+          // Yalnız göndərilən rollar dəyişir; qalanları hazırkı qalır (qismən yeniləmə başqa rolları "pin"ə qaytarmasın)
+          var pol = Rules.normalizeAuth(Object.assign({}, before, next));
+          if (JSON.stringify(before) === JSON.stringify(pol)) return { policy: pol, unchanged: true };
+          return t.put('meta', { key: 'authPolicy', value: pol }).then(function () { return t.put('meta', { key: 'authPolicyAt', value: at }); })
+            .then(function () { return log(t, 'admin.auth_policy_changed', { before: before, after: pol }, user, at); })
+            .then(function () { return { policy: pol }; });
+        });
+      });
+    });
+  }
+  // Cari istifadəçinin keçməli olduğu forma (siyasətə görə) — məcburi dəyişmə ekranı üçün
+  function myCredTarget() {
+    var me = session.user; if (!me) return Promise.reject(err(_t('Daxil olun'), 'auth'));
+    return Promise.all([DB.get('users', me.id), getAuthPolicy()]).then(function (r) { return { form: r[1][(r[0] || me).role] || 'pin', current: r[0] ? credOf(r[0]) : 'pin' }; });
+  }
+  // Təsdiq pəncərəsi üçün: təsdiq edə bilən aktiv şəxslərin hamısı PIN-dədirsə 'pin', yoxsa 'any' (PIN və ya şifrə yazıla bilər)
+  function approverForm(perm) {
+    return Promise.all([DB.getAll('users'), matrix()]).then(function (r) {
+      var cands = r[0].filter(function (u) { return u.active && Rules.can(r[1], u.role, perm); });
+      return cands.some(function (u) { return credOf(u) === 'password'; }) ? 'any' : 'pin';
     });
   }
 
   function verifyPin(userId, pin) {
     return DB.get('users', userId).then(function (u) {
       if (!u || !u.active) throw err(_t('İstifadəçi tapılmadı'));
-      return hashPin(pin, u.salt).then(function (h) { return { u: u, ok: h === u.pinHash }; });
+      return checkSecret(u, pin).then(function (ok) { return { u: u, ok: ok }; });
     });
   }
 
@@ -256,17 +324,21 @@
             all[userId] = f;
             return t.put('meta', { key: 'authFail', value: all });
           }).then(function () { return log(t, 'auth.failed', { userId: userId }, null); });
-        }).then(function () { throw err(_t('PIN səhvdir')); });
+        }).then(function () { throw err(credOf(u) === 'password' ? _t('Şifrə səhvdir') : _t('PIN səhvdir')); });
       }
-      session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
-      if (!u.mustChangePin) persistSession(u);
-      return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
-        return t.get('meta', 'authFail').then(function (m) {
-          if (!m || !m.value || !Object.prototype.hasOwnProperty.call(m.value, userId)) return;
-          delete m.value[userId];
-          return t.put('meta', { key: 'authFail', value: m.value });
-        }).then(function () { return log(t, 'auth.login', {}, session.user); });
-      }).then(function () { return session.user; });
+      // Siyasət dəyişibsə (və ya Admin müvəqqəti kod veribsə) istifadəçi öz hazırkı kodu ilə daxil olur, sonra yenisini seçməlidir
+      return getAuthPolicy().then(function (policy) {
+        var must = needsChange(u, policy);
+        session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: must };
+        if (!must) persistSession(u);
+        return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
+          return t.get('meta', 'authFail').then(function (m) {
+            if (!m || !m.value || !Object.prototype.hasOwnProperty.call(m.value, userId)) return;
+            delete m.value[userId];
+            return t.put('meta', { key: 'authFail', value: m.value });
+          }).then(function () { return log(t, 'auth.login', {}, session.user); });
+        }).then(function () { return session.user; });
+      });
     });
   }
 
@@ -283,8 +355,9 @@
     var raw = null;
     try { raw = JSON.parse(ss.getItem(SESSION_KEY) || 'null'); } catch (e) { raw = null; }
     if (!raw || !raw.id || Date.now() - raw.at > SESSION_TTL) { persistSession(null); return Promise.resolve(null); }
-    return DB.get('users', raw.id).then(function (u) {
-      if (!u || !u.active || u.mustChangePin || fingerprint(u) !== raw.fp) { persistSession(null); return null; }
+    return Promise.all([DB.get('users', raw.id), getAuthPolicy()]).then(function (r) {
+      var u = r[0];
+      if (!u || !u.active || needsChange(u, r[1]) || fingerprint(u) !== raw.fp) { persistSession(null); return null; }
       session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: false };
       return session.user;
     });
@@ -299,34 +372,46 @@
     if (/^(\d)\1+$/.test(newPin) || '0123456789'.indexOf(newPin) !== -1 || '9876543210'.indexOf(newPin) !== -1) return _t('Çox sadə PIN seçməyin');
     return null;
   }
+  function validateNewSecret(form, next, old) {
+    next = String(next == null ? '' : next);
+    if (form === 'password') {
+      var bad = Rules.passwordProblem(next); if (bad) return bad;
+      if (next === old) return _t('Yeni şifrə köhnə kodla eyni ola bilməz');
+      return null;
+    }
+    return validateNewPin(next, old);
+  }
 
-  // PIN dəyişəndə "user.upserted" hadisəsi (duz + hash) serverə gedir və "Users" vərəqində yenilənir
-  function changePin(oldPin, newPin) {
-    var bad = validateNewPin(newPin, oldPin); if (bad) return Promise.reject(err(bad));
+  // Giriş kodunu dəyişir. Yeni kod ROLUN siyasətindəki formadadır (PIN və ya şifrə): siyasət dəyişibsə istifadəçi PIN-dən şifrəyə (və ya əksinə) keçir.
+  // "user.upserted" hadisəsi (duz + hash) serverə gedir və "Users" vərəqində yenilənir
+  function changeCredential(oldSecret, newSecret) {
     var me = session.user;
     if (!me) return Promise.reject(err(_t('Daxil olun'), 'auth'));
-    return DB.get('users', me.id).then(function (u) {
-      return hashPin(oldPin, u.salt).then(function (h) {
-        if (h !== u.pinHash) throw err(_t('Köhnə PIN səhvdir'));
+    return Promise.all([DB.get('users', me.id), getAuthPolicy()]).then(function (r) {
+      var u = r[0], form = r[1][u.role] || 'pin';
+      var bad = validateNewSecret(form, newSecret, oldSecret); if (bad) throw err(bad);
+      return checkSecret(u, oldSecret).then(function (ok) {
+        if (!ok) throw err(credOf(u) === 'password' ? _t('Köhnə şifrə səhvdir') : _t('Köhnə PIN səhvdir'));
         var salt = newSalt();
-        return hashPin(newPin, salt).then(function (nh) {
+        return hashFor(form, newSecret, salt).then(function (nh) {
           u.salt = salt; u.pinHash = nh; u.mustChangePin = false; u.updatedAt = nowAfter(u.updatedAt);
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
-            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_changed' }, me, u.updatedAt); });
+            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: form === 'password' ? 'password_changed' : 'pin_changed' }, me, u.updatedAt); });
           }).then(function () { me.mustChangePin = false; persistSession(u); });
         });
       });
     });
   }
+  function changePin(oldPin, newPin) { return changeCredential(oldPin, newPin); }       // köhnə ad (uyğunluq üçün)
 
-  // Admin: unudulmuş PIN üçün müvəqqəti PIN verir (istifadəçi ilk girişdə yenisini seçir)
+  // Admin: unudulmuş kod üçün müvəqqəti kod verir (rolun formasında: PIN və ya şifrə). İstifadəçi ilk girişdə özünün yenisini seçir.
   function resetPin(userId) {
     return requirePerm('admin.users').then(function (admin) {
-      return DB.get('users', userId).then(function (u) {
+      return Promise.all([DB.get('users', userId), getAuthPolicy()]).then(function (r) {
+        var u = r[0];
         if (!u) throw err(_t('İstifadəçi tapılmadı'));
-        var temp = tempPin();
-        var salt = newSalt();
-        return hashPin(temp, salt).then(function (h) {
+        var form = r[1][u.role] || 'pin', temp = tempFor(form), salt = newSalt();
+        return hashFor(form, temp, salt).then(function (h) {
           u.salt = salt; u.pinHash = h; u.mustChangePin = true; u.updatedAt = nowAfter(u.updatedAt);
           return DB.atomic(['users', 'audit', 'outbox'], function (t) {
             return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'pin_reset' }, admin, u.updatedAt); });
@@ -353,13 +438,15 @@
         var bad = validateUserName(d && d.name, users);
         if (bad) throw err(bad);
         if (!d || !Rules.ROLE_NAMES[d.role]) throw err(_t('Rol seçin'));
-        var temp = tempPin(), salt = newSalt();
-        return hashPin(temp, salt).then(function (h) {
-          var at = now();
-          var u = { id: DB.uid('u'), name: cleanName(d.name), role: d.role, salt: salt, pinHash: h, active: true, mustChangePin: true, updatedAt: at };
-          return DB.atomic(['users', 'audit', 'outbox'], function (t) {
-            return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'created' }, admin, at); });
-          }).then(function () { return { user: { id: u.id, name: u.name, role: u.role, active: true }, tempPin: temp }; });
+        return getAuthPolicy().then(function (policy) {
+          var form = policy[d.role] || 'pin', temp = tempFor(form), salt = newSalt();
+          return hashFor(form, temp, salt).then(function (h) {
+            var at = now();
+            var u = { id: DB.uid('u'), name: cleanName(d.name), role: d.role, salt: salt, pinHash: h, active: true, mustChangePin: true, updatedAt: at };
+            return DB.atomic(['users', 'audit', 'outbox'], function (t) {
+              return t.put('users', u).then(function () { return log(t, 'user.upserted', { user: u, reason: 'created' }, admin, at); });
+            }).then(function () { return { user: { id: u.id, name: u.name, role: u.role, active: true }, tempPin: temp, cred: form }; });
+          });
         });
       });
     });
@@ -405,14 +492,16 @@
       if (u.mustChangePin && !me.mustChangePin) return 'gone';
       var changed = u.role !== me.role || u.name !== me.name;
       me.role = u.role; me.name = u.name;
-      if (!u.mustChangePin) persistSession(u);
+      if (!u.mustChangePin && !me.mustChangePin) persistSession(u);
       return changed ? 'changed' : 'same';
     });
   }
 
   function listAllUsers() {
     return requirePerm('admin.users').then(function () {
-      return DB.getAll('users').then(function (us) { return us.map(function (u) { return { id: u.id, name: u.name, role: u.role, active: u.active, mustChangePin: u.mustChangePin }; }); });
+      return Promise.all([DB.getAll('users'), getAuthPolicy()]).then(function (r) {
+        return r[0].map(function (u) { return { id: u.id, name: u.name, role: u.role, active: u.active, mustChangePin: u.mustChangePin, cred: credOf(u), target: r[1][u.role] || 'pin', mustChange: needsChange(u, r[1]) }; });
+      });
     });
   }
 
@@ -420,7 +509,7 @@
   function approveWithPin(pin, perm) {
     return Promise.all([DB.getAll('users'), matrix()]).then(function (r) {
       var candidates = r[0].filter(function (u) { return u.active && Rules.can(r[1], u.role, perm); });
-      return Promise.all(candidates.map(function (u) { return hashPin(pin, u.salt).then(function (h) { return h === u.pinHash ? u : null; }); }))
+      return Promise.all(candidates.map(function (u) { return checkSecret(u, pin).then(function (ok) { return ok ? u : null; }); }))
         .then(function (res) {
           var u = res.filter(Boolean)[0];
           if (!u) throw err(_t('PIN yanlışdır və ya bu şəxsin təsdiq icazəsi yoxdur'));
@@ -1119,7 +1208,8 @@
 
   var Services = {
     MAX_CART_LINES: MAX_CART_LINES,
-    init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin,
+    init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin, changeCredential: changeCredential,
+    getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct,
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,

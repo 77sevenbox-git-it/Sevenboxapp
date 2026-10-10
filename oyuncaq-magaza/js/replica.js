@@ -59,6 +59,18 @@
     });
   };
 
+  // Rol üzrə giriş forması (PIN/şifrə): matris kimi "son yazan qalib". Köhnə cihaz bu hadisəni tanımır və atlayır (səhv deyil).
+  H['admin.auth_policy_changed'] = function (t, ev, d, sum) {
+    if (!d.after) return;
+    var after = Rules.normalizeAuth(d.after);
+    return Promise.all([t.get('meta', 'authPolicyAt'), t.get('meta', 'authPolicy')]).then(function (r) {
+      var m = r[0];
+      if (m && !newer(ev.at, after, m.value, r[1] && r[1].value)) return;
+      sum.touched.users = true;
+      return t.put('meta', { key: 'authPolicy', value: after }).then(function () { return t.put('meta', { key: 'authPolicyAt', value: ev.at }); });
+    });
+  };
+
   H['admin.store_changed'] = function (t, ev, d, sum) {
     if (!d.store) return;
     return Promise.all([t.get('meta', 'storeAt'), t.get('meta', 'store')]).then(function (r) {
@@ -276,9 +288,20 @@
     return isObj(a) && (!('name' in a) || nameOk(a.name, 200)) && oS(a, 'category', 200) && oS(a, 'brand', 200) && oS(a, 'ageGroup', 200) && oS(a, 'mfrBarcode', 500) &&
       (!('price' in a) || iOk(a.price, 0, MONEY_MAX)) && oI(a, 'minStock', 0, QTY_MAX) && oB(a, 'active');
   }
+  // "p1$" ilə başlayan hash şifrə (PBKDF2) formasıdır: təkrar sayı ağlabatan olmalıdır (saxta hadisə ilə milyardlıq təkrar sayı bütün cihazları dondura bilməz)
+  function hashOk(h) {
+    if (h.indexOf('p1$') !== 0) return true;
+    var m = /^p1\$(\d{5,7})\$[0-9a-f]{64}$/.exec(h);
+    return !!m && parseInt(m[1], 10) >= 10000 && parseInt(m[1], 10) <= 1000000;
+  }
   var CHECK = {
     'user.upserted': function (d) {
-      var u = d.user; return isObj(u) && idOk(u.id) && nameOk(u.name, 80) && typeof u.role === 'string' && own.call(Rules.ROLE_NAMES, u.role) && sOk(u.salt, 200) && sOk(u.pinHash, 200) && oB(u, 'active') && oB(u, 'mustChangePin') && oS(u, 'updatedAt', 40);
+      var u = d.user; return isObj(u) && idOk(u.id) && nameOk(u.name, 80) && typeof u.role === 'string' && own.call(Rules.ROLE_NAMES, u.role) && sOk(u.salt, 200) && sOk(u.pinHash, 200) && hashOk(u.pinHash) && oB(u, 'active') && oB(u, 'mustChangePin') && oS(u, 'updatedAt', 40);
+    },
+    'admin.auth_policy_changed': function (d) {
+      var a = d.after; if (!isObj(a)) return false;
+      var keys = Object.keys(a); if (!keys.length || keys.length > 10) return false;
+      return keys.every(function (r) { return own.call(Rules.ROLE_NAMES, r) && Rules.AUTH_FORMS.indexOf(a[r]) !== -1; });
     },
     'product.created': function (d) {
       var p = d.product; return masterOk(p) && idOk(p.id) && nameOk(p.name, 200) && iOk(p.price, 0, MONEY_MAX) && eanOk(p.storeBarcode) && oN(p, 'avgCost', 0, MONEY_MAX) && oN(p, 'lastCost', 0, MONEY_MAX) && oI(p, 'stock', -STOCK_MAX, STOCK_MAX);

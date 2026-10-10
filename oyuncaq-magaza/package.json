@@ -6,7 +6,7 @@
     "test": "tests"
   },
   "scripts": {
-    "test": "node tests/run.js && node tests/fifo.test.js && node tests/services.test.js && node tests/sync.test.js && node tests/archive.test.js && node tests/migrate.test.js && node tests/push.test.js && node tests/notify.test.js && node tests/sw.test.js && node tests/i18n.test.js && node tests/stockreq.test.js && node tests/security.test.js && node tests/clock.test.js",
+    "test": "node tests/run.js && node tests/fifo.test.js && node tests/services.test.js && node tests/sync.test.js && node tests/archive.test.js && node tests/auth.test.js && node tests/migrate.test.js && node tests/push.test.js && node tests/notify.test.js && node tests/sw.test.js && node tests/i18n.test.js && node tests/stockreq.test.js && node tests/security.test.js && node tests/clock.test.js",
     "start": "python3 -m http.server 8000",
     "test:e2e": "python3 tests/e2e.py && python3 tests/e2e_lang.py && python3 tests/e2e_sync.py && python3 tests/e2e_print.py && python3 tests/e2e_notify.py && python3 tests/e2e_latency.py && python3 tests/e2e_xss.py && python3 tests/e2e_scanner.py && python3 tests/e2e_offline.py && python3 tests/e2e_a11y.py",
     "test:fuzz": "node tests/fuzz.test.js 40",
