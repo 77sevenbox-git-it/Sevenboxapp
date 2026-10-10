@@ -8,7 +8,7 @@
 
   var st = null;
   function fresh() {
-    return { cart: [], sel: -1, method: null, bankType: 'pos', cash: '', bank: '', discount: null, msg: null, busy: false };
+    return { cart: [], sel: -1, method: null, bankType: 'pos', cash: '', bank: '', discount: null, msg: null, busy: false, caps: R.discountCaps(null) };
   }
 
   var refs = {};
@@ -22,7 +22,7 @@
     try {
       var u = S.currentUser();
       if (!u || (!st.cart.length && !st.discount)) ss.removeItem(CART_KEY);
-      else ss.setItem(CART_KEY, JSON.stringify({ u: u.id, cart: st.cart.map(function (c) { return { id: c.product.id, qty: c.qty }; }), discount: st.discount }));
+      else ss.setItem(CART_KEY, JSON.stringify({ u: u.id, cart: st.cart.map(function (c) { return { id: c.product.id, qty: c.qty, disc: c.disc || null }; }), discount: st.discount }));
     } catch (e) { /* yaddaş bağlıdırsa davam */ }
   }
   function loadCart() {
@@ -32,14 +32,31 @@
     if (!raw || raw.u !== u.id || !raw.cart || !raw.cart.length) return Promise.resolve();
     return S.listProducts().then(function (ps) {
       var byId = {}; ps.forEach(function (p) { byId[p.id] = p; });
-      raw.cart.forEach(function (c) { if (byId[c.id] && byId[c.id].active && c.qty > 0) st.cart.push({ product: byId[c.id], qty: c.qty }); });
+      raw.cart.forEach(function (c) { if (byId[c.id] && byId[c.id].active && c.qty > 0) st.cart.push({ product: byId[c.id], qty: c.qty, disc: c.disc || null }); });
       if (st.cart.length) { st.sel = 0; st.discount = raw.discount || null; setMsg(_t('Yarımçıq çek bərpa olundu ({0} sətir)', [st.cart.length]), 'warn'); }
     });
   }
   function reset() { st = null; pendingDel = {}; pendingCancel = false; var ss = ses(); if (ss) { try { ss.removeItem(CART_KEY); } catch (e) { /* */ } } }
 
-  function totals() {
-    return R.cartTotals(st.cart.map(function (c) { return { price: c.product.price, qty: c.qty }; }), st.discount ? st.discount.percent : 0);
+  // Sətir endirimi (qəpik): faiz sətrin cəmindən hesablanır, məbləğ sətrin cəmindən çıxılır
+  function lineGross(c) { return c.product.price * c.qty; }
+  function lineDisc(c) { return c.disc ? R.discountValue(lineGross(c), c.disc) : 0; }
+  function cartLines() { return st.cart.map(function (c) { return { price: c.product.price, qty: c.qty, discount: lineDisc(c) }; }); }
+  function totals() { return R.cartTotals(cartLines(), st.discount); }
+  function discLabel(d) { return R.discountKind(d) === 'amount' ? M.format(d.amount) + ' ₼' : d.percent + '%'; }
+
+  // Səbət dəyişəndə (say, sətir silmə, başqa cihazdan məhsul həddi dəyişməsi) təsdiqlənmiş endirim artıq icazəli hədd daxilində qalmaya bilər
+  // (məs. məbləğ endirimi azalan sətirdə həddi keçir). Belə endirim təsdiqsiz qalmasın deyə götürülür, yenidən təsdiq lazımdır.
+  function revalidateDiscounts() {
+    var dropped = false;
+    st.cart.forEach(function (c) {
+      if (c.disc && R.validateLineDiscount(lineGross(c), c.disc, c.product.maxDiscount || 0)) { c.disc = null; dropped = true; }
+    });
+    if (st.discount) {
+      var net = R.cartTotals(cartLines(), null).total;
+      if (R.validateReceiptDiscount(net, st.discount, st.caps)) { st.discount = null; dropped = true; }
+    }
+    if (dropped) setMsg(_t('Səbət dəyişdiyi üçün endirim həddi aşıldı, endirim götürüldü. Lazımdırsa yenidən təsdiqləyin'), 'warn');
   }
 
   function paymentInput() {
@@ -154,32 +171,113 @@
     }).catch(function (e) { pendingCancel = false; UI.toast(e.message, 'bad'); });
   }
 
+  // Endirim pəncərəsi: əvvəl NƏYƏ (seçilmiş məhsul sətrinə / bütün çekə), sonra NƏ QƏDƏR (faiz və ya məbləğ).
+  // Hədlər: məhsula — məhsulun kartındakı "max endirim %", çeke — Admin həddi (həm faiz, həm məbləğ). Təsdiq yenə menecerdədir.
   function requestDiscount() {
-    if (!st.cart.length) return;
-    var input = h('input', { class: 'input', id: 'disc', type: 'number', min: '1', max: String(R.MAX_DISCOUNT_PERCENT), step: '0.5', value: st.discount ? st.discount.percent : '5' });
-    UI.modal({
-      title: _t('Endirim sorğusu'),
-      body: h('div', { class: 'field' }, h('label', { for: 'disc' }, _t('Endirim, % (ən çox {0}%)', [R.MAX_DISCOUNT_PERCENT])), input),
+    if (!st || !st.cart.length) return;
+    S.storeInfo().then(function (store) { if (!st) return; st.caps = R.discountCaps(store); showDiscount(); }).catch(function () { if (st) showDiscount(); });
+  }
+
+  function showDiscount() {
+    var sel = st.sel >= 0 ? st.cart[st.sel] : null;
+    var selMax = sel ? (sel.product.maxDiscount || 0) : 0;
+    var target = sel && selMax > 0 ? 'line' : 'receipt', type = 'percent';
+    var input = h('input', { class: 'input mono', id: 'disc', inputmode: 'decimal', autocomplete: 'off', style: 'font-size:22px' });
+    var hint = h('p', { class: 'dhint', id: 'disc-hint', 'aria-live': 'polite' });
+    var rm = h('button', { class: 'btn small danger', type: 'button', id: 'disc-remove', hidden: true });
+    var tLine = h('button', { type: 'button', id: 'dt-line', 'aria-pressed': 'false' });
+    var tAll = h('button', { type: 'button', id: 'dt-all', 'aria-pressed': 'false' });
+    var yPct = h('button', { type: 'button', id: 'dy-pct', 'aria-pressed': 'false' }, _t('Faiz, %'));
+    var yAmt = h('button', { type: 'button', id: 'dy-amt', 'aria-pressed': 'false' }, _t('Məbləğ, ₼'));
+
+    // Hədlər və ilkin dəyər hədəfə görə dəyişir
+    function ctx() {
+      if (target === 'line') {
+        var gross = lineGross(sel), maxP = selMax;
+        return { base: gross, maxP: maxP, maxAmt: R.discountValue(gross, { type: 'percent', percent: maxP }), cur: sel.disc };
+      }
+      var net = R.cartTotals(cartLines(), null).total, byP = M.percentOf(net, st.caps.percent);
+      return { base: net, maxP: st.caps.percent, maxAmt: Math.min(byP, st.caps.amount), cur: st.discount };
+    }
+    function read() {
+      var raw = String(input.value).trim();
+      if (!raw) return null;
+      if (type === 'amount') { var a = M.parse(raw); return a == null ? undefined : { type: 'amount', amount: a }; }
+      var p = Number(raw.replace(',', '.'));
+      return Number.isFinite(p) ? { type: 'percent', percent: p } : undefined;
+    }
+    function setDefault() {
+      var c = ctx();
+      if (c.cur) { type = R.discountKind(c.cur); input.value = type === 'amount' ? M.format(c.cur.amount).replace(/\s/g, '') : String(c.cur.percent).replace('.', ','); }
+      else if (type === 'percent') input.value = String(target === 'line' ? c.maxP : Math.min(R.DEFAULT_DISCOUNT_CAPS.percent, c.maxP)).replace('.', ',');
+      else input.value = '';
+    }
+    function refresh() {
+      tLine.setAttribute('aria-pressed', String(target === 'line')); tAll.setAttribute('aria-pressed', String(target === 'receipt'));
+      yPct.setAttribute('aria-pressed', String(type === 'percent')); yAmt.setAttribute('aria-pressed', String(type === 'amount'));
+      input.setAttribute('aria-label', type === 'amount' ? _t('Endirim məbləği, ₼') : _t('Endirim faizi, %'));
+      var c = ctx(), d = read();
+      rm.hidden = !c.cur; rm.textContent = target === 'line' ? _t('Bu sətirin endirimini götür') : _t('Çek endirimini götür');
+      UI.clear(hint);
+      hint.appendChild(document.createTextNode(c.maxP > 0 ? _t('Ən çox: {0}% ({1} ₼)', [c.maxP, M.format(c.maxAmt)]) : _t('Bu məhsula endirim verilmir')));
+      if (d) {
+        var bad = target === 'line' ? R.validateLineDiscount(c.base, d, c.maxP) : R.validateReceiptDiscount(c.base, d, st.caps);
+        if (bad) hint.appendChild(h('span', { style: 'color:var(--bad);display:block;font-weight:600' }, bad));
+        else { var v = R.discountValue(c.base, d); hint.appendChild(h('span', { style: 'display:block' }, _t('Endirim {0} ₼ → {1} ₼', [M.format(v), M.format(c.base - v)]))); }
+      }
+    }
+    function drawTargets() {
+      UI.clear(tLine); UI.clear(tAll);
+      tLine.appendChild(document.createTextNode(_t('Məhsula')));
+      tLine.appendChild(h('small', null, !sel ? _t('Əvvəl sətri seçin') : selMax > 0 ? sel.product.name + ' · ' + _t('max {0}%', [selMax]) : sel.product.name + ' · ' + _t('endirim verilmir')));
+      tLine.disabled = !sel || selMax <= 0;
+      tAll.appendChild(document.createTextNode(_t('Bütün çeke')));
+      tAll.appendChild(h('small', null, st.caps.percent > 0 && st.caps.amount > 0 ? _t('max {0}% və {1} ₼', [st.caps.percent, M.format(st.caps.amount)]) : _t('bağlıdır')));
+    }
+    tLine.addEventListener('click', function () { if (tLine.disabled) return; target = 'line'; type = 'percent'; setDefault(); refresh(); input.focus(); input.select(); });
+    tAll.addEventListener('click', function () { target = 'receipt'; type = 'percent'; setDefault(); refresh(); input.focus(); input.select(); });
+    yPct.addEventListener('click', function () { if (type === 'percent') return; type = 'percent'; setDefault(); refresh(); input.focus(); input.select(); });
+    yAmt.addEventListener('click', function () { if (type === 'amount') return; type = 'amount'; input.value = ''; refresh(); input.focus(); });
+    input.addEventListener('input', refresh);
+    rm.addEventListener('click', function () {
+      if (target === 'line') sel.disc = null; else st.discount = null;
+      m.close(); render(); focusScan();
+    });
+    drawTargets(); setDefault(); refresh();
+
+    var m = UI.modal({
+      title: _t('Endirim'),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'dtarget', role: 'group', 'aria-label': _t('Endirim nəyə tətbiq olunsun') }, tLine, tAll),
+        h('div', { class: 'dtype', role: 'group', 'aria-label': _t('Endirim növü') }, yPct, yAmt),
+        h('div', { class: 'field' }, h('label', { for: 'disc' }, _t('Endirim')), input), hint, rm),
       buttons: [
-        st.discount ? { text: _t('Endirimi götür'), kind: 'danger', onClick: function (close) { st.discount = null; close(); render(); } } : null,
         { text: _t('İmtina') },
         { text: _t('Menecerə göndər'), kind: 'primary', submit: true, onClick: function (close) {
-          var pct = parseFloat(String(input.value).replace(',', '.'));
-          var v = R.validateDiscountPercent(pct); if (v) throw new Error(v);
+          var d = read();
+          if (d === undefined || d === null) throw new Error(_t('Endirim səhvdir'));
+          var c = ctx(), bad = target === 'line' ? R.validateLineDiscount(c.base, d, c.maxP) : R.validateReceiptDiscount(c.base, d, st.caps);
+          if (bad) throw new Error(bad);
+          var tg = target, line = sel, base = c.base, v = R.discountValue(base, d), label = discLabel(d), who = S.currentUser() ? S.currentUser().name : '';
+          var pid = line ? line.product.id : null, name = line ? line.product.name : '', sig = cartSig();
           close();
-          var t = R.cartTotals(st.cart.map(function (c) { return { price: c.product.price, qty: c.qty }; }), pct);
-          var dsum = _t('{0}% endirim: {1} → {2} ₼', [pct, M.format(t.subtotal), M.format(t.total)]);
-          var sig = cartSig();
-          return UI.approve(_t('Endirimi təsdiqlə'), dsum, 'pos.discount.approve', UI.req('discount', '{0} endirim istəyir: {1}% endirim: {2} → {3} ₼', [S.currentUser() ? S.currentUser().name : '', pct, M.format(t.subtotal), M.format(t.total)])).then(function (a) {
+          var detail = tg === 'line' ? _t('"{0}": {1} endirim: {2} → {3} ₼', [name, label, M.format(base), M.format(base - v)]) : _t('Çekə {0} endirim: {1} → {2} ₼', [label, M.format(base), M.format(base - v)]);
+          var rq = tg === 'line'
+            ? UI.req('discount', '{0} endirim istəyir: "{1}" sətrinə {2} endirim: {3} → {4} ₼', [who, name, label, M.format(base), M.format(base - v)])
+            : UI.req('discount', '{0} endirim istəyir: çekə {1} endirim: {2} → {3} ₼', [who, label, M.format(base), M.format(base - v)]);
+          return UI.approve(_t('Endirimi təsdiqlə'), detail, 'pos.discount.approve', rq).then(function (a) {
             if (!st) return;
-            S.auditEvent(a ? 'pos.discount_approved' : 'pos.discount_rejected', { percent: pct, subtotal: t.subtotal, approvedBy: a ? a.id : null });
+            S.auditEvent(a ? 'pos.discount_approved' : 'pos.discount_rejected', { target: tg === 'line' ? 'line' : 'receipt', productId: pid, type: d.type, percent: d.percent, amount: d.amount, base: base, approvedBy: a ? a.id : null });
             if (a && cartSig() !== sig) setMsg(_t('Çek arada dəyişdi, təsdiqlənmiş endirim tətbiq edilmədi. Yenidən sorğu göndərin'), 'warn');
-            else if (a) { st.discount = { percent: pct, approvedBy: a }; setMsg(_t('{0}% endirim təsdiqləndi ({1})', [pct, a.name]), ''); }
-            else setMsg(_t('Endirim təsdiqlənmədi'), 'warn');
+            else if (a) {
+              var rec = Object.assign({}, d, { approvedBy: a });
+              if (tg === 'line') { var cur = st.cart.find(function (x) { return x.product.id === pid; }); if (cur) cur.disc = rec; } else st.discount = rec;
+              setMsg(_t('{0} endirim təsdiqləndi ({1})', [label, a.name]), '');
+            } else setMsg(_t('Endirim təsdiqlənmədi'), 'warn');
             render(); focusScan();
           });
         } }
-      ].filter(Boolean)
+      ]
     });
   }
 
@@ -199,7 +297,7 @@
     var pay = R.validatePayment(paymentInput());
     if (!pay.ok) { setMsg(pay.error, 'bad'); UI.beep(false); render(); return; }
     st.busy = true; render();
-    var cart = st.cart.map(function (c) { return { productId: c.product.id, qty: c.qty }; });
+    var cart = st.cart.map(function (c) { return c.disc ? { productId: c.product.id, qty: c.qty, discount: c.disc } : { productId: c.product.id, qty: c.qty }; });
     var input = paymentInput(); delete input.total;
     S.checkout(cart, st.discount, input).then(function (sale) {
       return S.storeInfo().then(function (store) {
@@ -267,6 +365,7 @@
   /* ---------- Render ---------- */
   function render() {
     if (!st || !mountEl || !refs.table) return;
+    revalidateDiscounts();
     saveCart();
     var t = totals();
 
@@ -283,8 +382,10 @@
       var chk = R.negativeStockCheck(c.product, c.qty);
       var tr = h('tr', { class: (i === st.sel ? 'selected ' : '') + (chk.needsNegative ? 'neg' : ''), onclick: function () { st.sel = i; render(); focusScan(); } },
         h('td', { class: 'muted' }, String(i + 1)),
-        h('td', null, h('div', null, c.product.name),
-          chk.needsNegative ? h('div', { class: 'warn-text', style: 'font-size:13px' }, chk.blocked ? _t('Qalıq yoxdur, limit dolub — satılmaz') : _t('Qalıq {0} · mənfi qalıqla satış {1}/{2}', [c.product.stock, (chk.used + 1), R.NEGATIVE_SALE_LIMIT])) : null),
+        h('td', null, h('div', { class: 'pname' }, UI.thumb(c.product),
+          h('div', { class: 'ptext' }, h('div', null, c.product.name),
+            c.disc ? h('div', { class: 'dline' }, _t('Endirim {0}: −{1}', [discLabel(c.disc), M.format(lineDisc(c))])) : null,
+            chk.needsNegative ? h('div', { class: 'warn-text', style: 'font-size:13px' }, chk.blocked ? _t('Qalıq yoxdur, limit dolub — satılmaz') : _t('Qalıq {0} · mənfi qalıqla satış {1}/{2}', [c.product.stock, (chk.used + 1), R.NEGATIVE_SALE_LIMIT])) : null))),
         h('td', { class: 'mono muted', style: 'font-size:14px' }, c.product.storeBarcode),
         h('td', { class: 'num' },
           h('div', { style: 'display:inline-flex;align-items:center;gap:8px' },
@@ -292,14 +393,16 @@
             h('span', { style: 'min-width:24px;display:inline-block;text-align:center' }, String(c.qty)),
             h('button', { class: 'qty-btn', 'aria-label': _t('Artır'), onclick: function (e) { e.stopPropagation(); changeQty(i, 1); } }, '+'))),
         h('td', { class: 'num' }, M.format(c.product.price)),
-        h('td', { class: 'num', style: 'font-weight:600' }, M.format(c.product.price * c.qty)),
+        h('td', { class: 'num', style: 'font-weight:600' }, lineDisc(c) ? h('span', { class: 'pgross' }, M.format(lineGross(c))) : null, M.format(lineGross(c) - lineDisc(c))),
         h('td', { class: 'del' }, trashButton(i, c.product.name, !!pendingDel[c.product.id])));
       tbody.appendChild(tr);
     });
 
     // Yekunlar
     refs.subtotal.textContent = M.format(t.subtotal);
-    refs.discount.textContent = st.discount ? '−' + M.format(t.discount) + ' (' + st.discount.percent + '%)' : '0,00';
+    refs.lineDiscRow.hidden = !t.lineDiscount;
+    refs.lineDisc.textContent = t.lineDiscount ? '−' + M.format(t.lineDiscount) : '';
+    refs.discount.textContent = st.discount ? '−' + M.format(t.discount) + (R.discountKind(st.discount) === 'percent' ? ' (' + st.discount.percent + '%)' : '') : '0,00';
     refs.total.textContent = M.format(t.total) + ' ₼';
     refs.count.textContent = t.itemCount ? _t('{0} ədəd', [t.itemCount]) : '';
 
@@ -404,7 +507,7 @@
       h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', { class: 'num' }, _t('Say')), h('th', { class: 'num' }, _t('Qiymət')), h('th', { class: 'num' }, _t('Cəm')), h('th', { class: 'del' }, h('span', { class: 'sr-only' }, _t('Sil'))))),
       refs.tbody));
 
-    refs.subtotal = h('span'); refs.discount = h('span'); refs.total = h('b'); refs.count = h('span', { class: 'muted', style: 'font-size:14px' });
+    refs.subtotal = h('span'); refs.discount = h('span'); refs.lineDisc = h('span'); refs.lineDiscRow = h('div', { class: 'line muted', hidden: true }, h('span', null, _t('Sətir endirimləri')), refs.lineDisc); refs.total = h('b'); refs.count = h('span', { class: 'muted', style: 'font-size:14px' });
     function mbtn(m, label, key) { refs['m_' + m] = h('button', { type: 'button', 'aria-pressed': 'false', onclick: function () { setMethod(m); } }, label, h('small', null, key)); return refs['m_' + m]; }
     refs.panel = h('div', { class: 'card pay-panel hidden' });
     refs.discBtn = h('button', { class: 'btn', onclick: requestDiscount }, _t('Endirim (F4)'));
@@ -418,6 +521,7 @@
       h('aside', { class: 'pos-side', 'aria-label': _t('Ödəniş') },
         h('div', { class: 'card totals' },
           h('div', { class: 'line' }, h('span', null, _t('Ara cəm')), refs.subtotal),
+          refs.lineDiscRow,
           h('div', { class: 'line muted' }, h('span', null, _t('Endirim')), refs.discount),
           h('div', { class: 'grand' }, h('span', null, h('span', { style: 'font-size:18px;font-weight:600' }, _t('Yekun ')), refs.count), refs.total)),
         h('div', { class: 'pay-methods' }, mbtn('cash', _t('Nağd'), 'F1'), mbtn('bank', _t('Bank'), 'F2'), mbtn('mixed', _t('Qarışıq'), 'F3')),
@@ -471,7 +575,8 @@
     if (!st) st = fresh();
     return S.currentShift().then(function (shift) {
       if (!shift) return renderNoShift(el);
-      return (first ? loadCart() : Promise.resolve()).then(function () { build(el); render(); focusScan(); });
+      return S.storeInfo().then(function (store) { if (st) st.caps = R.discountCaps(store); }).catch(function () { /* ilkin hədd */ })
+        .then(function () { return first ? loadCart() : null; }).then(function () { build(el); render(); focusScan(); });
     });
   }
 

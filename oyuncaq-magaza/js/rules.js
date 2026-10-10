@@ -90,15 +90,101 @@
     return !!(list && list.indexOf(perm) !== -1);
   }
 
-  /* ---------- Səbət ---------- */
-  // lines: [{productId, price (qəpik), qty}]
-  function cartTotals(lines, discountPercent) {
-    var subtotal = 0, count = 0;
-    lines.forEach(function (l) { subtotal += l.price * l.qty; count += l.qty; });
-    var discount = discountPercent ? Money.percentOf(subtotal, discountPercent) : 0;
-    return { subtotal: subtotal, discount: discount, total: subtotal - discount, itemCount: count };
+  /* ---------- Endirim ----------
+     Endirim iki yerə tətbiq olunur: ayrıca məhsul sətrinə (hədd: məhsulun "max endirim %"-i) və bütün çekə (hədd: Admin təyin edir, həm faiz, həm məbləğ).
+     Təsvir: {type:'percent', percent} | {type:'amount', amount (qəpik)}. Köhnə çeklərdə yalnız {percent} var: o, faiz sayılır. */
+  var DEFAULT_DISCOUNT_CAPS = { percent: MAX_DISCOUNT_PERCENT, amount: 10000 };      // çek üzrə ilkin hədd: 5% və 100 ₼ (Admin dəyişir)
+  var IMAGE_MAX_CHARS = 12000;                                                       // məhsul şəkli (data URL): hadisə Sheets xanasına (50 000 simvol) sığmalıdır
+  var MAX_LINE_DISCOUNT = 100;
+
+  function discountKind(d) { return d && d.type === 'amount' ? 'amount' : 'percent'; }
+
+  // base: endirimdən əvvəlki məbləğ (qəpik). Endirim heç vaxt base-dən çox olmur.
+  function discountValue(base, d) {
+    if (!d || !(base > 0)) return 0;
+    var v = discountKind(d) === 'amount' ? d.amount : Money.percentOf(base, d.percent);
+    if (!(v > 0)) return 0;
+    return Math.min(v, base);
   }
 
+  // Ortaq yoxlama: faiz 0-dan böyük, məbləğ müsbət tam qəpik olmalıdır
+  function discountShape(d) {
+    if (!d || typeof d !== 'object') return _t('Endirim səhvdir');
+    if (discountKind(d) === 'amount') {
+      if (typeof d.amount !== 'number' || !Number.isInteger(d.amount) || d.amount <= 0) return _t('Endirim məbləği 0-dan böyük olmalıdır');
+    } else if (typeof d.percent !== 'number' || !Number.isFinite(d.percent) || d.percent <= 0) return _t('Endirim faizi 0-dan böyük olmalıdır');
+    return null;
+  }
+
+  // Bir məhsul sətri: gross = qiymət × say. maxPercent — məhsulun icazə verilən ən çox endirim faizi (0 = endirim yoxdur)
+  function validateLineDiscount(gross, d, maxPercent) {
+    var bad = discountShape(d); if (bad) return bad;
+    var max = maxPercent > 0 ? maxPercent : 0;
+    if (!(max > 0)) return _t('Bu məhsula endirim verilmir');
+    var limit = Money.percentOf(gross, max);
+    if (discountKind(d) === 'percent') {
+      if (d.percent > max) return _t('Bu məhsula ən çox {0}% endirim olar', [max]);
+      if (discountValue(gross, d) <= 0) return _t('Endirim çox kiçikdir');
+      return null;
+    }
+    if (d.amount > limit) return _t('Bu sətirə ən çox {0} ₼ endirim olar ({1}%)', [Money.format(limit), max]);
+    return null;
+  }
+
+  // Bütün çek: net — sətir endirimlərindən sonrakı məbləğ. caps: {percent, amount}. Həm faiz, həm məbləğ həddi gözlənilməlidir.
+  function validateReceiptDiscount(net, d, caps) {
+    var bad = discountShape(d); if (bad) return bad;
+    caps = caps || DEFAULT_DISCOUNT_CAPS;
+    if (!(caps.percent > 0) || !(caps.amount > 0)) return _t('Çek üzrə endirim bağlıdır (Admin həddi 0 qoyub)');
+    var value = discountValue(net, d), byPercent = Money.percentOf(net, caps.percent);
+    if (discountKind(d) === 'percent' && d.percent > caps.percent) return _t('Çek üzrə endirim ən çox {0}% ola bilər', [caps.percent]);
+    if (value <= 0) return _t('Endirim çox kiçikdir');
+    if (discountKind(d) === 'amount' && d.amount >= net) return _t('Endirim çekin məbləğindən az olmalıdır');
+    if (value > caps.amount) return _t('Çek üzrə endirim ən çox {0} ₼ ola bilər', [Money.format(caps.amount)]);
+    if (value > byPercent) return _t('Çek üzrə endirim ən çox {0}% ({1} ₼) ola bilər', [caps.percent, Money.format(byPercent)]);
+    return null;
+  }
+
+  // Mağaza ayarlarından çek həddi (səhv/yoxdursa ilkin)
+  function discountCaps(store) {
+    var p = store && store.discountMaxPercent, a = store && store.discountMaxAmount;
+    return {
+      percent: typeof p === 'number' && Number.isFinite(p) && p >= 0 && p <= 100 ? p : DEFAULT_DISCOUNT_CAPS.percent,
+      amount: typeof a === 'number' && Number.isInteger(a) && a >= 0 && a <= 1e10 ? a : DEFAULT_DISCOUNT_CAPS.amount
+    };
+  }
+
+  // Məhsul şəkli: boş və ya kiçik data URL (jpeg/png/webp). Yalnız bu format <img src>-yə verilir.
+  function imageProblem(s) {
+    if (s == null || s === '') return null;
+    if (typeof s !== 'string' || s.length > IMAGE_MAX_CHARS) return _t('Şəkil çox böyükdür');
+    if (!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+\/]+={0,2}$/.test(s)) return _t('Şəkil formatı səhvdir');
+    return null;
+  }
+  function safeImage(s) { return typeof s === 'string' && s !== '' && !imageProblem(s) ? s : ''; }
+
+  function maxDiscountProblem(v) {
+    if (v == null || v === '') return null;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > MAX_LINE_DISCOUNT || Math.round(v * 100) !== v * 100) return _t('Maksimum endirim 0 ilə 100 arasında olmalıdır');
+    return null;
+  }
+
+  /* ---------- Səbət ---------- */
+  // lines: [{price (qəpik), qty, discount (qəpik, sətir endirimi, ixtiyari)}], receiptDiscount: Endirim təsvirinə uyğun, ya da köhnə rəqəm (faiz)
+  function cartTotals(lines, receiptDiscount) {
+    var subtotal = 0, count = 0, lineDiscount = 0;
+    lines.forEach(function (l) {
+      var gross = l.price * l.qty;
+      subtotal += gross; count += l.qty;
+      lineDiscount += Math.min(Math.max(l.discount || 0, 0), gross);
+    });
+    if (typeof receiptDiscount === 'number') receiptDiscount = receiptDiscount ? { type: 'percent', percent: receiptDiscount } : null;
+    var net = subtotal - lineDiscount;
+    var discount = discountValue(net, receiptDiscount);
+    return { subtotal: subtotal, lineDiscount: lineDiscount, discount: discount, total: net - discount, itemCount: count };
+  }
+
+  // Köhnə (yalnız faiz) yoxlama: 5% həddi ilə. Yeni kod validateReceiptDiscount / validateLineDiscount istifadə edir.
   function validateDiscountPercent(p) {
     if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return _t('Endirim faizi 0-dan böyük olmalıdır');
     if (p > MAX_DISCOUNT_PERCENT) return _t('Endirim {0}%-dən çox ola bilməz', [MAX_DISCOUNT_PERCENT]);
@@ -178,11 +264,41 @@
     return Math.max(0, soldQty - (alreadyReturnedQty || 0));
   }
 
-  // Qaytarılacaq pul: sətir endirimi çekin endirim faizi ilə mütənasib çıxılır
+  // Qaytarılacaq pul (köhnə sadə forma: yalnız çek faizi). Yeni kod refundFor istifadə edir.
   function refundAmount(lines, discountPercent) {
     var gross = 0;
     lines.forEach(function (l) { gross += l.price * l.qty; });
     return gross - (discountPercent ? Money.percentOf(gross, discountPercent) : 0);
+  }
+
+  // Çekin hər sətri üçün müştərinin faktiki ödədiyi pul (qəpik): əvvəl sətir endirimi çıxılır, sonra çek endirimi sətirlərə mütənasib bölünür
+  // (qəpik qalıqları ən böyük kəsr qaydası ilə paylanır). Cəm həmişə çekin yekununa bərabərdir.
+  function paidPerLine(sale) {
+    var nets = sale.lines.map(function (l) { return l.price * l.qty - (l.discount || 0); });
+    var D = (sale.totals && sale.totals.discount) || 0, net = nets.reduce(function (a, b) { return a + b; }, 0);
+    if (!(D > 0) || !(net > 0)) return nets;
+    var alloc = [], frac = [], used = 0;
+    nets.forEach(function (n, i) { var exact = n * D / net, fl = Math.floor(exact); alloc.push(fl); frac.push({ i: i, f: exact - fl }); used += fl; });
+    var rest = D - used;
+    frac.sort(function (a, b) { return b.f - a.f || a.i - b.i; });
+    for (var k = 0; rest > 0 && k < frac.length; k++, rest--) alloc[frac[k].i]++;
+    for (k = 0; rest < 0 && k < alloc.length; k++) { var j = alloc.length - 1 - k; if (alloc[j] > 0) { alloc[j]--; rest++; } }
+    return nets.map(function (n, i) { return n - alloc[i]; });
+  }
+
+  // Qaytarma: items [{lineIndex, qty}], prev {lineIndex: əvvəl qaytarılan say}. Hər sətir üçün məbləğ KÜMULYATİV hesablanır:
+  // sətrin bütün sayı qayıdanda cəm dəqiq həmin sətrin ödənişinə bərabər olur (hissə-hissə qaytarmada qəpik itmir).
+  // Qaytarır: {amount, lines: [{lineIndex, refund}]}
+  function refundFor(sale, items, prev) {
+    var paid = paidPerLine(sale), out = [], amount = 0;
+    items.forEach(function (it) {
+      var l = sale.lines[it.lineIndex]; if (!l || !(it.qty > 0)) return;
+      var before = (prev && prev[it.lineIndex]) || 0, after = Math.min(l.qty, before + it.qty);
+      var p = paid[it.lineIndex];
+      var r = (after >= l.qty ? p : Math.round(p * after / l.qty)) - (before >= l.qty ? p : Math.round(p * before / l.qty));
+      out.push({ lineIndex: it.lineIndex, refund: r }); amount += r;
+    });
+    return { amount: amount, lines: out };
   }
 
   /* ---------- Növbə (FR-80) ---------- */
@@ -197,7 +313,8 @@
   function shiftSummary(sales, returns) {
     var s = { count: sales.length, gross: 0, discount: 0, cash: 0, pos: 0, transfer: 0, returns: 0 };
     sales.forEach(function (x) {
-      s.gross += x.totals.subtotal; s.discount += x.totals.discount; s.cash += x.payment.cashPart;
+      // "Endirim" = sətir endirimləri + çek endirimi: satış − endirim − qaytarma həmişə kassanın cəmi ilə uzlaşır
+      s.gross += x.totals.subtotal; s.discount += (x.totals.lineDiscount || 0) + (x.totals.discount || 0); s.cash += x.payment.cashPart;
       if (x.payment.bankPart) s[x.payment.bankType] += x.payment.bankPart;
     });
     returns.forEach(function (r) { s.returns += r.amount; });
@@ -209,8 +326,10 @@
     PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
     AUTH_FORMS: AUTH_FORMS, DEFAULT_AUTH: DEFAULT_AUTH, PASSWORD_MIN: PASSWORD_MIN, passwordProblem: passwordProblem, normalizeAuth: normalizeAuth,
     cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
+    DEFAULT_DISCOUNT_CAPS: DEFAULT_DISCOUNT_CAPS, IMAGE_MAX_CHARS: IMAGE_MAX_CHARS, discountKind: discountKind, discountValue: discountValue, validateLineDiscount: validateLineDiscount,
+    validateReceiptDiscount: validateReceiptDiscount, discountCaps: discountCaps, imageProblem: imageProblem, safeImage: safeImage, maxDiscountProblem: maxDiscountProblem,
     validatePayment: validatePayment, localDate: localDate, returnWindow: returnWindow, returnableQty: returnableQty,
-    refundAmount: refundAmount, expectedCash: expectedCash, shiftSummary: shiftSummary
+    refundAmount: refundAmount, paidPerLine: paidPerLine, refundFor: refundFor, expectedCash: expectedCash, shiftSummary: shiftSummary
   };
   root.Rules = Rules;
   if (typeof module !== 'undefined') module.exports = Rules;

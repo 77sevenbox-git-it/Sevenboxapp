@@ -7,7 +7,7 @@
   var DB = root.DB, Rules = root.Rules;
   var EPOCH = '1970-01-01T00:00:00.000Z';
   var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'supplierPays', 'meta', 'audit'];
-  var MASTER_FIELDS = ['name', 'category', 'brand', 'ageGroup', 'mfrBarcode', 'price', 'minStock', 'active'];
+  var MASTER_FIELDS = ['name', 'category', 'brand', 'ageGroup', 'mfrBarcode', 'price', 'minStock', 'active', 'image', 'maxDiscount'];
 
   // Outbox id-sindən audit id-sini çıxarır: yeni "vaxt_000123_a_uuid" və köhnə "vaxt_a_uuid" formatı
   function auditIdOf(eventId) {
@@ -311,7 +311,8 @@
 
   function masterOk(a) {                       // product.updated.after / product.created.product ortaq sahələri (olan sahələr yoxlanır)
     return isObj(a) && (!('name' in a) || nameOk(a.name, 200)) && oS(a, 'category', 200) && oS(a, 'brand', 200) && oS(a, 'ageGroup', 200) && oS(a, 'mfrBarcode', 500) &&
-      (!('price' in a) || iOk(a.price, 0, MONEY_MAX)) && oI(a, 'minStock', 0, QTY_MAX) && oB(a, 'active');
+      (!('price' in a) || iOk(a.price, 0, MONEY_MAX)) && oI(a, 'minStock', 0, QTY_MAX) && oB(a, 'active') &&
+      !Rules.imageProblem(a.image) && !Rules.maxDiscountProblem(a.maxDiscount);        // şəkil yalnız kiçik data URL; saxta hadisə <img src>-yə başqa şey qoya bilməz
   }
   // "p1$" ilə başlayan hash şifrə (PBKDF2) formasıdır: təkrar sayı ağlabatan olmalıdır (saxta hadisə ilə milyardlıq təkrar sayı bütün cihazları dondura bilməz)
   function hashOk(h) {
@@ -347,18 +348,21 @@
     },
     'sale.created': function (d) {
       var s = d.sale; if (!isObj(s) || !idOk(s.id) || !iOk(s.receiptNo, 0, 1e9) || !sOk(s.at, 40) || !oS(s, 'shiftId', 120) || !oS(s, 'cashierId', 120) || !oS(s, 'cashierName', 80) || !(s.receiptBarcode == null || eanOk(s.receiptBarcode))) return false;
-      if (!arr(s.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX) && oN(l, 'unitCost', 0, MONEY_MAX) && oS(l, 'storeBarcode', 40); })) return false;
+      if (!arr(s.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX) && oN(l, 'unitCost', 0, MONEY_MAX) && oS(l, 'storeBarcode', 40) &&
+        oN(l, 'discount', 0, MONEY_MAX) && oN(l, 'discountPercent', 0, 100) && oS(l, 'discountBy', 120); })) return false;
       var t = s.totals, p = s.payment;
-      if (!isObj(t) || !nOk(t.subtotal, 0, MONEY_MAX) || !nOk(t.total, 0, MONEY_MAX) || !oN(t, 'discount', 0, MONEY_MAX)) return false;
+      if (!isObj(t) || !nOk(t.subtotal, 0, MONEY_MAX) || !nOk(t.total, 0, MONEY_MAX) || !oN(t, 'discount', 0, MONEY_MAX) || !oN(t, 'lineDiscount', 0, MONEY_MAX)) return false;
       if (!isObj(p) || ['cash', 'bank', 'mixed'].indexOf(p.method) === -1 || (p.bankType != null && p.bankType !== 'pos' && p.bankType !== 'transfer')) return false;
       if (!oN(p, 'cashPart', 0, MONEY_MAX) || !oN(p, 'bankPart', 0, MONEY_MAX) || !oN(p, 'cashReceived', 0, MONEY_MAX) || !oN(p, 'change', 0, MONEY_MAX)) return false;
-      if (s.discount != null && !(isObj(s.discount) && nOk(s.discount.percent, 0, 100) && oS(s.discount, 'approvedByName', 80) && oS(s.discount, 'approvedBy', 120))) return false;
+      // çek endirimi: faiz (köhnə çeklərdə type yoxdur) və ya məbləğ
+      if (s.discount != null && !(isObj(s.discount) && oN(s.discount, 'percent', 0, 100) && oN(s.discount, 'amount', 0, MONEY_MAX) && (s.discount.type == null || s.discount.type === 'percent' || s.discount.type === 'amount') &&
+        oS(s.discount, 'approvedByName', 80) && oS(s.discount, 'approvedBy', 120))) return false;
       return s.fiscal == null || (isObj(s.fiscal) && oS(s.fiscal, 'status', 40) && (s.fiscal.id == null || sOk(s.fiscal.id, 120)));
     },
     'return.created': function (d) {
       var r = d.ret; return isObj(r) && idOk(r.id) && oS(r, 'saleId', 120) && sOk(r.at, 40) && nOk(r.amount, 0, MONEY_MAX) && oN(r, 'cashAmount', 0, MONEY_MAX) && oN(r, 'bankAmount', 0, MONEY_MAX) && (r.bankType == null || r.bankType === 'pos' || r.bankType === 'transfer') &&
         oS(r, 'reason', 500) && oS(r, 'approvedByName', 80) && oS(r, 'userId', 120) &&
-        arr(r.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX); });
+        arr(r.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX) && oN(l, 'refund', 0, MONEY_MAX); });
     },
     'shift.opened': function (d) { return shiftOk(d.shift); },
     'shift.closed': function (d) { return shiftOk(d.shift); },

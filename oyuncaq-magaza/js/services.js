@@ -90,7 +90,12 @@
 
   // Audit və outbox eyni tranzaksiyada yazılır ki, biri olub digəri olmasın.
   // Outbox id-si: vaxt + artan say + audit id → eyni millisaniyədə də sıra pozulmur (məs. məhsul → mal qəbulu).
+  // Hadisə Sheets-in bir xanasına sığmalıdır (50 000 simvol). Sığmayanı server qəbul edib işarələyir, amma digər cihazlar onu görməzdi —
+  // ona görə əməliyyat YAZILMADAN rədd edilir (tranzaksiya geri qaytarılır) və istifadəçiyə bölməyi deyilir.
+  var EVENT_MAX_CHARS = 45000;
   function log(t, type, data, user, at) {
+    var size = JSON.stringify(data == null ? {} : data).length;
+    if (size > EVENT_MAX_CHARS) return Promise.reject(err(_t('Əməliyyat çox böyükdür ({0} simvol, ən çoxu {1}). Daha kiçik hissələrə bölün', [size, EVENT_MAX_CHARS]), 'event_too_big'));
     var ts = at || now();
     var entry = { id: DB.uid('a'), at: ts, type: type, userId: user ? user.id : null, userName: user ? user.name : null, data: data };
     evCounter = (evCounter + 1) % 1000000;
@@ -548,7 +553,12 @@
 
   function validateProductInput(d) {
     if (!d.name || !String(d.name).trim()) return _t('Məhsulun adı boşdur');
+    if (String(d.name).trim().length > 200) return _t('Ad 200 simvoldan uzun ola bilməz');         // digər cihazlar 200-dən uzun adlı hadisəni rədd edir
     if (d.price == null || d.price <= 0) return _t('Satış qiyməti 0-dan böyük olmalıdır');
+    var md = Rules.maxDiscountProblem(d.maxDiscount); if (md) return md;
+    var im = Rules.imageProblem(d.image); if (im) return im;
+    if (['category', 'brand', 'ageGroup'].some(function (k) { return String(d[k] || '').length > 200; })) return _t('Kateqoriya, marka və yaş qrupu 200 simvoldan uzun ola bilməz');
+    if (String(d.mfrBarcode || '').length > 500) return _t('İstehsalçı barkodu 500 simvoldan uzun ola bilməz');
     if (d.mfrBarcode) {
       // İstehsalçı barkodunun uzunluğu/formatı məhdudlaşdırılmır (EAN, UPC, Code128, hərf-rəqəm). Yalnız öz barkodlarımızla qarışmasın.
       if (/\s/.test(d.mfrBarcode)) return _t('İstehsalçı barkodunda boşluq ola bilməz');
@@ -574,7 +584,8 @@
               id: DB.uid('p'), name: String(d.name).trim(), category: d.category || '', brand: d.brand || '', ageGroup: d.ageGroup || '',
               storeBarcode: Barcode.storeBarcode(seq), mfrBarcode: d.mfrBarcode || '',
               price: d.price, lastCost: d.cost || 0, avgCost: d.cost || 0, stock: 0, negSalesSinceReceipt: 0,
-              minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id
+              minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id,
+              image: d.image || '', maxDiscount: d.maxDiscount || 0         // maxDiscount: bu məhsula kassada verilə bilən ən çox endirim, % (0 = endirim yoxdur)
             };
             p.updatedAt = EPOCH; p.updatedDev = '';       // yaradılma "son yazan qalib" müqayisəsində iştirak etmir: istənilən dəyişiklik ondan sonra gəlir (cihaz saatları fərqli olsa da)
             return t.put('products', p)
@@ -598,9 +609,14 @@
             var next = Object.assign({}, p);
             ['name', 'category', 'brand', 'ageGroup', 'minStock', 'active'].forEach(function (k) { if (k in changes) next[k] = changes[k]; });
             if ('mfrBarcode' in changes) next.mfrBarcode = changes.mfrBarcode || '';
+            if ('image' in changes) next.image = changes.image || '';
             if ('price' in changes && changes.price !== p.price) {
               if (!canPrice) throw err(_t('Satış qiymətini yalnız Menecer və Admin təyin edir'));
               next.price = changes.price;
+            }
+            if ('maxDiscount' in changes && (changes.maxDiscount || 0) !== (p.maxDiscount || 0)) {
+              if (!canPrice) throw err(_t('Maksimum endirimi yalnız Menecer və Admin təyin edir'));      // qiymət kimi: kassir öz endirim həddini artıra bilməz
+              next.maxDiscount = changes.maxDiscount || 0;
             }
             var v = validateProductInput(next); if (v) throw err(v);
             var at = nowAfter(p.updatedAt);       // yenilənmə vaxtı hadisənin vaxtı ilə eynidir: bütün cihazlar eyni "son yazan"ı seçir
@@ -611,7 +627,11 @@
               return t.put('products', next);
             }).then(function () {
               if (next.price !== p.price) return t.put('priceHistory', { id: DB.uid('ph'), productId: id, type: 'sale', old: p.price, new: next.price, userId: user.id, at: now() });
-            }).then(function () { return log(t, 'product.updated', { id: id, before: p, after: next }, user, at); })
+            }).then(function () {
+              // "before"-da şəkil yoxdur: hadisə Sheets xanasına (50 000 simvol) sığmalıdır, şəkil "after"-dədir
+              var before = Object.assign({}, p); if (before.image) before.image = 'img';
+              return log(t, 'product.updated', { id: id, before: before, after: next }, user, at);
+            })
               .then(function () { return { product: next, warnings: warnings }; });
           });
         });
@@ -1064,19 +1084,20 @@
   /* ---------- Satış ---------- */
   // Çekin hadisəsi Google Sheets-in bir xanasına (ən çox 50 000 simvol) yazılır: 100 sətir ən pis halda ~37 000 simvol edir
   var MAX_CART_LINES = 100;
-  // cart: [{productId, qty}], discount: {percent, approvedBy}|null, payment: rules.validatePayment girişi
+  // cart: [{productId, qty, discount?}] — sətir endirimi {type:'percent', percent}|{type:'amount', amount}, hər ikisində approvedBy (təsdiqləyən istifadəçi)
+  // discount: bütün çek üçün eyni formada endirim|null (köhnə forma {percent, approvedBy} da qəbul olunur), payment: rules.validatePayment girişi
+  // Hədləri DƏQİQ burada yoxlayırıq (ekrana etibar yoxdur): sətir üçün məhsulun max endirimi, çek üçün Admin həddi (həm faiz, həm məbləğ).
   function checkout(cart, discount, payment) {
     return requirePerm('pos.sell').then(function (user) {
       if (!cart.length) throw err(_t('Çek boşdur'));
       if (cart.length > MAX_CART_LINES) throw err(_t('Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün', [MAX_CART_LINES]), 'cart_too_big');
-      if (discount) {
-        var dv = Rules.validateDiscountPercent(discount.percent); if (dv) throw err(dv);
-        if (!discount.approvedBy) throw err(_t('Endirim menecer tərəfindən təsdiqlənməyib'));
-      }
+      if (discount && !discount.approvedBy) throw err(_t('Endirim menecer tərəfindən təsdiqlənməyib'));
+      cart.forEach(function (c) { if (c.discount && !c.discount.approvedBy) throw err(_t('Endirim menecer tərəfindən təsdiqlənməyib')); });
       return currentShift().then(function (shift) {
         if (!shift) throw err(_t('Satış üçün növbəni açın'));
         return DB.atomic(['products', 'sales', 'meta', 'stockMoves', 'audit', 'outbox'], function (t) {
-          return Promise.all(cart.map(function (c) { return t.get('products', c.productId); })).then(function (products) {
+          return Promise.all(cart.map(function (c) { return t.get('products', c.productId); }).concat([t.get('meta', 'store')])).then(function (got) {
+            var storeMeta = got.pop(), products = got, caps = Rules.discountCaps(storeMeta && storeMeta.value);
             var lines = [];
             var negatives = [];
             for (var i = 0; i < cart.length; i++) {
@@ -1086,9 +1107,23 @@
               var chk = Rules.negativeStockCheck(p, cart[i].qty);
               if (chk.blocked) throw err(_t('"{0}" qalığı yoxdur və artıq {1} mənfi çekdə satılıb. Mal qəbulu daxil edin', [p.name, Rules.NEGATIVE_SALE_LIMIT]), 'negative_blocked');
               if (chk.needsNegative) negatives.push(p.id);
-              lines.push({ productId: p.id, name: p.name, storeBarcode: p.storeBarcode, price: p.price, qty: cart[i].qty, unitCost: p.avgCost, negative: chk.needsNegative });
+              var line = { productId: p.id, name: p.name, storeBarcode: p.storeBarcode, price: p.price, qty: cart[i].qty, unitCost: p.avgCost, negative: chk.needsNegative };
+              var cd = cart[i].discount;
+              if (cd) {
+                var gross = p.price * cart[i].qty, lv = Rules.validateLineDiscount(gross, cd, p.maxDiscount || 0);
+                if (lv) throw err(_t('"{0}": {1}', [p.name, lv]), 'discount');
+                line.discount = Rules.discountValue(gross, cd);
+                if (Rules.discountKind(cd) === 'percent') line.discountPercent = cd.percent;
+                line.discountBy = cd.approvedBy.id;
+              }
+              lines.push(line);
             }
-            var totals = Rules.cartTotals(lines, discount ? discount.percent : 0);
+            var rd = null;                                                   // çek endirimi: normallaşdırılmış təsvir
+            if (discount) {
+              rd = Rules.discountKind(discount) === 'amount' ? { type: 'amount', amount: discount.amount } : { type: 'percent', percent: discount.percent };
+              var rv = Rules.validateReceiptDiscount(Rules.cartTotals(lines, null).total, rd, caps); if (rv) throw err(rv, 'discount');
+            }
+            var totals = Rules.cartTotals(lines, rd);
             var pay = Rules.validatePayment(Object.assign({}, payment, { total: totals.total }));
             if (!pay.ok) throw err(pay.error, 'payment');
             pay.method = payment.method; pay.bankType = payment.method === 'cash' ? null : payment.bankType;
@@ -1097,7 +1132,7 @@
               var sale = {
                 id: DB.uid('s'), receiptNo: no, receiptBarcode: Barcode.receiptBarcode(no), at: now(), shiftId: shift.id,
                 cashierId: user.id, cashierName: user.name, lines: lines, totals: totals,
-                discount: discount ? { percent: discount.percent, approvedBy: discount.approvedBy.id, approvedByName: discount.approvedBy.name } : null,
+                discount: rd ? Object.assign({}, rd, { approvedBy: discount.approvedBy.id, approvedByName: discount.approvedBy.name }) : null,
                 payment: pay, offline: !!(root.navigator && root.navigator.onLine === false),
                 fiscal: { id: null, status: 'disabled' } // e-kassa modulu söndürülüb (FR-66, FR-67)
               };
@@ -1142,9 +1177,21 @@
     });
   }
 
+  // Eyni sətir bir neçə dəfə göndərilsə sayları toplanır: yoxsa hər biri ayrıca yoxlanıb satılandan çox qaytarmaq olardı
+  function mergeReturnItems(items) {
+    var by = {}, out = [];
+    (items || []).forEach(function (it) {
+      if (!it || !it.qty) return;
+      if (by[it.lineIndex]) { by[it.lineIndex].qty += it.qty; return; }
+      by[it.lineIndex] = { lineIndex: it.lineIndex, qty: it.qty }; out.push(by[it.lineIndex]);
+    });
+    return out;
+  }
+
   // items: [{lineIndex, qty}]
   // Qaytarma sayının yoxlanması (menecer təsdiqindən ƏVVƏL çağırılır): satılandan və əvvəl qaytarılandan çox ola bilməz
   function validateReturn(saleId, items) {
+    items = mergeReturnItems(items);
     return Promise.all([DB.get('sales', saleId), returnedQtyBySale(saleId)]).then(function (r) {
       var sale = r[0], prev = r[1];
       if (!sale) throw err(_t('Çek tapılmadı'));
@@ -1168,6 +1215,7 @@
   function createReturn(saleId, items, approver, reason) {
     return requirePerm('pos.return.request').then(function (user) {
       if (!approver) throw err(_t('Qaytarma menecer təsdiqi tələb edir'));
+      items = mergeReturnItems(items);
       return Promise.all([DB.get('sales', saleId), returnedQtyBySale(saleId), currentShift()]).then(function (r) {
         var sale = r[0], prev = r[1], shift = r[2];
         if (!sale) throw err(_t('Çek tapılmadı'));
@@ -1184,7 +1232,10 @@
           lines.push({ lineIndex: it.lineIndex, productId: l.productId, name: l.name, price: l.price, qty: it.qty });
         });
         if (!lines.length) throw err(_t('Qaytarılacaq məhsul seçin'));
-        var amount = Rules.refundAmount(lines, sale.discount ? sale.discount.percent : 0);
+        // Pul: sətir endirimi və çek endirimi nəzərə alınır; hissə-hissə qaytarmada cəm dəqiq həmin sətrin ödənişinə bərabər çıxır
+        var rf = Rules.refundFor(sale, lines.map(function (l) { return { lineIndex: l.lineIndex, qty: l.qty }; }), prev.map);
+        lines.forEach(function (l, i) { l.refund = rf.lines[i].refund; });
+        var amount = rf.amount;
         // Pul ilkin üsulla: əvvəlcə nağd hissəyə qədər nağd, qalanı banka
         var cashLeft = Math.max(0, sale.payment.cashPart - prev.cashRefunded);
         var cashAmount = Math.min(amount, cashLeft);
@@ -1226,15 +1277,20 @@
     });
   }
 
+  // info mövcud ayarların ÜSTÜNƏ yazılır (yalnız verilən sahələr dəyişir): mağaza adı formu endirim hədlərini, hədd formu isə mağaza adını silməsin
   function setStoreInfo(info) {
     return requirePerm('admin.users').then(function (user) {
+      var p = info.discountMaxPercent, a = info.discountMaxAmount;
+      if (p != null && !(typeof p === 'number' && Number.isFinite(p) && p >= 0 && p <= 100)) throw err(_t('Endirim faizi 0 ilə 100 arasında olmalıdır'));
+      if (a != null && !(typeof a === 'number' && Number.isInteger(a) && a >= 0 && a <= 1e9)) throw err(_t('Endirim məbləği səhvdir'));
       var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
         return t.get('meta', 'store').then(function (cur) {
+          var merged = Object.assign({}, cur && cur.value, info);
           // Dəyişiklik yoxdursa hadisə yaranmır: yoxsa təzə qoşulan cihaz ilkin mətnləri bütün cihazlara yazıb mağaza adını silərdi
-          if (cur && JSON.stringify(cur.value) === JSON.stringify(info)) return { unchanged: true };
-          return t.put('meta', { key: 'store', value: info }).then(function () { return t.put('meta', { key: 'storeAt', value: at }); })
-            .then(function () { return log(t, 'admin.store_changed', { store: info }, user, at); });
+          if (cur && JSON.stringify(cur.value) === JSON.stringify(merged)) return { unchanged: true };
+          return t.put('meta', { key: 'store', value: merged }).then(function () { return t.put('meta', { key: 'storeAt', value: at }); })
+            .then(function () { return log(t, 'admin.store_changed', { store: merged }, user, at); });
         });
       });
     });
@@ -1333,8 +1389,53 @@
 
   function listConflicts() { return DB.get('meta', 'conflicts').then(function (m) { return m ? m.value : []; }); }
 
+  function bySaleTime(a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : b.receiptNo - a.receiptNo; }
   function recentSales(limit) {
-    return DB.getAll('sales').then(function (s) { return s.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : b.receiptNo - a.receiptNo; }).slice(0, limit || 50); });
+    return DB.getAll('sales').then(function (s) { return s.sort(bySaleTime).slice(0, limit || 50); });
+  }
+
+  // Axtarış üçün: kiçik hərf, "İ"/"ı" → "i" (Azərbaycan və Türk yazısında klaviatura fərqləri axtarışı pozmasın)
+  function fold(x) { return String(x == null ? '' : x).toLowerCase().replace(/̇/g, '').replace(/ı/g, 'i'); }
+  function pad2(n) { return ('0' + n).slice(-2); }
+
+  // Bir axtarış sözü bir çekə uyğundurmu? Söz bunlardan biri ola bilər: kassir adı, məhsul adı, çek nömrəsi, çek və ya məhsul barkodu,
+  // tarix (gg.aa.iiii · gg.aa · aa.iiii · iiii-aa-gg), çekin yekun məbləği (45 · 45,5 · 45.50).
+  function tokenTest(tok) {
+    var digits = /^\d+$/.test(tok), amount = /^\d+([.,]\d{1,2})?$/.test(tok) ? Money.parse(tok) : null, m, day = null, dayPart = null, month = null;
+    if ((m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(tok))) day = m[3] + '-' + pad2(m[2]) + '-' + pad2(m[1]);
+    else if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(tok))) day = m[1] + '-' + pad2(m[2]) + '-' + pad2(m[3]);
+    else if ((m = /^(\d{1,2})\.(\d{1,2})$/.exec(tok))) dayPart = '-' + pad2(m[2]) + '-' + pad2(m[1]);     // gg.aa (məbləğ kimi də oxuna bilər: ikisinə də baxılır)
+    else if ((m = /^(\d{1,2})\.(\d{4})$/.exec(tok))) month = m[2] + '-' + pad2(m[1]);
+    var no = digits ? parseInt(tok, 10) : null;
+    return function (s, text, codes) {
+      if (text.indexOf(tok) !== -1) return true;
+      if (tok.length >= 6 && codes.indexOf(tok) !== -1) return true;                   // barkod (çek və ya məhsul): qısa rəqəm tikələri təsadüfi uyğunlaşır, ona görə uzunluq tələb olunur
+      if (no != null && s.receiptNo === no) return true;
+      if (amount != null && s.totals.total === amount) return true;
+      if (day || dayPart || month) {
+        var d = Rules.localDate(s.at);
+        if (day && d === day) return true;
+        if (dayPart && d.slice(4) === dayPart) return true;
+        if (month && d.slice(0, 7) === month) return true;
+      }
+      return false;
+    };
+  }
+
+  // query: boşluqla ayrılmış sözlər, HAMISI uyğun gəlməlidir. Qaytarır: {list: ən yeni əvvəl (ən çox limit), total: uyğun gələn çek sayı}
+  function searchSales(query, limit) {
+    var tokens = fold(query).split(/\s+/).filter(Boolean);
+    limit = limit || 100;
+    return DB.getAll('sales').then(function (all) {
+      var tests = tokens.map(tokenTest);
+      var hit = !tests.length ? all : all.filter(function (s) {
+        var text = fold(s.cashierName + ' ' + s.lines.map(function (l) { return l.name; }).join(' '));
+        var codes = (s.receiptBarcode || '') + ' ' + s.lines.map(function (l) { return l.storeBarcode || ''; }).join(' ');
+        return tests.every(function (fn) { return fn(s, text, codes); });
+      });
+      hit.sort(bySaleTime);
+      return { list: hit.slice(0, limit), total: hit.length };
+    });
   }
   function outboxCount() { return DB.getAll('outbox').then(function (o) { return o.length; }); }
 
@@ -1354,7 +1455,7 @@
   }
 
   var Services = {
-    MAX_CART_LINES: MAX_CART_LINES,
+    MAX_CART_LINES: MAX_CART_LINES, EVENT_MAX_CHARS: EVENT_MAX_CHARS,
     init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin, changeCredential: changeCredential,
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
@@ -1362,7 +1463,7 @@
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
-    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
+    recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, setClockOffset: setClockOffset, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session

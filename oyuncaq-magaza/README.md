@@ -5,7 +5,7 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
 ## Bu mərhələdə nə var
 
 - **Kassa (variant A):** mağaza barkodu ilə satış; istehsalçı barkodu kassada qəbul olunmur. Nağd / Bank (POS kart, karta köçürmə) / Qarışıq ödəniş, qaytarılacaq məbləğ avtomatik. 80 mm çek, çek barkodu ilə.
-- **Endirim:** ≤ 5%, menecer PIN-i ilə təsdiq. **Mənfi qalıq:** xəbərdarlıq, mal qəbuluna qədər max 2 çek, 3-cüdə blok.
+- **Endirim:** məbləğlə və ya faizlə; məhsula (sətrə) və ya bütün çeke; hədləri məhsul/Admin təyin edir (aşağıda «Məhsul şəkli və endirim»). Hər endirim menecer PIN-i/şifrəsi ilə təsdiq olunur. **Mənfi qalıq:** xəbərdarlıq, mal qəbuluna qədər max 2 çek, 3-cüdə blok.
 - **Qaytarma:** çek barkodu ilə, 14 təqvim günü (Bakı vaxtı), say limiti, menecer təsdiqi, qaytarma çeki.
 - **Növbə:** açılış, mədaxil/məxaric, Z hesabatı, kassa fərqi + izah.
 - **Məhsullar:** avtomatik EAN-13 mağaza barkodu ("20" prefiksi), etiket çapı, sadə mal qəbulu, orta çəkili maya.
@@ -40,11 +40,11 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
   - Server kodu (Code.gs v6) xarici xidmətə sorğu göndərir (`UrlFetchApp`): `setup()` işlədəndə Google yeni icazə istəyir ("Connect to an external service"). Apps Script layihəsində V8 runtime olmalıdır (yeni layihələrdə defoltdur; BigInt lazımdır). Xüsusi (private) VAPID açarı Script properties-də qalır, cihaza göndərilmir; `PUSH_CONTACT` property-sini (məs. `mailto:siz@firma.az`) istəsəniz yazın.
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.
 - **Çoxcihazlı sinxron (iki istiqamətli):** hər brauzer/cihaz öz lokal nüsxəsi ilə işləyir; hadisələr Google Sheets-ə yazılır və digər cihazlara paylanır. İstifadəçilər/PIN-lər, məhsullar, qalıq, çeklər, qaytarmalar, növbə, icazələr, mağaza məlumatı və təsdiq sorğuları cihazlar arasında eynidir.
-- **Backend:** `apps-script/Code.gs` (v6: bildiriş; v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
+- **Backend:** `apps-script/Code.gs` (v8: şəkil/endirim sütunları, böyük hadisə və çatışmayan sütun qorunması; v7: arxiv; v6: bildiriş; v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
 
 ## Hələ yoxdur (növbəti mərhələlər)
 
-Tam mal qəbulu sənədi və təchizatçı borcu (ödənişlər), digər hesabatlar, inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
+Tam mal qəbulu sənədi, təchizatçıya mal qaytarma (kredit-nota), digər hesabatlar, inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
 
 ## İşə salmaq
 
@@ -103,9 +103,23 @@ Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında h
 - **Məhdudiyyət:** siyasət də, istifadəçi hash-ı da digər admin hadisələri kimi token etibarına əsaslanır; tokeni bilən şəxs saxta hadisə göndərə bilər (RİSK-2). Şifrə yalnız oflayn sındırmanı çətinləşdirir (RİSK-1 yalnız şifrəli rollar üçün azalır; PIN rolları 4–8 rəqəm olduğu üçün hələ saniyələrdə tapılır).
 - Code.gs-i yeniləyəndən sonra `setup()` işlədin (yeni `Users.cred` sütunu) və yeni versiya dərc edin.
 
+## Məhsul şəkli və endirim
+**Şəkil.** Məhsul formasında «Şəkil çək» (telefonda kamera) və ya «Qalereyadan». Şəkil brauzerdə 96×96 JPEG-ə kiçildilir (təxminən 3–8 KB), məhsulla birlikdə bütün cihazlara yayılır və kassada məhsul sətrinin **solunda** ikon kimi görünür (məhsullar siyahısında da). **Çekdə şəkil çıxmır** (çap qaydası şəkilləri gizlədir). Şəkil Sheets-in `Products` vərəqinə yazılmır (yalnız hadisələrdə qalır), yəni cədvəli şişirtmir. Şəkli dəyişmək/silmək üçün `product.edit` icazəsi kifayətdir.
+
+**Endirim.** Kassada «Endirim» basanda əvvəl **nəyə** seçilir: *Məhsula* (sətir seçilir) və ya *Bütün çeke*; sonra növ: **faiz** və ya **məbləğ (₼)**.
+- **Məhsula:** hədd məhsul açılanda/yaradılanda «Maksimum endirim, %» sahəsində yazılır (ilkin **0** = bu məhsula endirim verilmir). Faiz endirimi sətrin cəminə (qiymət × say) tətbiq olunur; məbləğ endirimi də **bütün sətrin** cəmindən çıxılır (1 ədəddən deyil), ona görə hədd sətrin cəminə görə yoxlanır. Həddi dəyişmək qiymət təyin etmək icazəsi (`product.price.set`: Menecer, Admin) tələb edir: kassir öz həddini artıra bilməz.
+- **Bütün çeke:** ilkin **5%** və **100 ₼**; hər ikisini Admin dəyişir (İcazələr → «Çek üzrə endirim həddi»). **İki hədd də eyni vaxtda** qüvvədədir: endirim həm faizdən, həm məbləğdən çox ola bilməz (məs. 3 000 ₼-lıq çekdə 5% = 150 ₼ olsa da 100 ₼ həddi işləyir). Hədd 0 yazılsa çek endirimi bağlanır. Çek endirimi sətir endirimlərindən **sonrakı** məbləğə tətbiq olunur.
+- Hər endirim menecer təsdiqi ilə verilir (PIN/şifrə və ya menecerə sorğu). Hədlər yalnız ekranda deyil, satış xidmətində (`checkout`) də yoxlanılır. **Məhdudiyyət:** başqa cihazdan gələn satış hadisəsinin endirimi yalnız forma baxımından (tip, aralıq) yoxlanır, hədlə müqayisə olunmur; tokeni bilən şəxs saxta endirimli çek yaza bilər (bu, RİSK-5 ilə eyni token-etibar sinfindəndir).
+- Qaytarmada hər sətrin qaytarılan məbləği həmin sətrin **faktiki ödənilən** payına görə hesablanır (sətir və çek endirimləri nəzərə alınır; yuvarlaqlaşdırma fərqi sonuncu qaytarmaya düşür, cəm çekdən artıq olmur). Növbə (Z) hesabatında «Endirim» sətir + çek endirimlərinin cəmidir. Çekdə hər sətrin endirimi və «Sətir endirimləri» cəmi göstərilir.
+- Sheets: `Sales`-də `lineDiscount`, `discountType`; `SaleLines`-də `discount`, `discountPercent`; `Products`-da `maxDiscount` (məbləğlər ₼-la).
+
+**Çeklər ekranı.** Axtarış sahəsi çek nömrəsi, çek barkodu, məhsul barkodu, kassir, məhsul adı, məbləğ və tarixi (gün, `10.10`, `10.2026`, `10.10.2026`) bir yerdə axtarır; bir neçə söz yazanda hamısı uyğun olmalıdır (VƏ). Hər çekdə **«Yenidən çap et»** düyməsi var (əvvəlki «dublikat»); belə çekdə «YENİDƏN ÇAP» yazısı çıxır və əməliyyat auditə düşür (`receipt.reprinted`). Axtarış cihazın yerli bazasındandır: arxivə köçürülmüş köhnə çeklər burada yoxdur (bax: Arxivləşdirmə).
+
+**Sinxronun qorunması (Code.gs v8).** Sheets bir xanaya ən çox 50 000 simvol qəbul edir və aşanda **bütün yazma sorğusunu** rədd edir; bu, cihazın göndərmə növbəsini həmişəlik ilişdirə bilərdi. İndi: (1) cihaz 45 000 simvoldan böyük əməliyyatı **yazmır** (geri qaytarılır, «Əməliyyat çox böyükdür… bölün»); ən böyük mümkün çek (100 sətir, 200 simvollu adlar, hamısına endirim) ~42 000 simvoldur, sığır; (2) server yenə də sığmayan hadisəni qəbul edir (növbə ilişmir), `Events`-də `{"_tooBig":N}` işarəsi qalır və `Audit`-də `server.event_too_big` yazılır — belə hadisəni **digər cihazlar almır**, ona görə bu qeydə rast gəlsəniz əməliyyatı əl ilə yoxlayın; (3) `setup()` işlədilməyibsə və vərəqdə yeni sütunlar yoxdursa, server sütunları və başlığı özü əlavə edir, yazı ilişmir. Məhsulun kateqoriya/marka/yaş qrupu ≤ 200, istehsalçı barkodu ≤ 500 simvoldur.
+
 ## Arxivləşdirmə (Google Sheets 10 milyon xana həddi)
 
-**Problem.** Google Sheets bir faylda 10 milyon xanaya icazə verir və **boş xanaları da sayır** (vərəqin şəbəkə ölçüsü: sətir × sütun, yeni vərəq 1000 × 26 gəlir). Hər çek `Events` (7 xana), `Sales` (20) və `SaleLines` (hər sətir 10) vərəqlərinə yazılır, ona görə ~50 xana/çek. Dolanda Sheets yazını rədd edir və sinxron dayanır. Hesab (gündə 300 çek): v7-dən əvvəl (26 sütunluq vərəqlər) ~9–10 ay, v7-nin sütun/sətir kəsməsi ilə ~1,5 il, arxivləşdirmə ilə **məhdudiyyətsiz** (canlı cədvəldə yalnız son 45 gün qalır: ~0,7 milyon xana, həddin 7%-i).
+**Problem.** Google Sheets bir faylda 10 milyon xanaya icazə verir və **boş xanaları da sayır** (vərəqin şəbəkə ölçüsü: sətir × sütun, yeni vərəq 1000 × 26 gəlir). Hər çek `Events` (7 xana), `Sales` (22) və `SaleLines` (hər sətir 12) vərəqlərinə yazılır, ona görə orta 3 sətirli çek ~65 xana. Dolanda Sheets yazını rədd edir və sinxron dayanır. Hesab (gündə 300 çek, ~19 500 xana/gün): v7-dən əvvəl (26 sütunluq vərəqlər) ~9–10 ay, v7-nin sütun/sətir kəsməsi ilə təxminən **1,3–1,4 il**, arxivləşdirmə ilə məhdudiyyətsiz (canlı cədvəldə yalnız son 45 gün qalır: ~0,9 milyon xana, həddin ~9%-i). Bunlar hesablamadır, real faylda ölçülməyib: Admin kartındakı «Cədvəl tutumu» faizinə baxın.
 
 **Nə vaxt.** Admin → İcazələr → **Arxiv** kartında "Cədvəl tutumu" göstərilir. Tutum **60%-ə** çatanda və ya ən azı ildə bir dəfə arxivləşdirin. 70%-dən yuxarıda Admin girişdə xəbərdarlıq alır. Yalnız **iş saatından sonra** edin: 1–5 dəqiqə ərzində digər cihazların sinxronu "Server məşğuldur" alıb özü təkrar cəhd edir (kassa satışı isə yerli işləyir, itki yoxdur).
 
@@ -129,6 +143,8 @@ Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında h
 - Köhnə satışları Sheets-də `Sales` vərəqində yox, arxiv faylında axtarın (tətbiqdəki "Çeklər" cihazın yerli bazasındandır və dəyişmir).
 - Real Google Sheets/Drive-da yoxlanılmayıb: məntiq Code.gs-i işlədən təqlidlə (`tests/archive.test.js`) yoxlanılıb. İlk dəfə **test nüsxəsində** edin və Execution log-a baxın. Böyük faylda `copy()` bir neçə dəqiqə çəkə bilər (Apps Script limiti 6 dəq; keçərsə heç nə silinmir, boşa nüsxə faylı qala bilər: silin).
 
+**Code.gs v8-ə keçid (şəkil/endirim yeniliyi).** `apps-script/Code.gs`-i yapışdırın → `setup()` işə salın (yeni sütunlar: `Sales.lineDiscount/discountType`, `SaleLines.discount/discountPercent`, `Products.maxDiscount`) → Deploy → Manage deployments → ✏️ → **New version**. Köhnə v7 skript yeni çeklərin endirim sütunlarını yazmır (məlumat Events-də qalır, itmir), ona görə yeniləyin.
+
 **Code.gs v7-yə keçid.** `apps-script/Code.gs`-i yapışdırın → `setup()` işə salın (ilk dəfə Drive/Sheets üçün əlavə icazə istəyə bilər; **Allow**; eyni zamanda 26 sütunluq vərəqlərin boş sütun və sətirlərini kəsir: xana sayı ~340 mindən ~35 minə düşür) → Deploy → Manage deployments → ✏️ → **New version**. Köhnə v6 skript işləməyə davam edir, amma Arxiv kartı "Skript köhnədir" göstərir.
 
 ## Testlər
@@ -142,6 +158,8 @@ node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qal�
 node tests/archive.test.js     # arxivləşdirmə: 2500 hadisə, köhnə kursor arxivdən oxuyur, soyuq cihaz eyni vəziyyəti alır, yarımçıq qalma bərpası, xətada heç nə silinmir, xana sayı azalır
 node tests/auth.test.js        # rol üzrə PIN/şifrə: siyasət, şifrə qaydaları, PBKDF2 (Node ilə eyni), məcburi dəyişmə, rol dəyişimi, bloklama, saxta siyasət hadisələri
 node tests/supplier.test.js    # tədarükçü borcu: iki əsas, ödəniş/ləğv, kassaya təsir, icazələr, sinxron, saxta hadisələr, 4 dildə hesabat sənədi
+node tests/discount.test.js    # məhsul şəkli, sətir/çek endirimi (faiz/məbləğ, hədlər, Admin həddi), dəqiq qaytarma, çek axtarışı, «yenidən çap», iki cihaz + Sheets sütunları, saxta hadisələr
+node tests/robust.test.js      # 50 000 simvol xana həddi: böyük əməliyyat cihazda rədd olunur, server sığmayan hadisəni ilişmədən qəbul edir, köhnə sütunlu vərəq özü sağalır
 node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə keçməsi
 node tests/push.test.js        # server push: P-256/ES256 hesabı Node kriptoqrafiyası ilə yoxlanır, kimə push gedir, xəta halları
 node tests/notify.test.js      # brauzer tərəfi: abunə, icazə, qeydiyyat/söndürmə, test, yerli bildiriş (API-lər təqlid olunur)
@@ -191,7 +209,7 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 - `main` budağını qoruyun (Settings → Branches → Require PR/status checks), Actions secrets-ə token qoymayın, Dependabot-u açın.
 - Google Fonts hər cihazdan Google-a sorğu göndərir (məxfilik); istəsəniz şriftləri `fonts/` qovluğuna endirib `'self'`-dən verin.
 
-**Kod səviyyəsində edilənlər (bu mərhələ):** CSP; XSS yoxlaması (ad, qeyd, şablon, URL); CSV/Excel formul inyeksiyasının zərərsizləşdirilməsi; serverdən gələn hadisələrin tip/uzunluq/aralıq yoxlaması (zəhərli hadisə bütün cihazları dondura bilməz); girişdə bloklamanın yenilənmədən sonra qalması; service worker yalnız uğurlu cavabları saxlayır; token müqayisəsi sabit vaxtlıdır, `doPost` boş/yanlış gövdədə çökmür; nömrə aralıqları serverdə 1000 ilə məhdud; çekdə ≤ 100 sətir (Sheets xanası 50 000 simvol).
+**Kod səviyyəsində edilənlər (bu mərhələ):** CSP; XSS yoxlaması (ad, qeyd, şablon, URL); CSV/Excel formul inyeksiyasının zərərsizləşdirilməsi; serverdən gələn hadisələrin tip/uzunluq/aralıq yoxlaması (zəhərli hadisə bütün cihazları dondura bilməz); girişdə bloklamanın yenilənmədən sonra qalması; service worker yalnız uğurlu cavabları saxlayır; token müqayisəsi sabit vaxtlıdır, `doPost` boş/yanlış gövdədə çökmür; nömrə aralıqları serverdə 1000 ilə məhdud; çekdə ≤ 100 sətir və hadisə ≤ 45 000 simvol (Sheets xanası 50 000 simvol).
 
 **Açıq risklər (Səviyyə 2 – BRD v1.3 üçün):** server tərəfində istifadəçiyə bağlı imza / cihaz açarları, PIN hash-larının cihazlara yayılmaması, hadisələrin rol əsasında serverdə rədd edilməsi. Bunlar olmadan token-i əldə edən daxili şəxs saxta hadisə göndərə bilər (RİSK-1…6); audit izində hadisənin hansı cihazdan gəldiyi görünür.
 

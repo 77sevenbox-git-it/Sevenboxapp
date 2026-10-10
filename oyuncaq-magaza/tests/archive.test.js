@@ -116,9 +116,9 @@ async function snapshot(d) {
   const startCells = be.grid();
   let ids = [], cellsBefore = 0, run1, seg1;
 
-  await t('başlanğıc: boş sütun və sətirlər kəsilib (26 sütunluq vərəq yoxdur), xana sayı ~40 min', async () => {
+  await t('başlanğıc: boş sütun və sətirlər kəsilib (26 sütunluq ilkin vərəq yoxdur; ən geniş vərəq Sales: 22), xana sayı ~40 min', async () => {
     assert.ok(startCells < 45000, 'xana sayı: ' + startCells);
-    Object.keys(be.store.sheets).forEach(n => assert.ok(be.store.sheets[n].maxCols <= 20, n + ' sütun: ' + be.store.sheets[n].maxCols));
+    Object.keys(be.store.sheets).forEach(n => assert.ok(be.store.sheets[n].maxCols <= 24, n + ' sütun: ' + be.store.sheets[n].maxCols));
   });
 
   await t('2500 hadisə (625 satış): şəbəkə 1000 sətri keçir, xəta yoxdur, hamısı yazılır', async () => {
@@ -134,7 +134,7 @@ async function snapshot(d) {
 
   await t('status: əsas 0, canlı 2500, arxiv yoxdur, version 7', async () => {
     const s = post(be, { action: 'archive.status' });
-    assert.ok(s.ok); assert.strictEqual(s.version, 7);
+    assert.ok(s.ok); assert.strictEqual(s.version, 8);
     assert.strictEqual(s.base, 0); assert.strictEqual(s.live, 2500); assert.strictEqual(s.total, 2500);
     assert.strictEqual(s.cells, cellsBefore); assert.strictEqual(s.limit, 10000000); assert.deepStrictEqual(s.segs, []);
     assert.strictEqual(s.last, '');

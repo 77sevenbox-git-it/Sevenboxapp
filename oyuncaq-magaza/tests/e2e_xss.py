@@ -158,7 +158,7 @@ try:
         res = pg.evaluate("""async () => {
           const sales = await DB.getAll('sales'), prods = await DB.getAll('products'), store = await Services.storeInfo();
           const bad = (html) => { const d = new DOMParser().parseFromString(html, 'text/html'); return d.querySelectorAll('img[src="x"], [onerror], [onload], script, iframe').length; };
-          return { r: sales.map(s => bad(Print.receiptHtml(s, store, { duplicate: true }))), l: bad(Print.labelsHtml(prods.map(p => ({ product: p, count: 1 })))), n: sales.length, s: store.name };
+          return { r: sales.map(s => bad(Print.receiptHtml(s, store, { reprint: true }))), l: bad(Print.labelsHtml(prods.map(p => ({ product: p, count: 1 })))), n: sales.length, s: store.name };
         }""")
         check(res['n'] >= 2 and all(x == 0 for x in res['r']) and res['l'] == 0, f'çek ({res["n"]} ədəd) və etiket HTML-ində icra olunan element yoxdur ({res})')
 

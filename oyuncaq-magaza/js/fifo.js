@@ -148,11 +148,12 @@
     function inRange(at) { return (!from || at >= from) && (!to || at < to); }
     (sales || []).forEach(function (s) {
       if (!inRange(s.at)) return;
-      var sub = s.totals && s.totals.subtotal, total = s.totals && s.totals.total;
-      var ratio = sub > 0 ? total / sub : 1;
+      // Gəlir = sətrin sətir endirimindən sonrakı məbləği, çek endirimi ilə mütənasib azaldılmış. (Köhnə çeklərdə sətir endirimi yoxdur: əvvəlki hesab.)
+      var sub = s.totals && s.totals.subtotal, total = s.totals && s.totals.total, net = sub - ((s.totals && s.totals.lineDiscount) || 0);
+      var ratio = net > 0 ? total / net : 1;
       (s.lines || []).forEach(function (l, i) {
         var rec = res.lines[s.id + ':' + i]; if (!rec) return;
-        var lineNet = l.price * l.qty * ratio;
+        var lineNet = (l.price * l.qty - (l.discount || 0)) * ratio;
         var parts = rec.parts.slice();
         if (rec.deficit + rec.cancelled > 0) parts.push({ supplierId: null, unitCost: rec.fallbackCost, qty: rec.deficit + rec.cancelled, returned: 0 });
         parts.forEach(function (p) { cb('sale', s, i, l, p, lineNet * p.qty / l.qty, p.qty * p.unitCost); });
@@ -163,7 +164,7 @@
       var gross = 0; (rt.lines || []).forEach(function (l) { gross += l.price * l.qty; });
       (rt.lines || []).forEach(function (l, i) {
         var rr = res.returns[rt.id + ':' + i]; if (!rr) return;
-        var share = gross > 0 ? rt.amount * (l.price * l.qty) / gross : 0;
+        var share = l.refund != null ? l.refund : (gross > 0 ? rt.amount * (l.price * l.qty) / gross : 0);      // yeni qaytarmalarda hər sətrin pulu dəqiq yazılır
         var parts = rr.parts.slice();
         if (rr.deficit + (rr.excess || 0) > 0) parts.push({ supplierId: null, unitCost: (res.lines[rt.saleId + ':' + l.lineIndex] || {}).fallbackCost || 0, qty: rr.deficit + (rr.excess || 0) });
         parts.forEach(function (p) { cb('ret', rt, i, l, p, share * p.qty / l.qty, p.qty * p.unitCost); });

@@ -54,21 +54,24 @@
   function receiptHtml(sale, store, opts) {
     var M = root.Money, cfg = settings(), _t = rt(cfg), lang = cfg.receipt.lang;
     var METHOD = { cash: _t('Nağd'), bank: _t('Bank'), mixed: _t('Qarışıq') }, BANK = { pos: _t('POS kart'), transfer: _t('Karta köçürmə') };
+    // Çekdə şəkil YOXDUR: yalnız mətn (məhsul şəkli kassa ekranı üçündür, sətirlərə yazılmır)
     var rows = sale.lines.map(function (l) {
-      return '<div class="nm">' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.price * l.qty) + '</span></div>';
+      return '<div class="nm">' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.price * l.qty) + '</span></div>' +
+        (l.discount ? '<div class="r"><span>' + (l.discountPercent ? _t('Endirim {0}%', [l.discountPercent]) : _t('Endirim')) + '</span><span>−' + M.format(l.discount) + '</span></div>' : '');
     }).join('');
     var p = sale.payment;
     var pay = '<div class="r"><span>' + _t('Ödəniş') + '</span><span>' + METHOD[p.method] + (p.bankType ? ' (' + BANK[p.bankType] + ')' : '') + '</span></div>';
     if (p.bankPart) pay += '<div class="r"><span>' + _t('Bank') + '</span><span>' + M.format(p.bankPart) + '</span></div>';
     if (p.cashPart) pay += '<div class="r"><span>' + _t('Nağd alınan') + '</span><span>' + M.format(p.cashReceived) + '</span></div><div class="r"><span>' + _t('Qaytarılan@@change') + '</span><span>' + M.format(p.change) + '</span></div>';
     return wrap(
-      (opts && opts.duplicate ? '<div class="c"><b>' + _t('DUBLİKAT') + '</b></div>' : '') +
+      (opts && opts.reprint ? '<div class="c"><b>' + _t('YENİDƏN ÇAP') + '</b></div>' : '') +
       '<h3>' + esc(store.name) + '</h3><div class="c">' + _t('VÖEN') + ' ' + esc(store.voen) + '</div><div class="c">' + esc(store.address) + '</div><hr>' +
       '<div class="r"><span>' + _t('Çek №') + '</span><span>' + String(sale.receiptNo).padStart(6, '0') + '</span></div>' +
       '<div class="r"><span>' + _t('Tarix') + '</span><span>' + U().fmtDate(sale.at, lang) + '</span></div>' +
       '<div class="r"><span>' + _t('Kassir') + '</span><span>' + esc(sale.cashierName) + '</span></div><hr>' + rows + '<hr>' +
       '<div class="r"><span>' + _t('Ara cəm') + '</span><span>' + M.format(sale.totals.subtotal) + '</span></div>' +
-      (sale.totals.discount ? '<div class="r"><span>' + _t('Endirim {0}%', [sale.discount.percent]) + '</span><span>−' + M.format(sale.totals.discount) + '</span></div>' : '') +
+      (sale.totals.lineDiscount ? '<div class="r"><span>' + _t('Sətir endirimləri') + '</span><span>−' + M.format(sale.totals.lineDiscount) + '</span></div>' : '') +
+      (sale.totals.discount ? '<div class="r"><span>' + (sale.discount && sale.discount.type !== 'amount' && sale.discount.percent ? _t('Endirim {0}%', [sale.discount.percent]) : _t('Endirim')) + '</span><span>−' + M.format(sale.totals.discount) + '</span></div>' : '') +
       '<div class="r big"><span>' + _t('YEKUN') + '</span><span>' + M.format(sale.totals.total) + ' AZN</span></div>' + pay + '<hr>' +
       receiptBarcode(sale.receiptBarcode, cfg) +
       '<div class="c">' + _t('Qaytarma {0} gün ərzində, çeklə', [root.Rules.RETURN_DAYS]) + '</div>' +
@@ -78,7 +81,8 @@
   function returnReceiptHtml(ret, sale, store) {
     var M = root.Money, cfg = settings(), _t = rt(cfg), lang = cfg.receipt.lang;
     var BANK = { pos: _t('POS kart'), transfer: _t('Karta köçürmə') };
-    var rows = ret.lines.map(function (l) { return '<div class="nm">' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.price * l.qty) + '</span></div>'; }).join('');
+    // Sətirin məbləği endirimdən sonra müştəriyə qaytarılan puldur (yeni qaytarmalarda "refund"), köhnələrdə qiymət × say
+    var rows = ret.lines.map(function (l) { return '<div class="nm">' + esc(l.name) + '</div><div class="r"><span>' + l.qty + ' × ' + M.format(l.price) + '</span><span>' + M.format(l.refund != null ? l.refund : l.price * l.qty) + '</span></div>'; }).join('');
     return wrap('<h3>' + esc(store.name) + '</h3><div class="c"><b>' + _t('QAYTARMA ÇEKİ') + '</b></div><hr>' +
       '<div class="r"><span>' + _t('İlkin çek №') + '</span><span>' + String(sale.receiptNo).padStart(6, '0') + '</span></div>' +
       '<div class="r"><span>' + _t('Tarix') + '</span><span>' + U().fmtDate(ret.at, lang) + '</span></div>' +

@@ -120,12 +120,32 @@ tr.neg td { background: var(--warn-soft); }
 .users small { display: block; color: var(--muted); font-size: 12px; }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
 
+/* Məhsul şəkli (kassada sətrin solunda ikon, siyahıda kiçik şəkil). Çapa düşmür: çek yalnız mətndir. */
+.pthumb { width: 40px; height: 40px; border-radius: 8px; object-fit: cover; flex: none; background: var(--line-2); display: inline-block; vertical-align: middle; }
+.pthumb.ph { display: inline-flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); background: var(--accent-soft); }
+.pname { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pname .ptext { min-width: 0; overflow-wrap: anywhere; }
+.pname .dline { font-size: 13px; color: var(--ok); font-weight: 600; }
+.pgross { color: var(--faint); text-decoration: line-through; font-size: 13px; display: block; }
+.imgpick { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.imgpick .pthumb { width: 96px; height: 96px; border-radius: 12px; font-size: 32px; }
+.dtarget { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.dtarget button, .dtype button { padding: 12px 10px; border: 1px solid var(--control); border-radius: 8px; background: var(--surface); text-align: left; }
+.dtarget button small { display: block; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.dtarget button[aria-pressed="true"], .dtype button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.dtarget button:disabled { opacity: .5; }
+.dtype { display: flex; gap: 8px; }
+.dtype button { flex: 1; text-align: center; }
+.dhint { margin: 0; font-size: 14px; color: var(--muted); }
+.dhint b { color: var(--ink); }
+
 /* Çap: @page ölçüsü js/print.js tərəfindən çap anında təyin olunur (çek: ölçülmüş hündürlük, etiket: etiketin ölçüsü) */
 #print-area { display: none; }
 @media print {
   html, body { height: auto !important; margin: 0 !important; padding: 0 !important; background: #fff !important; }
   body > *:not(#print-area) { display: none !important; }
   #print-area { display: block; }
+  .pthumb { display: none !important; }
 }
 .receipt { margin: 0 auto; padding: 1.5mm 0; font-family: Consolas, 'Lucida Console', 'DejaVu Sans Mono', 'Courier New', monospace; line-height: 1.25; color: #000; background: #fff; overflow-wrap: anywhere; }
 .receipt h3 { margin: 0; text-align: center; font-size: 1.2em; }

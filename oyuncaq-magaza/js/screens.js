@@ -204,7 +204,8 @@
       list.forEach(function (p) {
         var low = p.stock <= (p.minStock || 0);
         body.appendChild(h('tr', null,
-          h('td', null, h('div', null, p.name), h('div', { class: 'muted', style: 'font-size:13px' }, [p.category, p.ageGroup].filter(Boolean).join(' · '))),
+          h('td', null, h('div', { class: 'pname' }, UI.thumb(p, 36), h('div', { class: 'ptext' }, h('div', null, p.name),
+            h('div', { class: 'muted', style: 'font-size:13px' }, [p.category, p.ageGroup, p.maxDiscount > 0 ? _t('max endirim {0}%', [p.maxDiscount]) : ''].filter(Boolean).join(' · '))))),
           h('td', { class: 'mono', style: 'font-size:14px' }, p.storeBarcode),
           h('td', { class: 'mono muted', style: 'font-size:14px' }, p.mfrBarcode || '—'),
           h('td', { class: 'num' }, M.format(p.price)),
@@ -278,11 +279,46 @@
       mfr: inp('f-mfr', _t('İstehsalçı barkodu (nəzarət üçün, uzunluq məhdud deyil)'), p && p.mfrBarcode, { class: 'input mono', autocomplete: 'off' }),
       price: inp('f-price', _t('Satış qiyməti, ₼ *'), p ? M.format(p.price).replace(/\s/g, '') : '', { class: 'input mono', inputmode: 'decimal', disabled: !canPrice }),
       cost: isNew && can('product.cost.view') ? inp('f-cost', _t('Alış qiyməti, ₼'), '', { class: 'input mono', inputmode: 'decimal' }) : null,
-      min: inp('f-min', _t('Minimum qalıq'), p ? p.minStock : 0, { type: 'number', min: '0' })
+      min: inp('f-min', _t('Minimum qalıq'), p ? p.minStock : 0, { type: 'number', min: '0' }),
+      maxd: inp('f-maxd', _t('Bu məhsula max endirim, %'), p && p.maxDiscount ? p.maxDiscount : 0, { type: 'number', min: '0', max: '100', step: '0.5', inputmode: 'decimal', disabled: !canPrice })
     };
     var active = h('input', { type: 'checkbox', id: 'f-active', checked: !p || p.active });
+
+    // Şəkil: kamera və ya qalereya. Kiçildilib məhsulun özündə saxlanır; kassada sətrin solunda ikon kimi görünür, çekdə çap olunmur.
+    var image = p && R.safeImage(p.image) ? p.image : '';
+    var preview = h('div', { id: 'f-img-prev' });
+    var shoot = h('input', { type: 'file', accept: 'image/*', capture: 'environment', id: 'f-img-cam', hidden: true });
+    var pick = h('input', { type: 'file', accept: 'image/*', id: 'f-img-file', hidden: true });
+    var imgErr = h('div', { class: 'muted', style: 'font-size:13px;color:var(--bad)', hidden: true, role: 'alert' });
+    var rmBtn = h('button', { class: 'btn small', type: 'button', id: 'f-img-rm', onclick: function () { image = ''; drawImg(); } }, _t('Şəkli sil'));
+    function drawImg() {
+      UI.clear(preview); preview.appendChild(UI.thumb({ name: f.name.input.value, image: image }));
+      rmBtn.hidden = !image;
+    }
+    function onFile(inp) {
+      var file = inp.files && inp.files[0]; inp.value = '';
+      if (!file) return;
+      imgErr.hidden = true;
+      UI.shrinkImage(file).then(function (url) { image = url; drawImg(); })
+        .catch(function (e) { imgErr.textContent = e.message; imgErr.hidden = false; });
+    }
+    shoot.addEventListener('change', function () { onFile(shoot); });
+    pick.addEventListener('change', function () { onFile(pick); });
+    f.name.input.addEventListener('input', function () { if (!image) drawImg(); });
+    drawImg();
+    var imgBox = h('div', { class: 'field' }, h('label', null, _t('Məhsulun şəkli')),
+      h('div', { class: 'imgpick' }, preview,
+        h('div', { style: 'display:flex;flex-direction:column;gap:8px;align-items:flex-start' },
+          h('div', { class: 'row' },
+            h('button', { class: 'btn small', type: 'button', id: 'f-img-take', onclick: function () { shoot.click(); } }, _t('Şəkil çək')),
+            h('button', { class: 'btn small', type: 'button', id: 'f-img-choose', onclick: function () { pick.click(); } }, _t('Qalereyadan seç')), rmBtn),
+          h('span', { class: 'muted', style: 'font-size:13px' }, _t('Kassada məhsul sətrinin solunda ikon kimi görünür. Çekdə çap olunmur.')), imgErr),
+        shoot, pick));
+
     var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
-      h('div', { class: 'grid2' }, f.name.el, f.category.el, f.brand.el, f.age.el, f.mfr.el, f.price.el, f.cost && f.cost.el, f.min.el),
+      imgBox,
+      h('div', { class: 'grid2' }, f.name.el, f.category.el, f.brand.el, f.age.el, f.mfr.el, f.price.el, f.cost && f.cost.el, f.min.el, f.maxd.el),
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Max endirim: kassir bu məhsula bundan çox endirim edə bilməz (0 = endirim verilmir). Endirim yenə menecer təsdiqi ilə olur.')),
       !canPrice ? h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Satış qiymətini yalnız Menecer və Admin təyin edir.')) : null,
       p ? h('p', { class: 'muted', style: 'margin:0' }, _t('Mağaza barkodu: '), h('span', { class: 'mono' }, p.storeBarcode), _t(' (dəyişmir)')) : h('p', { class: 'muted', style: 'margin:0' }, _t('Mağaza barkodu yadda saxlayanda avtomatik veriləcək.')),
       p ? h('label', { style: 'display:flex;gap:8px;align-items:center' }, active, _t('Satışda aktivdir')) : null);
@@ -293,7 +329,13 @@
         var price = M.parse(f.price.input.value);
         if (price == null) throw new Error(_t('Satış qiyməti səhvdir'));
         var data = { name: f.name.input.value, category: f.category.input.value.trim(), brand: f.brand.input.value.trim(), ageGroup: f.age.input.value.trim(),
-          mfrBarcode: f.mfr.input.value.trim(), price: price, minStock: parseInt(f.min.input.value, 10) || 0 };
+          mfrBarcode: f.mfr.input.value.trim(), price: price, minStock: parseInt(f.min.input.value, 10) || 0, image: image };
+        // Max endirim yalnız qiymət təyin edə bilən rolda dəyişir; başqası forma göndərəndə dəyər toxunulmaz qalır
+        if (canPrice) {
+          var md = f.maxd.input.value.trim() === '' ? 0 : Number(String(f.maxd.input.value).replace(',', '.'));
+          var mdBad = R.maxDiscountProblem(md); if (mdBad) throw new Error(mdBad);
+          data.maxDiscount = md;
+        }
         if (f.cost) { var c = M.parse(f.cost.input.value || '0'); if (c == null) throw new Error(_t('Alış qiyməti səhvdir')); data.cost = c; }
         if (p) data.active = active.checked;
         var op = isNew ? S.createProduct(data) : S.updateProduct(p.id, data);
@@ -703,6 +745,14 @@
     range(); loadAll();
   }
 
+  // Çekin endirimi haqqında qısa mətn: sətir endirimləri və çek endirimi (faiz və ya məbləğ)
+  function saleDiscountText(sale) {
+    var parts = [];
+    if (sale.totals.lineDiscount) parts.push(_t('sətir endirimi {0}', [M.format(sale.totals.lineDiscount)]));
+    if (sale.discount) parts.push(sale.discount.type === 'amount' || sale.discount.percent == null ? _t('çek endirimi {0}', [M.format(sale.totals.discount)]) : _t('çek endirimi {0}%', [sale.discount.percent]));
+    return parts.length ? ' (' + parts.join(', ') + ')' : '';
+  }
+
   /* ================= Qaytarma ================= */
   function returns(el) {
     UI.clear(el);
@@ -718,7 +768,7 @@
           h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Çek №')), h('b', { class: 'mono' }, String(sale.receiptNo).padStart(6, '0'))),
           h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Tarix')), UI.fmtDate(sale.at)),
           h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Ödəniş')), UI.METHOD[sale.payment.method] + (sale.payment.bankType ? ' · ' + UI.BANK_TYPE[sale.payment.bankType] : '')),
-          h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Yekun')), M.format(sale.totals.total) + ' ₼' + (sale.discount ? _t(' ({0}% endirim)', [sale.discount.percent]) : '')),
+          h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Yekun')), M.format(sale.totals.total) + ' ₼' + saleDiscountText(sale)),
           h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, _t('Keçən gün')), String(win.daysPassed)));
         out.appendChild(head);
         if (win.expired) {
@@ -728,6 +778,7 @@
           return;
         }
         var inputs = [], maxes = [];
+        var paidLines = R.paidPerLine(sale);                      // sətir və çek endirimi çıxıldıqdan sonra müştərinin həqiqətən ödədiyi pul
         var tb = h('tbody');
         var errBox = h('div', { class: 'modal-err', role: 'alert', hidden: true });
         function showErr(msg) { errBox.textContent = msg; errBox.hidden = false; UI.toast(msg, 'bad'); UI.beep(false); }
@@ -743,7 +794,7 @@
           });
           inputs.push(inp);
           tb.appendChild(h('tr', null, h('td', null, l.name), h('td', { class: 'num' }, String(l.qty)), h('td', { class: 'num muted' }, String(prev.map[i] || 0)),
-            h('td', { class: 'num' }, M.format(l.price)), h('td', { class: 'num' }, inp)));
+            h('td', { class: 'num' }, M.format(l.price), paidLines[i] !== l.price * l.qty ? h('div', { class: 'muted', style: 'font-size:12px' }, _t('ödənilib: {0}', [M.format(paidLines[i])])) : null), h('td', { class: 'num' }, inp)));
         });
         var reason = h('input', { class: 'input', id: 'rreason', placeholder: _t('məs. zədəli, uyğun gəlmədi') });
         out.appendChild(h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
@@ -759,7 +810,7 @@
               if (items[k].qty > mx) { inputs[items[k].lineIndex].focus(); return showErr(_t('"{0}": satılıb {1}, əvvəl qaytarılıb {2} — ən çox {3} ədəd qaytarmaq olar', [ln.name, ln.qty, (prev.map[items[k].lineIndex] || 0), mx])); }
             }
             errBox.hidden = true;
-            var amount = R.refundAmount(items.map(function (it) { return { price: sale.lines[it.lineIndex].price, qty: it.qty }; }), sale.discount ? sale.discount.percent : 0);
+            var amount = R.refundFor(sale, items, prev.map).amount;
             var rsum = _t('Çek № {0} üzrə {1} ₼ qaytarılır.', [sale.receiptNo, M.format(amount)]);
             S.validateReturn(sale.id, items).then(function () {
               return UI.approve(_t('Qaytarmanı təsdiqlə'), rsum, 'pos.return.approve', UI.req('return', '{0} qaytarma istəyir. Çek № {1} üzrə {2} ₼ qaytarılır.', [S.currentUser() ? S.currentUser().name : '', sale.receiptNo, M.format(amount)]));
@@ -885,25 +936,51 @@
   function sales(el) {
     UI.clear(el);
     var tb = h('tbody');
-    el.appendChild(h('div', { class: 'page' }, h('h1', null, _t('Çeklər')), h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
-      h('thead', null, h('tr', null, h('th', null, '№'), h('th', null, _t('Tarix')), h('th', null, _t('Kassir')), h('th', null, _t('Ödəniş')), h('th', { class: 'num' }, _t('Yekun ₼')), h('th', null, ''), h('th', null, ''))), tb))));
-    function loadList() { return S.recentSales(100).then(function (list) { UI.clear(tb); fill(list); }); }
+    var PAGE = 100, lim = PAGE, seq = 0, timer = null;
+    var q = h('input', { class: 'input', id: 'sq', type: 'search', autocomplete: 'off', style: 'min-width:300px', placeholder: _t('Çek №, kassir, məhsul, tarix (gg.aa.iiii) və ya məbləğ') });
+    var info = h('div', { class: 'muted', id: 'sq-info', role: 'status', style: 'font-size:14px' });
+    var more = h('button', { class: 'btn', id: 'sq-more', type: 'button', hidden: true, onclick: function () { lim += PAGE; run(); } }, _t('Daha çox göstər'));
+    el.appendChild(h('div', { class: 'page' },
+      h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:12px' }, h('h1', { style: 'margin:0' }, _t('Çeklər')),
+        h('div', { class: 'row' }, h('label', { class: 'sr-only', for: 'sq' }, _t('Axtarış')), q)),
+      info,
+      h('div', { class: 'card table-wrap', tabindex: '0', style: 'margin-top:8px' }, h('table', null,
+        h('thead', null, h('tr', null, h('th', null, '№'), h('th', null, _t('Tarix')), h('th', null, _t('Kassir')), h('th', null, _t('Məhsullar')), h('th', null, _t('Ödəniş')), h('th', { class: 'num' }, _t('Yekun ₼')), h('th', null, ''), h('th', null, ''))), tb)),
+      h('div', { style: 'margin-top:12px' }, more)));
+
+    // Hər açılışda bütün çeklər axtarılır (yalnız son 100 yox): söz-söz, hamısı uyğun gəlməlidir
+    function run() {
+      var my = ++seq, query = q.value.trim();
+      return S.searchSales(query, lim).then(function (r) {
+        if (my !== seq) return;                                         // daha yeni axtarış gedir: köhnə cavab ekranı pozmasın
+        UI.clear(tb); fill(r.list, !!query);
+        info.textContent = !r.total ? '' : r.total > r.list.length ? _t('{0} çekdən {1} göstərilir', [r.total, r.list.length]) : (query ? _t('{0} çek tapıldı', [r.total]) : '');
+        more.hidden = r.total <= r.list.length;
+      });
+    }
+    function loadList() { return run(); }
     root.Screens._refresh = loadList;
-    loadList();
-    function fill(list) {
-      if (!list.length) tb.appendChild(h('tr', null, h('td', { colspan: '7', class: 'empty' }, _t('Hələ satış yoxdur'))));
+    q.addEventListener('input', function () { lim = PAGE; clearTimeout(timer); timer = setTimeout(run, 200); });
+    q.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); lim = PAGE; run(); } });
+    run().then(function () { q.focus(); });
+
+    function discountOf(s) { return (s.totals.lineDiscount || 0) + (s.totals.discount || 0); }
+    function fill(list, searching) {
+      if (!list.length) tb.appendChild(h('tr', null, h('td', { colspan: '8', class: 'empty' }, searching ? _t('Uyğun çek tapılmadı') : _t('Hələ satış yoxdur'))));
       list.forEach(function (s) {
-        tb.appendChild(h('tr', null, h('td', { class: 'mono' }, String(s.receiptNo).padStart(6, '0')), h('td', null, UI.fmtDate(s.at)), h('td', null, s.cashierName),
+        var names = s.lines.map(function (l) { return l.name; }).join(', ');
+        tb.appendChild(h('tr', { 'data-no': String(s.receiptNo) }, h('td', { class: 'mono' }, String(s.receiptNo).padStart(6, '0')), h('td', null, UI.fmtDate(s.at)), h('td', null, s.cashierName),
+          h('td', { title: names, style: 'max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px' }, names),
           h('td', null, UI.METHOD[s.payment.method] + (s.payment.bankType ? ' · ' + UI.BANK_TYPE[s.payment.bankType] : '')),
-          h('td', { class: 'num' }, M.format(s.totals.total)),
+          h('td', { class: 'num' }, M.format(s.totals.total), discountOf(s) ? h('div', { class: 'muted', style: 'font-size:12px' }, _t('endirim −{0}', [M.format(discountOf(s))])) : null),
           h('td', null, s.offline ? h('span', { class: 'badge' }, _t('Oflayn')) : null),
-          h('td', null, h('button', { class: 'btn small', onclick: function () {
-            UI.approve(_t('Dublikat çek'), _t('Çek № {0} "DUBLİKAT" qeydi ilə çap olunur.', [s.receiptNo]), 'pos.return.approve').then(function (a) {
+          h('td', null, h('button', { class: 'btn small', 'data-act': 'reprint', onclick: function () {
+            UI.approve(_t('Çeki yenidən çap et'), _t('Çek № {0} "YENİDƏN ÇAP" qeydi ilə çap olunur.', [s.receiptNo]), 'pos.return.approve').then(function (a) {
               if (!a) return;
-              S.auditEvent('receipt.duplicate', { saleId: s.id, approvedBy: a.id });
-              S.storeInfo().then(function (store) { UI.printHtml(UI.receiptHtml(s, store, { duplicate: true })); });
+              S.auditEvent('receipt.reprinted', { saleId: s.id, approvedBy: a.id });
+              S.storeInfo().then(function (store) { UI.printHtml(UI.receiptHtml(s, store, { reprint: true })); });
             });
-          } }, _t('Dublikat')))));
+          } }, _t('Yenidən çap et')))));
       });
     }
   }
@@ -938,9 +1015,29 @@
         } }, _t('Yadda saxla'))),
         authPolicyCard(),
         can('admin.users') ? usersCard() : null,
+        can('admin.users') ? discountCapsCard(r[1]) : null,
         settingsCard(r[1]),
         archiveCard()));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
+  }
+
+  // Admin: bütün çek üçün endirim həddi (həm faiz, həm məbləğ). Məhsul üzrə hədd məhsulun kartındadır.
+  function discountCapsCard(store) {
+    var caps = R.discountCaps(store);
+    var pct = h('input', { class: 'input mono', id: 'dc-pct', inputmode: 'decimal', value: String(caps.percent).replace('.', ',') });
+    var amt = h('input', { class: 'input mono', id: 'dc-amt', inputmode: 'decimal', value: M.format(caps.amount).replace(/\s/g, '') });
+    return h('div', { class: 'card', id: 'dc-card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('Çek üzrə endirim həddi')),
+      h('div', { class: 'grid2' },
+        h('div', { class: 'field' }, h('label', { for: 'dc-pct' }, _t('Ən çox endirim, %')), pct),
+        h('div', { class: 'field' }, h('label', { for: 'dc-amt' }, _t('Ən çox endirim məbləği, ₼')), amt)),
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Kassir bütün çekə bu hədlərdən çox endirim edə bilməz. Həm faiz, həm məbləğ həddi eyni anda gözlənilir (hansı kiçikdirsə o). 0 yazsanız çek üzrə endirim bağlanır. Hər məhsula endirim həddi isə məhsulun kartında təyin olunur.')),
+      h('div', null, h('button', { class: 'btn primary', id: 'dc-save', type: 'button', onclick: function () {
+        var p = Number(String(pct.value).trim().replace(',', '.')), a = M.parse(amt.value);
+        if (pct.value.trim() === '' || !Number.isFinite(p) || p < 0 || p > 100) return UI.toast(_t('Endirim faizi 0 ilə 100 arasında olmalıdır'), 'bad');
+        if (a == null) return UI.toast(_t('Endirim məbləği səhvdir'), 'bad');
+        S.setStoreInfo({ discountMaxPercent: p, discountMaxAmount: a }).then(function () { UI.toast(_t('Yadda saxlanıldı')); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+      } }, _t('Yadda saxla'))));
   }
 
   function settingsCard(store) {

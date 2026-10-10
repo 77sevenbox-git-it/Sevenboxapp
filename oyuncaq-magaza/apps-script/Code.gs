@@ -24,7 +24,7 @@
 // Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
-var VERSION = 7;
+var VERSION = 8;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -48,10 +48,10 @@ function db() {
 var SHEETS = {
   Events: ['id', 'at', 'type', 'userId', 'receivedAt', 'json', 'device'],
   Sales: ['id', 'receiptNo', 'at', 'shiftId', 'cashierId', 'cashierName', 'subtotal', 'discount', 'discountPercent', 'discountApprovedBy',
-    'total', 'method', 'bankType', 'cashPart', 'bankPart', 'cashReceived', 'change', 'offline', 'fiscalId', 'fiscalStatus'],
-  SaleLines: ['saleId', 'receiptNo', 'lineIndex', 'productId', 'name', 'storeBarcode', 'qty', 'price', 'unitCost', 'negative'],
+    'total', 'method', 'bankType', 'cashPart', 'bankPart', 'cashReceived', 'change', 'offline', 'fiscalId', 'fiscalStatus', 'lineDiscount', 'discountType'],
+  SaleLines: ['saleId', 'receiptNo', 'lineIndex', 'productId', 'name', 'storeBarcode', 'qty', 'price', 'unitCost', 'negative', 'discount', 'discountPercent'],
   Returns: ['id', 'saleId', 'receiptNo', 'at', 'amount', 'cashAmount', 'bankAmount', 'bankType', 'approvedBy', 'reason'],
-  Products: ['id', 'name', 'category', 'brand', 'ageGroup', 'storeBarcode', 'mfrBarcode', 'price', 'avgCost', 'lastCost', 'minStock', 'active', 'updatedAt'],
+  Products: ['id', 'name', 'category', 'brand', 'ageGroup', 'storeBarcode', 'mfrBarcode', 'price', 'avgCost', 'lastCost', 'minStock', 'active', 'updatedAt', 'maxDiscount'],
   StockReceipts: ['at', 'productId', 'qty', 'unitCost', 'userId', 'supplierId', 'lotId', 'note'],
   Suppliers: ['id', 'name', 'phone', 'note', 'active', 'updatedAt', 'debtBasis', 'openingDebt'],
   SupplierPayments: ['id', 'supplierId', 'supplierName', 'at', 'amount', 'method', 'shiftId', 'cashMoveId', 'userName', 'note', 'voidedAt', 'voidReason', 'updatedAt'],
@@ -102,9 +102,16 @@ function cell(v) {
 }
 function rid(v) { return String(v).replace(/^'/, ''); }
 function iso(v) { return v instanceof Date ? v.toISOString() : rid(v); }
+// Google Sheets bir xanaya ən çox 50 000 simvol qəbul edir; aşan yazı bütün sorğunu yıxar və cihazın göndərmə növbəsi həmişəlik ilişərdi.
+// Ona görə hər xana bu həddə kəsilir (Events-in JSON xanası ayrıca: bax appendItems).
+var CELL_MAX = 49000;
 function fit(row, width) {
   var out = [];
-  for (var i = 0; i < width; i++) out.push(i < row.length && row[i] != null ? cell(row[i]) : '');
+  for (var i = 0; i < width; i++) {
+    var v = i < row.length && row[i] != null ? row[i] : '';
+    if (typeof v === 'string' && v.length > CELL_MAX) v = v.slice(0, CELL_MAX - 20) + '…[kəsildi]';
+    out.push(v === '' ? '' : cell(v));
+  }
   return out;
 }
 
@@ -170,12 +177,21 @@ function gridCells(ss) {
   for (var i = 0; i < list.length; i++) n += list[i].getMaxRows() * list[i].getMaxColumns();
   return n;
 }
-Table.prototype.flush = function () {
+Table.prototype.write = function () {
   if (this.pending.length) {
     ensureRows(this.sh, this.base + this.pending.length);
     this.sh.getRange(this.base + 1, 1, this.pending.length, this.width).setValues(this.pending);
   }
   for (var i = 0; i < this.edits.length; i++) this.sh.getRange(this.edits[i].row, 1, 1, this.width).setValues([this.edits[i].values]);
+};
+// Vərəqdə yeni buraxılışın sütunları yoxdursa (setup() işlədilməyib), sütunlar və başlıq özü əlavə olunur: yoxsa hər yazı xəta verib cihazların sinxronu ilişərdi
+Table.prototype.heal = function () {
+  var max = this.sh.getMaxColumns();
+  if (max < this.width) this.sh.insertColumnsAfter(max, this.width - max);
+  this.sh.getRange(1, 1, 1, this.width).setValues([SHEETS[this.name]]);
+};
+Table.prototype.flush = function () {
+  try { this.write(); } catch (e) { this.heal(); this.write(); }       // ikinci cəhd də alınmasa xəta olduğu kimi qalır
 };
 
 function Batch(ss) { this.ss = ss; this.tables = {}; }
@@ -320,7 +336,12 @@ function appendItems(ss, items, acked, device, fresh) {
         // Bir pozuq hadisə bütün növbəni dayandırmasın: səhv jurnala yazılır, hadisə isə Events-də saxlanılır
         batch.table('Audit').add([now, 'server.project_error', it.userId || '', JSON.stringify({ id: id, type: it.type, error: String(err) })]);
       }
-      ev.add([id, it.at, it.type, it.userId || '', now, JSON.stringify(it.data == null ? {} : it.data), it.device || device || '']);
+      var json = JSON.stringify(it.data == null ? {} : it.data);
+      if (json.length > CELL_MAX) {          // xanaya sığmayan hadisə növbəni ilişdirməsin: qəbul olunur, Events-də işarə qalır, Audit-də qeyd düşür
+        batch.table('Audit').add([now, 'server.event_too_big', it.userId || '', JSON.stringify({ id: id, type: it.type, size: json.length })]);
+        json = JSON.stringify({ _tooBig: json.length });
+      }
+      ev.add([id, it.at, it.type, it.userId || '', now, json, it.device || device || '']);
       seen[id] = true;
       if (fresh) fresh.push(it);
       total++;
@@ -538,10 +559,12 @@ function project(batch, it) {
     case 'sale.created': {
       var s = d.sale, p = s.payment;
       batch.table('Sales').add([s.id, s.receiptNo, s.at, s.shiftId, s.cashierId, s.cashierName, s.totals.subtotal / 100, s.totals.discount / 100,
-        s.discount ? s.discount.percent : '', s.discount ? s.discount.approvedByName : '', s.totals.total / 100, p.method, p.bankType || '',
-        p.cashPart / 100, p.bankPart / 100, p.cashReceived / 100, p.change / 100, s.offline, s.fiscal.id || '', s.fiscal.status]);
+        s.discount && s.discount.percent != null ? s.discount.percent : '', s.discount ? s.discount.approvedByName : '', s.totals.total / 100, p.method, p.bankType || '',
+        p.cashPart / 100, p.bankPart / 100, p.cashReceived / 100, p.change / 100, s.offline, s.fiscal.id || '', s.fiscal.status,
+        (s.totals.lineDiscount || 0) / 100, s.discount ? (s.discount.type === 'amount' ? 'amount' : 'percent') : '']);
       s.lines.forEach(function (l, i) {
-        batch.table('SaleLines').add([s.id, s.receiptNo, i, l.productId, l.name, l.storeBarcode, l.qty, l.price / 100, l.unitCost / 100, l.negative]);
+        batch.table('SaleLines').add([s.id, s.receiptNo, i, l.productId, l.name, l.storeBarcode, l.qty, l.price / 100, l.unitCost / 100, l.negative,
+          (l.discount || 0) / 100, l.discountPercent != null ? l.discountPercent : '']);
       });
       break;
     }
@@ -554,7 +577,7 @@ function project(batch, it) {
     case 'product.updated': {
       var pr = d.product || d.after;
       batch.table('Products').upsert([pr.id, pr.name, pr.category, pr.brand, pr.ageGroup, pr.storeBarcode, pr.mfrBarcode, pr.price / 100, pr.avgCost / 100, pr.lastCost / 100,
-        pr.minStock, pr.active, it.at]);
+        pr.minStock, pr.active, it.at, pr.maxDiscount || 0]);
       break;
     }
     case 'stock.received':

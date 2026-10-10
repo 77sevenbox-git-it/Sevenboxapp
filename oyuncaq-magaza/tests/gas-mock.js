@@ -32,6 +32,7 @@ function makeBackend(opts) {
     setValues(vals) {
       calls.sheetApi++;
       if (vals.length !== this.nr || vals.some(v => v.length !== this.nc)) throw new Error('setValues: ölçü uyğun deyil');
+      checkCells(vals);
       for (let i = 0; i < this.nr; i++) {
         while (this.sh.rows.length < this.r + i) this.sh.rows.push([]);
         const row = this.sh.rows[this.r - 1 + i];
@@ -55,6 +56,11 @@ function makeBackend(opts) {
       };
       return f;
     }
+  }
+  // Sheets bir xanaya ən çox 50 000 simvol qəbul edir; aşanda bütün yazma əməliyyatı xəta ilə yıxılır
+  const CELL_LIMIT = 50000;
+  function checkCells(rows) {
+    for (const r of rows) for (const v of r) if (typeof v === 'string' && v.length > CELL_LIMIT) throw new Error('Your input contains more than the maximum of ' + CELL_LIMIT + ' characters in a single cell.');
   }
   // Sheets-in "istifadəçi daxil etməsi" kimi: başındakı ' mətn işarəsidir və saxlanmır
   function unq(v) { return typeof v === 'string' && v[0] === "'" ? v.slice(1) : v; }
@@ -80,6 +86,7 @@ function makeBackend(opts) {
       calls.sheetApi++;
       let n = this.rows.length; while (n > 0 && this.rows[n - 1].every(v => v === '' || v === undefined)) n--;
       if (row.length > this.maxCols) throw new Error('appendRow: sütun sayı şəbəkədən çoxdur');
+      checkCells([row]);
       this.rows.length = n; this.rows.push(row.map(unq));
       if (this.rows.length > this.maxRows) this.maxRows = this.rows.length;
     }

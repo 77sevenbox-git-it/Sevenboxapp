@@ -196,6 +196,44 @@
     });
   }
 
+  // Məhsul şəkli: kassada sətrin solunda kiçik ikon. Şəkil yoxdursa adın ilk hərfi. src yalnız Rules.safeImage-dən keçmiş data URL ola bilər.
+  function thumb(p, size) {
+    var src = root.Rules ? root.Rules.safeImage(p && p.image) : '';
+    var st = size ? 'width:' + size + 'px;height:' + size + 'px' : null;
+    if (src) return h('img', { class: 'pthumb', src: src, alt: '', style: st, decoding: 'async' });
+    return h('span', { class: 'pthumb ph', 'aria-hidden': 'true', style: st }, p && p.name ? String(p.name).trim().charAt(0).toUpperCase() : '?');
+  }
+
+  // Seçilmiş şəkil faylını kvadrat kiçik JPEG data URL-ə çevirir (mərkəzdən kəsilir). Telefon kamerasının 5 MB-lıq şəkli ~5 KB olur.
+  // Hadisə Sheets xanasına (50 000 simvol) sığmalıdır, ona görə keyfiyyət həddə çatana qədər azaldılır.
+  var IMG_SIZE = 96;
+  function shrinkImage(file) {
+    var limit = root.Rules.IMAGE_MAX_CHARS;
+    if (!file || !/^image\//.test(file.type || '')) return Promise.reject(new Error(_t('Şəkil faylı seçin')));
+    if (file.size > 25 * 1024 * 1024) return Promise.reject(new Error(_t('Şəkil çox böyükdür')));
+    function viaElement() {
+      return new Promise(function (res, rej) {
+        var fr = new FileReader();
+        fr.onerror = function () { rej(new Error(_t('Şəkil oxunmadı'))); };
+        fr.onload = function () { var im = new Image(); im.onload = function () { res(im); }; im.onerror = function () { rej(new Error(_t('Şəkil oxunmadı'))); }; im.src = fr.result; };
+        fr.readAsDataURL(file);
+      });
+    }
+    var load = root.createImageBitmap ? root.createImageBitmap(file).catch(viaElement) : viaElement();
+    return load.then(function (img) {
+      var w = img.width, hgt = img.height, side = Math.min(w, hgt);
+      if (!side) throw new Error(_t('Şəkil oxunmadı'));
+      var c = document.createElement('canvas'); c.width = c.height = IMG_SIZE;
+      var g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, IMG_SIZE, IMG_SIZE);
+      g.drawImage(img, (w - side) / 2, (hgt - side) / 2, side, side, 0, 0, IMG_SIZE, IMG_SIZE);
+      if (img.close) img.close();
+      var q = 0.82, out;
+      do { out = c.toDataURL('image/jpeg', q); q -= 0.1; } while (out.length > limit && q > 0.25);
+      if (root.Rules.imageProblem(out)) throw new Error(_t('Şəkil çox böyükdür'));
+      return out;
+    });
+  }
+
   // Çap (js/print.js): kind = 'receipt' (termo çek) | 'label' (etiket). Kağız ölçüsü və printer ayarları cihaza məxsusdur.
   function printHtml(html, kind) { return root.Print.print(html, kind || 'receipt'); }
 
@@ -218,5 +256,5 @@
   function receiptWrap(inner) { return root.Print.wrap(inner); }
 
   root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
-    receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
+    thumb: thumb, shrinkImage: shrinkImage, receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);
