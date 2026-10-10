@@ -4,6 +4,15 @@
 import subprocess, time, sys, os, re
 from playwright.sync_api import sync_playwright
 
+
+def wf(pg, expr, timeout=30000):
+    """wait_for_function sətri eval ilə işlədir, CSP (script-src 'self') isə eval-ı qadağan edir; ona görə ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if pg.evaluate('() => !!(' + expr + ')'): return
+        pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.environ.get('SHOTS', '/tmp/shots'); os.makedirs(OUT, exist_ok=True)
 PORT = 8771
@@ -44,6 +53,7 @@ try:
             ctx = b.new_context(viewport={'width': 1280, 'height': 800}, timezone_id='Asia/Baku')
             pg = ctx.new_page()
             pg.on('pageerror', lambda e, L=L: errors.append(f'[{L}] JS xətası: {e}'))
+            pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
             pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
             pg.goto(URL); pg.wait_for_selector('.users button')
             check(pg.evaluate("() => I18n.lang()") == 'az', f'[{L}] ilkin dil Azərbaycanca')
@@ -110,7 +120,7 @@ try:
             # Çek: interfeys hansı dildədirsə, çek ilkin olaraq Azərbaycanca
             pg.keyboard.press('F1'); pg.wait_for_selector('#pay-cash'); pg.fill('#pay-cash', '100')
             clean(pg, f'[{L}] ödəniş pəncərəsi')
-            pg.keyboard.press('Enter'); pg.wait_for_function('window.__printed >= 1')
+            pg.keyboard.press('Enter'); wf(pg, 'window.__printed >= 1')
             rc = pg.inner_text('#print-area')
             check('YEKUN' in rc and 'Qaytarılan' in rc, f'[{L}] çek Azərbaycanca çıxır (çekin dili ayrıdır)')
             check(not CYR.search(rc) or L == 'az', f'[{L}] çekdə kiril yoxdur')
@@ -125,7 +135,7 @@ try:
                 for name in ['Konstruktor dəsti, 120 hissə']:
                     pg.fill('#scan', codes[name]); pg.keyboard.press('Enter'); pg.wait_for_timeout(150)
                 pg.keyboard.press('F1'); pg.wait_for_selector('#pay-cash'); pg.fill('#pay-cash', '100'); pg.keyboard.press('Enter')
-                pg.wait_for_function('window.__printed >= 2')
+                wf(pg, 'window.__printed >= 2')
                 rc2 = pg.inner_text('#print-area')
                 check(T(pg, 'YEKUN', L) in rc2 and T(pg, 'Qaytarılan@@change', L) in rc2, f'[{L}] çek seçilmiş dildə çıxır ({T(pg, "YEKUN", L)})')
                 check('YEKUN' not in rc2, f'[{L}] seçilmiş dildə çekdə Azərbaycanca "YEKUN" qalmayıb')

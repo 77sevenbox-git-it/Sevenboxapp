@@ -202,6 +202,8 @@
     "Eyni mağaza barkodu iki məhsulda: \"{0}\" və \"{1}\" ({2})": "Aynı mağaza barkodu iki üründe: \"{0}\" ve \"{1}\" ({2})",
     "Çek № {0} iki cihazda verilib (hər ikisi saxlanıldı)": "Fiş No {0} iki cihazda verilmiş (ikisi de saklandı)",
     "Hadisə tətbiq olunmadı ({0}): {1}": "Olay uygulanamadı ({0}): {1}",
+    "Etibarsız hadisə rədd edildi ({0})": "Geçersiz olay reddedildi ({0})",
+    "Bu səhifə çərçivə içində açıla bilməz": "Bu sayfa bir çerçeve içinde açılamaz",
     "Satış etmək": "Satış yapmak",
     "Endirimi təsdiqləmək": "İndirimi onaylamak",
     "Çekdən sətir silmək": "Fişten satır silmek",
@@ -590,6 +592,9 @@
     "Say {0}-dən çox ola bilməz": "Adet {0} değerinden fazla olamaz",
     "Qeyd 200 simvoldan uzun ola bilməz": "Not 200 karakterden uzun olamaz",
     "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "Bu ürün için istek zaten yöneticinin yanıtını bekliyor. Değiştirmek istiyorsanız önce iptal edin.",
-    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} mal kabulü istiyor: \"{1}\", {2} adet"
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} mal kabulü istiyor: \"{1}\", {2} adet",
+    "Saat səhvdir": "Saat yanlış",
+    "Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını \"avtomatik\" rejimə keçirin": "Bu cihazın saati sunucudan {0} dk farklı. Fiş tarihleri otomatik düzeltilir, ancak cihazı otomatik saate geçirin",
+    "Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün": "Bir fişte en fazla {0} satır olabilir. Fişi ikiye bölün"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

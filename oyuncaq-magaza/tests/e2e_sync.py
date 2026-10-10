@@ -3,6 +3,15 @@ menecerə sətir silmə sorğusu. İşə salmaq: python3 tests/e2e_sync.py"""
 import subprocess, time, sys, os, json, urllib.request
 from playwright.sync_api import sync_playwright
 
+
+def wf(pg, expr, timeout=30000):
+    """wait_for_function sətri eval ilə işlədir, CSP (script-src 'self') isə eval-ı qadağan edir; ona görə ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if pg.evaluate('() => !!(' + expr + ')'): return
+        pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.environ.get('SHOTS', '/tmp/shots')
 os.makedirs(OUT, exist_ok=True)
@@ -42,6 +51,7 @@ def open_page(b):
     ctx.add_init_script('window.print = function(){};')
     pg = ctx.new_page()
     pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
+    pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
     pg.goto(f'http://localhost:{WEB}/index.html')
     pg.wait_for_selector('.users button')
     return pg
@@ -216,7 +226,7 @@ try:
         p2.get_by_role('navigation').get_by_role('button', name='Çeklər').click()
         p2.wait_for_selector('text=Hələ satış yoxdur')
         p1.keyboard.press('F1'); p1.wait_for_selector('#pay-cash'); p1.fill('#pay-cash', '10'); p1.keyboard.press('Enter')
-        p1.wait_for_function("document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
+        wf(p1, "document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
         t_sale = time.time()
         lat3 = wait_until(lambda: p2.locator('tbody tr .mono').count() >= 1, 25)
         check(lat3 is not None, f'1-ci brauzerdə satılan çek 2-cidə avtomatik görünür ({lat3:.1f} san)' if lat3 else '2-ci brauzerdə çek görünmədi')

@@ -53,6 +53,7 @@
   /* ---------- Səbət əməliyyatları ---------- */
   function addProduct(p) {
     var i = st.cart.findIndex(function (c) { return c.product.id === p.id; });
+    if (i === -1 && st.cart.length >= S.MAX_CART_LINES) { setMsg(_t('Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün', [S.MAX_CART_LINES]), 'bad'); UI.beep(false); return; }
     if (i === -1) { st.cart.push({ product: p, qty: 1 }); i = st.cart.length - 1; } else st.cart[i].qty++;
     st.sel = i;
     var chk = R.negativeStockCheck(p, st.cart[i].qty);
@@ -399,7 +400,7 @@
     });
     refs.msg = h('div', { class: 'scan-msg', id: 'scan-msg', role: 'status' });
     refs.tbody = h('tbody');
-    refs.table = h('div', { class: 'card table-wrap' }, h('table', null,
+    refs.table = h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
       h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', { class: 'num' }, _t('Say')), h('th', { class: 'num' }, _t('Qiymət')), h('th', { class: 'num' }, _t('Cəm')), h('th', { class: 'del' }, h('span', { class: 'sr-only' }, _t('Sil'))))),
       refs.tbody));
 
@@ -430,6 +431,9 @@
     if (!st || !mountEl || !document.body.contains(mountEl) || document.querySelector('.modal-back')) return;
     var tgt = e.target;
     var inOther = tgt && tgt !== refs.scan && /INPUT|TEXTAREA/.test(tgt.tagName);
+
+    // Fokus heç yerdə və ya düymədədir (kassir boş yerə/düyməyə klik edib): skanerin rəqəmləri itməsin — fokusu skan sahəsinə qaytarırıq, rəqəm ora yazılır
+    if (/^\d$/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey && refs.scan && document.body.contains(refs.scan) && tgt !== refs.scan && !/INPUT|TEXTAREA|SELECT/.test((tgt && tgt.tagName) || '') && !(tgt && tgt.isContentEditable)) refs.scan.focus();
 
     // Skaner başqa sahəyə yazanda (məs. nağd sahəsi) sürətli rəqəm axınını tutub barkod kimi işləyirik
     var t = performance.now();

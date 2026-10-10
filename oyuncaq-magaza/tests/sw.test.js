@@ -77,6 +77,38 @@ const win = (o) => Object.assign({ visibilityState: 'hidden', focused: false, fo
     assert.ok(html.includes('js/notify.js'));
   });
 
+  // fetch: yalnız uğurlu (2xx) cavab keşlənir; şəbəkə xətasında əvvəlki yaxşı keş qaytarılır
+  async function swFetch(url, respond, cached) {
+    const handlers = {}, puts = [];
+    const cache = { put: async (r, x) => { puts.push(r.url); }, addAll: async () => {} };
+    const ctx = { self: { addEventListener: (t, f) => { handlers[t] = f; }, skipWaiting() {}, clients: { claim: async () => {} } }, location: { origin: 'https://x.test' }, URL, Date, Promise,
+      fetch: async () => { const r = respond(); if (r instanceof Error) throw r; return r; },
+      caches: { open: async () => cache, keys: async () => [], match: async () => cached || null } };
+    vm.createContext(ctx);
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), ctx, { filename: 'sw.js' });
+    let out; const ev = { request: { method: 'GET', url }, respondWith: p => { out = p; } };
+    handlers.fetch(ev);
+    const res = await out; await new Promise(r => setTimeout(r, 5));
+    return { res, puts };
+  }
+  const resp = (ok, status) => ({ ok, status, type: 'basic', clone() { return this; } });
+
+  await t('fetch: 200 cavabı keşlənir, 404/500 keşləmir (deploy zamanı yaxşı nüsxə pozulmur)', async () => {
+    const good = await swFetch('https://x.test/js/app.js', () => resp(true, 200));
+    assert.deepStrictEqual(good.puts, ['https://x.test/js/app.js']);
+    for (const st of [404, 500, 503]) { const bad = await swFetch('https://x.test/js/app.js', () => resp(false, st)); assert.deepStrictEqual(bad.puts, [], 'status ' + st + ' keşləndi'); assert.strictEqual(bad.res.status, st); }
+  });
+
+  await t('fetch: şəbəkə yoxdursa keşdəki nüsxə qaytarılır; POST (Apps Script) toxunulmur', async () => {
+    const cachedRes = { status: 200, marker: 'keş' };
+    const off = await swFetch('https://x.test/js/app.js', () => new TypeError('Failed to fetch'), cachedRes);
+    assert.strictEqual(off.res.marker, 'keş');
+    const handlers = {}; const ctx = { self: { addEventListener: (t, f) => { handlers[t] = f; } }, location: { origin: 'https://x.test' }, URL, caches: {}, fetch() { throw new Error('çağırılmamalıdır'); } };
+    vm.createContext(ctx); vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'sw.js'), 'utf8'), ctx);
+    let used = false; handlers.fetch({ request: { method: 'POST', url: 'https://script.google.com/macros/s/x/exec' }, respondWith() { used = true; } });
+    assert.strictEqual(used, false);
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

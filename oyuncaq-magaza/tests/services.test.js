@@ -553,6 +553,16 @@ async function loginAs(role) {
     await DB.put('meta', { key: 'matrix', value: keep });
   });
 
+  await t('çekdə sətir limiti: 101 sətir rədd edilir (hadisə Google Sheets-in 50 000 simvollıq xanasına sığmalıdır), 100 sətir limiti keçir', async () => {
+    S.logout(); S._session.user = { id: 'u_kassir', name: 'Kassir', role: 'kassir' };       // sessiyanı birbaşa quraq (PIN-lər əvvəlki testlərdə dəyişib)
+    const cart = n => Array.from({ length: n }, () => ({ productId: magnet.id, qty: 1 }));
+    await rejects(S.checkout(cart(101), null, { method: 'cash', cashReceived: 1e9 }), /ən çox 100 sətir/);
+    assert.strictEqual(S.MAX_CART_LINES, 100);
+    // 100 sətir limit səbəbi ilə rədd edilmir (başqa səbəblə — növbə/qalıq — rədd edilə bilər)
+    const r = await S.checkout(cart(100), null, { method: 'cash', cashReceived: 1e9 }).then(() => '', e => e.message);
+    assert.ok(!/ən çox 100 sətir/.test(r), 'limit 100-də işləməməlidir: ' + r);
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

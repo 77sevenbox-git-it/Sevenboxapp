@@ -210,7 +210,7 @@
       if (!reqs.length) return;
       myBox.appendChild(h('h2', { style: 'margin:0 0 4px;font-size:18px' }, _t('Mal qəbulu sorğularım')));
       myBox.appendChild(h('p', { class: 'muted', style: 'margin:0 0 8px;font-size:13px' }, _t('Qalıq menecer təsdiqləyəndən sonra artır.')));
-      myBox.appendChild(h('div', { class: 'table-wrap' }, h('table', null,
+      myBox.appendChild(h('div', { class: 'table-wrap', tabindex: '0' }, h('table', null,
         h('thead', null, h('tr', null, h('th', null, _t('Vaxt')), h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Say')), h('th', null, _t('Təchizatçı')), h('th', null, _t('Status')), h('th', null, ''))),
         h('tbody', null, reqs.slice(0, 15).map(function (a) {
           var pl = a.payload || {}, got = a.result && a.result.qty != null && a.result.qty !== pl.qty ? ' → ' + a.result.qty : '';
@@ -237,7 +237,7 @@
         h('div', { class: 'row' },
           h('label', { class: 'sr-only', for: 'pq' }, _t('Axtarış')), q,
           can('product.edit') ? h('button', { class: 'btn primary', onclick: function () { productForm(null, load); } }, _t('Yeni məhsul')) : null)),
-      h('div', { class: 'card table-wrap' }, h('table', null,
+      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Satış ₼')),
           showCost ? h('th', { class: 'num' }, _t('Orta maya ₼')) : null, h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Təchizatçı (qalıq)')), h('th', null, _t('Status')), h('th', null, ''))),
         body)),
@@ -378,7 +378,7 @@
 
   // Bir məhsulun partiyaları (FIFO sırası)
   function lotsModal(p) {
-    var box = h('div', { class: 'table-wrap' });
+    var box = h('div', { class: 'table-wrap', tabindex: '0' });
     UI.modal({ title: _t('Partiyalar (FIFO) — {0}', [p.name]), wide: true, body: box, buttons: [{ text: _t('Bağla') }] });
     S.productLots(p.id).then(function (lots) {
       var seeCost = lots.some(function (l) { return l.unitCost != null; });
@@ -425,8 +425,13 @@
   function monthStart(ds, k) { var d = new Date(ds.slice(0, 7) + '-01T00:00:00Z'); d.setUTCMonth(d.getUTCMonth() + k); return d.toISOString().slice(0, 10); }
   function dayIso(ds) { return ds ? new Date(ds + 'T00:00:00+04:00').toISOString() : ''; }          // Bakı vaxtı UTC+4 (yay vaxtı yoxdur)
 
+  // CSV-də =, +, -, @ ilə başlayan mətn Excel-də düstur kimi işləyir (məs. təchizatçı adı =HYPERLINK(...)): əvvəlinə ' qoyulur. Ədəd / telefon kimi görünənlər (rəqəm, boşluq, vergül, nöqtə) toxunulmaz qalır.
+  function csvSafe(c) {
+    c = c == null ? '' : String(c);
+    return /^[=+\-@\t\r]/.test(c) && !/^[+-]?[\d\s.,]*$/.test(c) ? "'" + c : c;
+  }
   function csvDownload(name, rows) {
-    var text = '\ufeff' + rows.map(function (r) { return r.map(function (c) { c = c == null ? '' : String(c); return /[";\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
+    var text = '\ufeff' + rows.map(function (r) { return r.map(function (c) { c = csvSafe(c); return /[";\n\r]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join(';'); }).join('\r\n');
     var a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })), download: name });
     document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
@@ -493,7 +498,7 @@
 
     function detail(x) {
       var cost = last && last.seeCost;
-      UI.modal({ title: _t('{0} — məhsullar', [x.name]), wide: true, buttons: [{ text: _t('Bağla') }], body: h('div', { class: 'table-wrap' }, h('table', { id: 'detail-table' },
+      UI.modal({ title: _t('{0} — məhsullar', [x.name]), wide: true, buttons: [{ text: _t('Bağla') }], body: h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'detail-table' },
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Satılan')), h('th', { class: 'num' }, _t('Qaytarılan')), h('th', { class: 'num' }, _t('Xalis')), h('th', { class: 'num' }, _t('Gəlir ₼')),
           cost ? [h('th', { class: 'num' }, _t('Maya ₼')), h('th', { class: 'num' }, _t('Mənfəət ₼'))] : null)),
         h('tbody', null, x.products.map(function (p) {
@@ -519,7 +524,7 @@
     el.appendChild(h('div', { class: 'page' },
       h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:16px' }, h('h1', { style: 'margin:0' }, _t('Təchizatçılar')),
         canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, _t('+ Yeni təchizatçı')) : null),
-      h('div', { class: 'card table-wrap' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
+      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
       h('div', { class: 'card', style: 'margin-top:24px' },
         h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
           h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Hansı təchizatçının malından nə qədər satılıb')),
@@ -527,7 +532,7 @@
           warnBox,
           h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: 'rp-preset' }, _t('Dövr')), preset), h('div', { class: 'field' }, h('label', { for: 'rp-from' }, _t('Başlanğıc')), from), h('div', { class: 'field' }, h('label', { for: 'rp-to' }, _t('Son')), to)),
           h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Satış FIFO ilədir: hər çek ən köhnə partiyadan çıxır. Gəlir endirimdən sonrakı məbləğdir, qaytarmalar çıxılır. "Təchizatçısız" — sistemə köçməzdən əvvəlki qalıq və ya qəbuldan əvvəl (mənfi qalıqla) satılan mal. Oflayn cihaz sonra sinxronlaşanda bölgü təchizatçılar arasında düzələ bilər, cəmlər dəyişmir.'))),
-        h('div', { class: 'table-wrap' }, h('table', { id: 'rep-table' }, repHead, repBody, repFoot)))));
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'rep-table' }, repHead, repBody, repFoot)))));
     range(); loadAll();
   }
 
@@ -574,7 +579,7 @@
             h('td', { class: 'num' }, M.format(l.price)), h('td', { class: 'num' }, inp)));
         });
         var reason = h('input', { class: 'input', id: 'rreason', placeholder: _t('məs. zədəli, uyğun gəlmədi') });
-        out.appendChild(h('div', { class: 'card table-wrap' }, h('table', null,
+        out.appendChild(h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
           h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Satılıb')), h('th', { class: 'num' }, _t('Qaytarılıb')), h('th', { class: 'num' }, _t('Qiymət')), h('th', { class: 'num' }, _t('Qaytarılır')))), tb)));
         out.appendChild(h('div', { class: 'row' },
           h('div', { class: 'field', style: 'flex:1 1 280px' }, h('label', { for: 'rreason' }, _t('Səbəb')), reason),
@@ -713,7 +718,7 @@
   function sales(el) {
     UI.clear(el);
     var tb = h('tbody');
-    el.appendChild(h('div', { class: 'page' }, h('h1', null, _t('Çeklər')), h('div', { class: 'card table-wrap' }, h('table', null,
+    el.appendChild(h('div', { class: 'page' }, h('h1', null, _t('Çeklər')), h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
       h('thead', null, h('tr', null, h('th', null, '№'), h('th', null, _t('Tarix')), h('th', null, _t('Kassir')), h('th', null, _t('Ödəniş')), h('th', { class: 'num' }, _t('Yekun ₼')), h('th', null, ''), h('th', null, ''))), tb))));
     function loadList() { return S.recentSales(100).then(function (list) { UI.clear(tb); fill(list); }); }
     root.Screens._refresh = loadList;
@@ -759,7 +764,7 @@
       el.appendChild(h('div', { class: 'page', style: 'max-width:1000px' },
         h('h1', null, _t('Rollar və icazələr')),
         h('p', { class: 'muted' }, _t('Hansı rolun hansı əməliyyata icazəsi olduğunu yalnız Admin dəyişir. Hər dəyişiklik audit jurnalına yazılır.')),
-        h('div', { class: 'card table-wrap' }, h('table', null,
+        h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
           h('thead', null, h('tr', null, h('th', null, _t('İcazə')), roles.map(function (role) { return h('th', { style: 'text-align:center' }, R.ROLE_NAMES[role]); }))), tb)),
         h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: function () {
           S.setMatrix(m).then(function () { root.App.matrix = m; UI.toast(_t('İcazələr yadda saxlanıldı')); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
@@ -916,7 +921,7 @@
 
     load();
     root.Screens._refresh = load;     // başqa cihazdan istifadəçi dəyişikliyi gələndə siyahı yenilənir
-    return h('div', { class: 'card table-wrap', style: 'margin-top:24px', id: 'users-card' },
+    return h('div', { class: 'card table-wrap', tabindex: '0', style: 'margin-top:24px', id: 'users-card' },
       h('div', { style: 'padding:16px 20px 0;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap' },
         h('h2', { style: 'margin:0;font-size:18px' }, _t('İstifadəçilər')),
         h('button', { class: 'btn primary small', type: 'button', id: 'user-add', onclick: create }, _t('+ Yeni istifadəçi'))),

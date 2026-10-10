@@ -1,5 +1,5 @@
 /* Service worker: tətbiq fayllarını keşdə saxlayır ki, internet olmadan açılsın (FR-100). */
-var CACHE = 'magaza-v11';
+var CACHE = 'magaza-v14';
 var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/i18n.js', 'js/lang-ru.js', 'js/lang-en.js', 'js/lang-tr.js', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/fifo.js', 'js/db.js',
   'js/services.js', 'js/replica.js', 'js/sync.js', 'js/notify.js', 'js/ui.js', 'js/print.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/badge-96.png'];
 
@@ -20,12 +20,14 @@ self.addEventListener('fetch', function (e) {
   if (url.origin === location.origin) {
     // Öz fayllarımız: əvvəl şəbəkə (yenilik üçün), olmasa keş
     e.respondWith(fetch(req, { cache: 'no-cache' }).then(function (res) {   // no-cache: GitHub Pages-in 10 dəq HTTP keşi köhnə kodu saxlamasın (ETag ilə yoxlanır, dəyişməyibsə 304)
-      var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); return res;
+      // Yalnız uğurlu cavab keşlənir: deploy zamanı GitHub Pages-in 404/5xx cavabı yaxşı keş nüsxəsini əvəz edib oflayn işi pozmasın
+      if (res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); }
+      return res;
     }).catch(function () { return caches.match(req).then(function (r) { return r || caches.match('index.html'); }); }));
   } else if (url.hostname.indexOf('fonts.') !== -1) {
     // Şriftlər: əvvəl keş
     e.respondWith(caches.match(req).then(function (r) {
-      return r || fetch(req).then(function (res) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); return res; });
+      return r || fetch(req).then(function (res) { if (res.ok || res.type === 'opaque') { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); } return res; });
     }));
   }
 });

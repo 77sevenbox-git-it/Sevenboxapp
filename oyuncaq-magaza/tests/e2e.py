@@ -3,6 +3,15 @@
 import subprocess, time, sys, os
 from playwright.sync_api import sync_playwright
 
+
+def wf(pg, expr, timeout=30000):
+    """wait_for_function sətri eval ilə işlədir, CSP (script-src 'self') isə eval-ı qadağan edir; ona görə ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if pg.evaluate('() => !!(' + expr + ')'): return
+        pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.environ.get('SHOTS', '/tmp/shots')
 os.makedirs(OUT, exist_ok=True)
@@ -19,6 +28,7 @@ try:
         b = p.chromium.launch()
         pg = b.new_page(viewport={'width': 1440, 'height': 900}, timezone_id='Asia/Baku')
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
+        pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
         pg.goto('http://localhost:8765/index.html')
         pg.wait_for_selector('.users button')
@@ -92,7 +102,7 @@ try:
         check(pg.locator('tbody tr', has_text='Yumşaq ayı').count() == 1, 'kassir PIN-i ilə sətir silinmir')
         pg.fill('#appr-pin', '2222'); pg.keyboard.press('Enter')
         pg.wait_for_selector('.modal-back', state='detached')
-        pg.wait_for_function("!Array.from(document.querySelectorAll('tbody tr')).some(r => r.textContent.includes('Yumşaq ayı'))")
+        wf(pg, "!Array.from(document.querySelectorAll('tbody tr')).some(r => r.textContent.includes('Yumşaq ayı'))")
         check(pg.locator('tbody tr', has_text='Yumşaq ayı').count() == 0, 'menecer PIN-i ilə sətir silinir')
         check(pg.inner_text('.totals .grand b').startswith('19,00'), 'silindikdən sonra yekun 19,00')
         removed = pg.evaluate("() => DB.getAll('audit').then(a => a.filter(x => x.type === 'pos.line_removed').map(x => x.data.approvedByName))")
@@ -108,7 +118,7 @@ try:
         check('75,00' in pg.inner_text('.change'), 'qaytarılacaq 75,00')
         pg.screenshot(path=f'{OUT}/03-pos-cash.png')
         pg.keyboard.press('Enter')
-        pg.wait_for_function('window.__printed >= 1')
+        wf(pg, 'window.__printed >= 1')
         check('YEKUN' in pg.inner_text('#print-area'), 'çek çap üçün hazırlandı')
         check('Çek № 1 tamamlandı' in pg.inner_text('#scan-msg'), 'satış tamamlandı mesajı')
         receipt_bc = pg.evaluate("() => DB.getAll('sales').then(s => s[0].receiptBarcode)")
@@ -136,7 +146,7 @@ try:
         check('3,60' in pg.inner_text('.change'), 'qarışıq ödəniş qalığı 3,60')
         pg.screenshot(path=f'{OUT}/06-pos-mixed-discount.png')
         pg.get_by_role('button', name='Təsdiqlə və çek çap et (Enter)').click()
-        pg.wait_for_function('window.__printed >= 2')
+        wf(pg, 'window.__printed >= 2')
 
         # Qarışıq: alınan nağd boş qalanda nağd hissə dəqiq sayılır (qalıq verilmir)
         pg.fill('#scan', codes['Puzzl 500 hissə']); pg.keyboard.press('Enter'); pg.wait_for_timeout(150)
@@ -144,7 +154,7 @@ try:
         check('Nağd hissə: 7,00' in pg.inner_text('.pay-panel'), 'qarışıq ödənişdə nağd hissə avtomatik göstərilir (12,00 − 5,00)')
         check('0,00' in pg.inner_text('.change'), 'alınan nağd boşdursa qaytarılacaq 0,00')
         pg.get_by_role('button', name='Təsdiqlə və çek çap et (Enter)').click()
-        pg.wait_for_function('window.__printed >= 3')
+        wf(pg, 'window.__printed >= 3')
 
         # Kassada istehsalçı barkodu → rədd (əvvəl bir məhsula istehsalçı barkodu verək)
         pg.evaluate("""() => DB.getAll('products').then(ps => { const p = ps.find(x => x.name.startsWith('Puzzl')); p.mfrBarcode = '4006381333931'; return DB.put('products', p); })""")
@@ -185,12 +195,12 @@ try:
         check('Sayılmış' in pg.inner_text('main .modal-err'), 'sayılmış məbləğ boşdursa xəta səhifədə göstərilir')
         pg.fill('#counted', '70')
         pg.get_by_role('button', name='Bağla və Z hesabatı çap et').click()
-        pg.wait_for_function("document.querySelector('main .modal-err') && !document.querySelector('main .modal-err').hidden && document.querySelector('main .modal-err').textContent.includes('İzah')")
+        wf(pg, "document.querySelector('main .modal-err') && !document.querySelector('main .modal-err').hidden && document.querySelector('main .modal-err').textContent.includes('İzah')")
         check(not pg.locator('#close-shift').is_disabled(), 'xəta olandan sonra "Bağla" düyməsi yenidən aktivdir')
         printed_before = pg.evaluate('window.__printed')
         pg.fill('#counted', '86,15')
         pg.get_by_role('button', name='Bağla və Z hesabatı çap et').click()
-        pg.wait_for_function(f'window.__printed > {printed_before}')
+        wf(pg, f'window.__printed > {printed_before}')
         zt = pg.inner_text('#print-area')
         check('Z HESABATI' in zt and 'mədaxil' not in zt and 'məxaric' not in zt, 'Z çekində sıfır olan sətirlər (mədaxil/məxaric) yoxdur')
         check('Başlanğıc nağd' in zt and '50,00' in zt, 'Z çekində başlanğıc nağd var')

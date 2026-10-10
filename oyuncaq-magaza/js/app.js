@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-6';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-9';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -55,6 +55,7 @@
       statusEl.appendChild(h('span', { class: 'muted', title: _t('Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın') }, 'v' + BUILD));
       if (r[1]) statusEl.appendChild(h('span', { class: 'badge', title: _t('Serverə göndərilməmiş qeydlər') }, _t('{0} sinxron gözləyir', [r[1]])));
       if (sy.ok === false) statusEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, _t('Sinxron xətası')));
+      if (Math.abs(sy.skewMs || 0) > 120000) statusEl.appendChild(h('span', { class: 'badge bad', title: _t('Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını "avtomatik" rejimə keçirin', [Math.round(Math.abs(sy.skewMs) / 60000)]) }, _t('Saat səhvdir')));
       if (r[3].length) statusEl.appendChild(h('button', { class: 'btn small primary', id: 'req-btn', onclick: function () { root.Screens.approvalsModal(refreshStatus); } }, _t('Sorğular ({0})', [r[3].length])));
       statusEl.appendChild(h('span', null, r[0] ? _t('Növbə açıq · {0}', [UI.fmtTime(r[0].openedAt)]) : _t('Növbə bağlı')));
       statusEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
@@ -157,6 +158,8 @@
   root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else refreshStatus(); });
 
   document.title = _t('Mağaza İS — Kassa');
+  // Başqa saytın <iframe>-i içində açılıbsa (clickjacking) işləmir: GitHub Pages X-Frame-Options göndərmir, <meta> CSP isə frame-ancestors-u dəstəkləmir
+  if (root.top !== root.self) { document.getElementById('app').textContent = _t('Bu səhifə çərçivə içində açıla bilməz'); return; }
   if (root.I18n) root.I18n.remember(root.I18n.lang());   // service worker bildirişi bu dildə göstərsin
   S.init().then(function () {
     root.Sync.start();

@@ -5,6 +5,15 @@ Nəticə: hər ssenari üçün saniyə ilə ölçülər; sonda keçdi/uğursuz. 
 import asyncio, json, os, random, statistics, subprocess, sys, time, urllib.request
 from playwright.async_api import async_playwright
 
+
+async def wfa(pg, expr, timeout=30000):
+    """wait_for_function CSP altında işləmir (eval): ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if await pg.evaluate('() => !!(' + expr + ')'): return
+        await pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP = os.environ.get('APP_ROOT', ROOT)
 WEB = int(os.environ.get('WEB_PORT', '8771')); MOCK = int(os.environ.get('MOCK_PORT', '8791'))
@@ -129,6 +138,7 @@ async def open_dev(browser, label):
     await ctx.add_init_script('window.print = function(){};')
     pg = await ctx.new_page()
     pg.on('pageerror', lambda e: errors.append(f'JS xətası ({label}): {e} :: ' + str(getattr(e, "stack", ""))[:600]))
+    pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
     await pg.goto(f'http://localhost:{WEB}/index.html')
     await pg.wait_for_selector('.users button')
     return Dev(label, pg)
@@ -176,7 +186,7 @@ async def main():
             await K.pg.wait_for_selector('tbody tr .mono')
             await K.pg.keyboard.press('F1'); await K.pg.wait_for_selector('#pay-cash')
             await K.pg.fill('#pay-cash', '10'); await K.pg.keyboard.press('Enter')
-            await K.pg.wait_for_function("document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
+            await wfa(K.pg, "document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
             t0 = time.time()
             lag = await wait_until(lambda: _gt(M, 'sales', before), 90)
             lags.append(lag if lag is not None else 90)
@@ -231,7 +241,7 @@ async def main():
         for i in range(12):
             ts = time.time()
             await K.pg.fill('#scan', magnet); await K.pg.keyboard.press('Enter')
-            await K.pg.wait_for_function("document.querySelector('#scan').value === ''")
+            await wfa(K.pg, "document.querySelector('#scan').value === ''")
             times.append(time.time() - ts)
         note('12 skan: ' + stats(times))
         check(max(times) < 1.0, f'skan hər dəfə 1 san-dən tez ({max(times):.2f} san)')
@@ -246,7 +256,7 @@ async def main():
             await K.pg.wait_for_selector('tbody tr .mono')
             await K.pg.keyboard.press('F1'); await K.pg.wait_for_selector('#pay-cash')
             await K.pg.fill('#pay-cash', '500'); await K.pg.keyboard.press('Enter')
-            await K.pg.wait_for_function("document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
+            await wfa(K.pg, "document.querySelector('#scan-msg').textContent.includes('tamamlandı')")
         t0 = time.time()
         k_sales = await K.count('sales')
         conv = await wait_until(lambda: _count_sales_rows(base_sales + 5), 180)

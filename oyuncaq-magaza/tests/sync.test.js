@@ -513,6 +513,9 @@ async function t(name, fn) {
     assert.deepStrictEqual(actions.slice().sort(), ['GET', 'ping', 'sync']);
     const pr = (await X.DB.get('meta', 'block:productSeq')).value.ranges, rc = (await X.DB.get('meta', 'block:receiptSeq')).value.ranges;
     assert.strictEqual(pr.length, 1); assert.strictEqual(rc.length, 1);
+    const sz = r => r.reduce((n, x) => n + x[1] - x[0] + 1, 0);
+    assert.ok(sz(rc) >= 400, 'oflayn ehtiyat: ən azı 400 çek nömrəsi (gündə 300 çek üçün qıt-qıt, bir gün) — hazırda ' + sz(rc));
+    assert.ok(sz(pr) >= 100, 'ən azı 100 məhsul nömrəsi');
   });
 
   await t('köhnə server (v3, "blocks" yoxdur): aralıq ayrıca "allocate" ilə alınır', async () => {

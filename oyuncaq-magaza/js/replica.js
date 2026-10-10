@@ -102,7 +102,9 @@
     return t.get('lots', d.lotId).then(function (cur) {
       if (cur) return;
       sum.touched.lots = true;
-      return t.put('lots', { id: d.lotId, productId: d.productId, supplierId: d.supplierId || null, qty: d.qty, unitCost: d.unitCost, at: d.at || ev.at, userId: ev.userId, note: d.note || '' });
+      var lot = { id: d.lotId, productId: d.productId, supplierId: d.supplierId || null, qty: d.qty, unitCost: d.unitCost, at: d.at || ev.at, userId: ev.userId, note: d.note || '' };
+      if (d.approvalId) lot.approvalId = d.approvalId;            // təsdiq sorğusundan gələn partiya bütün cihazlarda eyni görünsün
+      return t.put('lots', lot);
     });
   }
 
@@ -249,13 +251,95 @@
     });
   };
 
+  /* ---------- Gələn hadisənin quruluş yoxlaması ----------
+     Serverdən gələn hadisəni yazan şəxs (səhv versiyalı cihaz və ya açarı bilən hücumçu) mətn əvəzinə obyekt, NaN qalıq, mənfi say, nəhəng sətir və s. göndərə bilər.
+     Belə hadisə bazaya yazılmır və sinxronu dondurmur: rədd edilir və «konfliktlər» siyahısına düşür. Yoxlama yalnız tip və hüdudlara baxır:
+     düzgün görünən saxta hadisəni (məs. başqasının adından təsdiq) tanımaq mümkün deyil — bu, serverdə istifadəçi yoxlaması olmayan arxitekturanın məhdudiyyətidir. */
+  var MONEY_MAX = 1e10, QTY_MAX = 1e6, STOCK_MAX = 1e7;
+  function isObj(x) { return x !== null && typeof x === 'object' && !Array.isArray(x); }
+  function sOk(x, max) { return typeof x === 'string' && x.length <= max; }
+  function idOk(x) { return typeof x === 'string' && x.length > 0 && x.length <= 120; }
+  function nameOk(x, max) { return typeof x === 'string' && x.length > 0 && x.length <= max; }
+  function iOk(x, lo, hi) { return typeof x === 'number' && isFinite(x) && Math.floor(x) === x && x >= lo && x <= hi; }
+  function nOk(x, lo, hi) { return typeof x === 'number' && isFinite(x) && x >= lo && x <= hi; }
+  function oS(o, k, max) { return o[k] == null || sOk(o[k], max); }
+  function oN(o, k, lo, hi) { return o[k] == null || nOk(o[k], lo, hi); }
+  function oI(o, k, lo, hi) { return o[k] == null || iOk(o[k], lo, hi); }
+  function oB(o, k) { return o[k] == null || typeof o[k] === 'boolean'; }
+  function oId(o, k) { return o[k] == null || o[k] === '' || idOk(o[k]); }
+  function eanOk(x) { return typeof x === 'string' && x.length === 13 && !!root.Barcode && root.Barcode.isValidEan13(x); }      // yanlış EAN çap ekranını (etiket/çek) çökdürərdi
+  function small(x, max) { try { return JSON.stringify(x).length <= max; } catch (e) { return false; } }
+  function arr(a, lo, hi, fn) { return Array.isArray(a) && a.length >= lo && a.length <= hi && a.every(fn); }
+  var own = Object.prototype.hasOwnProperty;
+
+  function masterOk(a) {                       // product.updated.after / product.created.product ortaq sahələri (olan sahələr yoxlanır)
+    return isObj(a) && (!('name' in a) || nameOk(a.name, 200)) && oS(a, 'category', 200) && oS(a, 'brand', 200) && oS(a, 'ageGroup', 200) && oS(a, 'mfrBarcode', 500) &&
+      (!('price' in a) || iOk(a.price, 0, MONEY_MAX)) && oI(a, 'minStock', 0, QTY_MAX) && oB(a, 'active');
+  }
+  var CHECK = {
+    'user.upserted': function (d) {
+      var u = d.user; return isObj(u) && idOk(u.id) && nameOk(u.name, 80) && typeof u.role === 'string' && own.call(Rules.ROLE_NAMES, u.role) && sOk(u.salt, 200) && sOk(u.pinHash, 200) && oB(u, 'active') && oB(u, 'mustChangePin') && oS(u, 'updatedAt', 40);
+    },
+    'product.created': function (d) {
+      var p = d.product; return masterOk(p) && idOk(p.id) && nameOk(p.name, 200) && iOk(p.price, 0, MONEY_MAX) && eanOk(p.storeBarcode) && oN(p, 'avgCost', 0, MONEY_MAX) && oN(p, 'lastCost', 0, MONEY_MAX) && oI(p, 'stock', -STOCK_MAX, STOCK_MAX);
+    },
+    'product.updated': function (d) { var a = d.after; return isObj(a) && idOk(d.id || a.id) && masterOk(a); },
+    'stock.received': function (d) {
+      return idOk(d.productId) && iOk(d.qty, 1, QTY_MAX) && nOk(d.unitCost, 0, MONEY_MAX) && oId(d, 'lotId') && oId(d, 'approvalId') && oId(d, 'supplierId') && oS(d, 'note', 500) && oS(d, 'at', 40);
+    },
+    'supplier.upserted': function (d) { var s = d.supplier; return isObj(s) && idOk(s.id) && nameOk(s.name, 200) && oS(s, 'phone', 500) && oS(s, 'note', 500) && oB(s, 'active') && oS(s, 'updatedAt', 40); },
+    'sale.created': function (d) {
+      var s = d.sale; if (!isObj(s) || !idOk(s.id) || !iOk(s.receiptNo, 0, 1e9) || !sOk(s.at, 40) || !oS(s, 'shiftId', 120) || !oS(s, 'cashierId', 120) || !oS(s, 'cashierName', 80) || !(s.receiptBarcode == null || eanOk(s.receiptBarcode))) return false;
+      if (!arr(s.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX) && oN(l, 'unitCost', 0, MONEY_MAX) && oS(l, 'storeBarcode', 40); })) return false;
+      var t = s.totals, p = s.payment;
+      if (!isObj(t) || !nOk(t.subtotal, 0, MONEY_MAX) || !nOk(t.total, 0, MONEY_MAX) || !oN(t, 'discount', 0, MONEY_MAX)) return false;
+      if (!isObj(p) || ['cash', 'bank', 'mixed'].indexOf(p.method) === -1 || (p.bankType != null && p.bankType !== 'pos' && p.bankType !== 'transfer')) return false;
+      if (!oN(p, 'cashPart', 0, MONEY_MAX) || !oN(p, 'bankPart', 0, MONEY_MAX) || !oN(p, 'cashReceived', 0, MONEY_MAX) || !oN(p, 'change', 0, MONEY_MAX)) return false;
+      if (s.discount != null && !(isObj(s.discount) && nOk(s.discount.percent, 0, 100) && oS(s.discount, 'approvedByName', 80) && oS(s.discount, 'approvedBy', 120))) return false;
+      return s.fiscal == null || (isObj(s.fiscal) && oS(s.fiscal, 'status', 40) && (s.fiscal.id == null || sOk(s.fiscal.id, 120)));
+    },
+    'return.created': function (d) {
+      var r = d.ret; return isObj(r) && idOk(r.id) && oS(r, 'saleId', 120) && sOk(r.at, 40) && nOk(r.amount, 0, MONEY_MAX) && oN(r, 'cashAmount', 0, MONEY_MAX) && oN(r, 'bankAmount', 0, MONEY_MAX) && (r.bankType == null || r.bankType === 'pos' || r.bankType === 'transfer') &&
+        oS(r, 'reason', 500) && oS(r, 'approvedByName', 80) && oS(r, 'userId', 120) &&
+        arr(r.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX); });
+    },
+    'shift.opened': function (d) { return shiftOk(d.shift); },
+    'shift.closed': function (d) { return shiftOk(d.shift); },
+    'cash.in': function (d) { return moveOk(d.move); },
+    'cash.out': function (d) { return moveOk(d.move); },
+    'approval.requested': function (d) {
+      var a = d.approval; return isObj(a) && idOk(a.id) && oS(a, 'kind', 60) && oS(a, 'perm', 60) && oS(a, 'status', 20) && oS(a, 'summary', 600) && oS(a, 'tk', 600) && (a.tp == null || (Array.isArray(a.tp) && a.tp.length <= 10 && small(a.tp, 1000))) && (a.payload == null || (isObj(a.payload) && small(a.payload, 5000))) && oS(a, 'at', 40);
+    },
+    'approval.decided': function (d) {
+      return idOk(d.id) && ['approved', 'rejected', 'cancelled'].indexOf(d.decision) !== -1 && oS(d, 'decidedAt', 40) && (d.by == null || (isObj(d.by) && oId(d.by, 'id') && oS(d.by, 'name', 80))) && (d.result == null || (isObj(d.result) && small(d.result, 2000)));
+    },
+    'admin.matrix_changed': function (d) {
+      var a = d.after; if (!isObj(a)) return false;
+      var keys = Object.keys(a); if (!keys.length || keys.length > 10) return false;
+      return keys.every(function (r) { return own.call(Rules.ROLE_NAMES, r) && arr(a[r], 0, 100, function (x) { return typeof x === 'string' && x.length <= 60; }); });
+    },
+    'admin.store_changed': function (d) {
+      var s = d.store; if (!isObj(s)) return false;
+      var keys = Object.keys(s); if (keys.length > 30) return false;
+      return keys.every(function (k) { var v = s[k]; return v == null || typeof v === 'boolean' || nOk(v, -1e12, 1e12) || sOk(v, 300); });
+    }
+  };
+  function shiftOk(s) { return isObj(s) && idOk(s.id) && (s.status === 'open' || s.status === 'closed') && sOk(s.openedAt, 40) && oS(s, 'closedAt', 40) && oS(s, 'note', 500) && oN(s, 'openingCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'expectedCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'countedCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'diff', -MONEY_MAX, MONEY_MAX); }
+  function moveOk(m) { return isObj(m) && idOk(m.id) && oS(m, 'shiftId', 120) && nOk(m.amount, 0, MONEY_MAX) && oS(m, 'type', 40) && oS(m, 'reason', 500) && oS(m, 'at', 40) && oS(m, 'userId', 120); }
+
   function applyOne(t, ev, sum) {
-    var handler = H[ev.type];
+    var handler = own.call(H, ev.type) ? H[ev.type] : null;
     if (!handler) { sum.ignored++; return Promise.resolve(); }
-    return t.get('audit', auditIdOf(ev.id)).then(function (own) {
-      if (own) { sum.own++; return; }          // bu cihazın öz hadisəsi (köhnə formatda mənşə qeyd olunmayıb)
+    return t.get('audit', auditIdOf(ev.id)).then(function (mine) {
+      if (mine) { sum.own++; return; }          // bu cihazın öz hadisəsi (köhnə formatda mənşə qeyd olunmayıb)
+      var d = isObj(ev.data) ? ev.data : {}, check = CHECK[ev.type], good = false;
+      try { good = !check || check(d); } catch (e) { good = false; }
+      if (!good) {
+        sum.rejected = (sum.rejected || 0) + 1;
+        return note(t, { kind: 'rejected', message: _t('Etibarsız hadisə rədd edildi ({0})', [ev.type]), eventId: ev.id });
+      }
       sum.applied++;
-      return handler(t, ev, ev.data || {}, sum);
+      return handler(t, ev, d, sum);
     });
   }
 
@@ -273,7 +357,8 @@
         return each(fresh, function (ev) {
           // Bir hadisənin məntiq xətası bütün səhifəni dayandırmasın; IndexedDB xətaları isə tranzaksiyanı ləğv edir və təkrar cəhd olunur
           return Promise.resolve().then(function () { return applyOne(t, ev, sum); }).catch(function (e) {
-            if (typeof DOMException !== 'undefined' && e instanceof DOMException) throw e;
+            // Sinxron atılan DataError/DataCloneError (yanlış açar, köçürülə bilməyən dəyər) sorğu yaratmır, tranzaksiyanı pozmur: hadisənin öz xətasıdır. Qalanı (kvota, ləğv) təkrar cəhd üçündür.
+            if (typeof DOMException !== 'undefined' && e instanceof DOMException && e.name !== 'DataError' && e.name !== 'DataCloneError') throw e;
             return note(t, { kind: 'apply', message: _t('Hadisə tətbiq olunmadı ({0}): {1}', [ev.type, (e && e.message)]), eventId: ev.id });
           });
         }).then(function () { return t.put('meta', { key: 'syncCursor', value: next }); });

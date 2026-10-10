@@ -202,6 +202,8 @@
     "Eyni mağaza barkodu iki məhsulda: \"{0}\" və \"{1}\" ({2})": "Один штрихкод магазина у двух товаров: «{0}» и «{1}» ({2})",
     "Çek № {0} iki cihazda verilib (hər ikisi saxlanıldı)": "Чек № {0} выдан на двух устройствах (сохранены оба)",
     "Hadisə tətbiq olunmadı ({0}): {1}": "Событие не применено ({0}): {1}",
+    "Etibarsız hadisə rədd edildi ({0})": "Недопустимое событие отклонено ({0})",
+    "Bu səhifə çərçivə içində açıla bilməz": "Эту страницу нельзя открыть во фрейме",
     "Satış etmək": "Продавать",
     "Endirimi təsdiqləmək": "Подтверждать скидки",
     "Çekdən sətir silmək": "Удалять строки из чека",
@@ -590,6 +592,9 @@
     "Say {0}-dən çox ola bilməz": "Количество не может быть больше {0}",
     "Qeyd 200 simvoldan uzun ola bilməz": "Примечание не может быть длиннее 200 символов",
     "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "Запрос по этому товару уже ждёт ответа менеджера. Чтобы изменить, сначала отмените его.",
-    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} просит принять товар: «{1}», {2} шт."
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} просит принять товар: «{1}», {2} шт.",
+    "Saat səhvdir": "Неверные часы",
+    "Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını \"avtomatik\" rejimə keçirin": "Часы устройства отличаются от сервера на {0} мин. Даты чеков исправляются автоматически, но включите на устройстве автоматическое время",
+    "Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün": "В одном чеке может быть не более {0} позиций. Разделите чек на две части"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

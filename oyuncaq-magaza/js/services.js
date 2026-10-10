@@ -8,7 +8,18 @@
   function err(msg, code) { var e = new Error(msg); e.code = code || 'error'; return e; }
   // Hər çağırış əvvəlkindən ciddi böyük vaxt qaytarır: eyni cihazın iki ardıcıl yazısı eyni millisaniyəyə düşməsin (son yazan qalib qaydası üçün)
   var lastNow = 0;
-  function now() { var t = Date.now(); if (t <= lastNow) t = lastNow + 1; lastNow = t; return new Date(t).toISOString(); }
+  // Cihazın saatı serverdən 1 dəq.-dən çox fərqlənirsə, hadisə damğaları serverin saatına görə düzəldilir (saatı yanlış cihaz "son yazan qalib" qaydasını pozmasın)
+  var clockOffset = 0;
+  function nowMs() { return Date.now() + clockOffset; }
+  function now() { var t = nowMs(); if (t <= lastNow) t = lastNow + 1; lastNow = t; return new Date(t).toISOString(); }
+  function setClockOffset(ms) {
+    if (typeof ms !== 'number' || !isFinite(ms) || Math.abs(ms) > 30 * 86400000) return Promise.resolve();   // 30 gündən böyük fərq ağlabatan deyil (səhv/saxta cavab): düzəliş tətbiq olunmur
+    var v = Math.abs(ms) > 60000 ? Math.round(ms) : 0;
+    if (v === clockOffset || (v && clockOffset && Math.abs(v - clockOffset) < 5000)) return Promise.resolve();   // ölçmə səs-küyünə görə hər dövrdə yazma
+    if (lastNow) lastNow += v - clockOffset;           // əvvəlki (yanlış saatla verilmiş) damğaları da yeni saata köçür ki, "ciddi artan" qaydası düzgün saatı geridə saxlamasın
+    clockOffset = v;
+    return DB.put('meta', { key: 'clockOffset', value: v }).catch(function () { /* növbəti dövrdə təkrar */ });
+  }
   // Mövcud qeydi dəyişən əməliyyat üçün: vaxt həmin qeydin gördüyümüz versiyasından ciddi sonra olmalıdır (eyni millisaniyə / geri qalan saat "son yazan qalib"də redaktəni itirməsin)
   function nowAfter(prevIso) { var p = Date.parse(prevIso || ''); if (p && p > lastNow) lastNow = p; return now(); }
 
@@ -169,7 +180,10 @@
   }
 
   function init() {
-    return DB.open().then(function () { return DB.get('meta', 'initialized'); }).then(function (done) {
+    return DB.open().then(function () { return DB.get('meta', 'clockOffset'); }).then(function (c) {
+      if (c && typeof c.value === 'number' && isFinite(c.value)) clockOffset = c.value;
+      return DB.get('meta', 'initialized');
+    }).then(function (done) {
       if (done) return loadDevice().then(migrate);
       return loadDevice().then(function () {
         return Promise.all(DEMO_USERS.map(function (u) {
@@ -214,27 +228,45 @@
     });
   }
 
-  var failed = {};
+  // Yanlış PIN sayğacı cihazın bazasında (meta.authFail) saxlanılır: səhifəni yeniləmək (F5) və ya tabı yenidən açmaq sayğacı sıfırlamır. Serverə getmir.
+  function loadFail(userId) {
+    return DB.get('meta', 'authFail').then(function (m) {
+      var v = m && m.value && Object.prototype.hasOwnProperty.call(m.value, userId) ? m.value[userId] : null;
+      return v ? { n: v.n | 0, until: Number(v.until) || 0 } : { n: 0, until: 0 };
+    });
+  }
   function login(userId, pin) {
-    var f = failed[userId] || { n: 0, until: 0 };
-    if (Date.now() < f.until) return Promise.reject(err(_t('Çox səhv cəhd. {0} dəqiqə gözləyin', [Math.ceil((f.until - Date.now()) / 60000)]), 'locked'));
-    return verifyPin(userId, pin).then(function (r) {
-      if (r.ok) return r;
-      // PIN başqa cihazda dəyişdirilmiş ola bilər: istifadəçiləri serverdən yeniləyib bir də yoxlayırıq
-      var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(6000) : Promise.resolve();
-      return pull.then(function () { return verifyPin(userId, pin); });
+    return loadFail(userId).then(function (f) {
+      if (Date.now() < f.until) throw err(_t('Çox səhv cəhd. {0} dəqiqə gözləyin', [Math.ceil((f.until - Date.now()) / 60000)]), 'locked');
+      return verifyPin(userId, pin).then(function (r) {
+        if (r.ok) return r;
+        // PIN başqa cihazda dəyişdirilmiş ola bilər: istifadəçiləri serverdən yeniləyib bir də yoxlayırıq
+        var pull = root.Sync && root.Sync.pullNow ? root.Sync.pullNow(6000) : Promise.resolve();
+        return pull.then(function () { return verifyPin(userId, pin); });
+      });
     }).then(function (r) {
       var u = r.u;
       if (!r.ok) {
-        f.n++; if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; } // SEC-06
-        failed[userId] = f;
-        return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.failed', { userId: userId }, null); })
-          .then(function () { throw err(_t('PIN səhvdir')); });
+        // SEC-06: 5 yanlış cəhd → 5 dəqiqə blok. Sayğac tranzaksiya daxilində yenilənir ki, eyni anda gələn cəhdlər itməsin
+        return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
+          return t.get('meta', 'authFail').then(function (m) {
+            var all = (m && m.value) || {}, f = Object.prototype.hasOwnProperty.call(all, userId) ? all[userId] : { n: 0, until: 0 };
+            f = { n: (f.n | 0) + 1, until: Number(f.until) || 0 };
+            if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; }
+            all[userId] = f;
+            return t.put('meta', { key: 'authFail', value: all });
+          }).then(function () { return log(t, 'auth.failed', { userId: userId }, null); });
+        }).then(function () { throw err(_t('PIN səhvdir')); });
       }
-      failed[userId] = { n: 0, until: 0 };
       session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: u.mustChangePin };
       if (!u.mustChangePin) persistSession(u);
-      return DB.atomic(['audit', 'outbox'], function (t) { return log(t, 'auth.login', {}, session.user); }).then(function () { return session.user; });
+      return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
+        return t.get('meta', 'authFail').then(function (m) {
+          if (!m || !m.value || !Object.prototype.hasOwnProperty.call(m.value, userId)) return;
+          delete m.value[userId];
+          return t.put('meta', { key: 'authFail', value: m.value });
+        }).then(function () { return log(t, 'auth.login', {}, session.user); });
+      }).then(function () { return session.user; });
     });
   }
 
@@ -601,7 +633,7 @@
   function listMyStockRequests() {
     var me = session.user;
     if (!me) return Promise.resolve([]);
-    var from = Date.now() - 7 * 86400000;
+    var from = nowMs() - 7 * 86400000;
     return DB.getAll('approvals').then(function (all) {
       return all.filter(function (a) { return a.kind === 'stock.receive' && a.requestedBy.id === me.id && Date.parse(a.at) >= from; })
         .map(function (a) { var st = a.status === 'pending' && !isFresh(a) ? 'expired' : a.status; return Object.assign({}, a, { state: st }); })
@@ -794,10 +826,13 @@
   }
 
   /* ---------- Satış ---------- */
+  // Çekin hadisəsi Google Sheets-in bir xanasına (ən çox 50 000 simvol) yazılır: 100 sətir ən pis halda ~37 000 simvol edir
+  var MAX_CART_LINES = 100;
   // cart: [{productId, qty}], discount: {percent, approvedBy}|null, payment: rules.validatePayment girişi
   function checkout(cart, discount, payment) {
     return requirePerm('pos.sell').then(function (user) {
       if (!cart.length) throw err(_t('Çek boşdur'));
+      if (cart.length > MAX_CART_LINES) throw err(_t('Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün', [MAX_CART_LINES]), 'cart_too_big');
       if (discount) {
         var dv = Rules.validateDiscountPercent(discount.percent); if (dv) throw err(dv);
         if (!discount.approvedBy) throw err(_t('Endirim menecer tərəfindən təsdiqlənməyib'));
@@ -976,7 +1011,7 @@
   var APPROVAL_TTL = 10 * 60000;                 // kassada gözləyən əməliyyatlar (sətir silmə, endirim, qaytarma)
   var STOCK_REQUEST_TTL = 24 * 3600000;          // mal qəbulu sorğusu: kassir gözləmir, menecer sonra da təsdiqləyə bilər
   function ttlOf(a) { return a.kind === 'stock.receive' ? STOCK_REQUEST_TTL : APPROVAL_TTL; }
-  function isFresh(a) { return Date.now() - Date.parse(a.at) < ttlOf(a); }
+  function isFresh(a) { return nowMs() - Date.parse(a.at) < ttlOf(a); }
 
   // kind: 'line_delete' | 'sale_cancel' | 'discount' | ..., perm: təsdiq üçün lazım olan icazə, summary: menecerə göstərilən mətn
   function requestApproval(kind, perm, summary, tk, tp, payload) {
@@ -1083,6 +1118,7 @@
   }
 
   var Services = {
+    MAX_CART_LINES: MAX_CART_LINES,
     init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin,
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct,
@@ -1091,7 +1127,7 @@
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
     recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
-    requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
+    requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, setClockOffset: setClockOffset, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
   };
   root.Services = Services;

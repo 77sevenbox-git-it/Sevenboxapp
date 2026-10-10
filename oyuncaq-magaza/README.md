@@ -105,6 +105,13 @@ python3 tests/e2e_lang.py      # real Chromium: AZ/RU/EN/TR — dil dəyişənd�
 python3 tests/e2e_notify.py    # real Chromium: service worker-ə push çatdırılır, bildirişin ikon/badge/mətni, ikon faylları, "Bildiriş" pəncərəsi (tam Chromium lazımdır)
 python3 tests/e2e_print.py     # çap: çek/etiket PDF ölçüləri, səhifə sayı, barkod 203/300 dpi-də oxunur (pip: pypdf pillow zxing-cpp; sistem: poppler-utils)
 python3 tests/e2e_latency.py   # real Apps Script gecikməsi (~2,3 san/sorğu) + 15% xəta + ilişmiş sorğu təqlidi ilə 2 brauzer; ölçülmüş gecikmələri yazır
+node tests/security.test.js     # "hack" sınağı: token/giriş qapıları, saxta hadisələr, PIN-in sındırılması, rol keçidi; açıq risklər hesabata düşür (SEC_OUT qovluğuna JSON yazır)
+node tests/clock.test.js        # cihaz saatı səhvdirsə (2 gün irəli / 20 dəq. geri) hadisə damğaları server saatına görə düzəlir
+python3 tests/e2e_xss.py        # real Chromium: CSP, XSS yükləri (ad/qeyd/şablon), çərçivəyə salma, CSV formulları
+python3 tests/e2e_scanner.py    # barkod skaneri (sürətli klaviatura axını), fokus başqa yerdə olanda skan, Enter-in təkrar basılması
+python3 tests/e2e_offline.py    # PWA: internet kəsilir → yeniləmə, yeni tab, satış; qayıdanda hamısı serverə çatır (öz imzalı HTTPS server qurur)
+python3 tests/e2e_a11y.py       # əlçatanlıq (WCAG 2.1 A/AA, axe-core: `npm i -D axe-core`), kompüter və telefon ölçüsü
+node tests/stress.test.js [N]   # yük: 3 kassa × N satış (defolt 800), yeni cihazın yüklənməsi, oflayn yığılma, paralel sinxron, böyük çek; Sheets tutumu hesablanır
 ```
 
 **Çapı işə salmaq (Windows + Chrome):** Xprinter sürücüsünü quraşdırın; çap pəncərəsində *Printer* — Xprinter, *Miqyas* — 100%, *Kənar boşluqlar* — Yoxdur, *Başlıq və sonluq* — söndürülü. Hər çekdə pəncərə çıxmasın deyirsinizsə, Chrome-u `chrome.exe --kiosk-printing --app=<ünvan>` ilə açın: çap pəncərəsiz, defolt printerə gedir (Xprinter-i Windows-da defolt edin; etiket printeri ayrıdırsa, onu başqa kompyuterdə və ya başqa brauzer profilində defolt edin). Çek printerində sürücünün kağızı "80mm × Receipt" (və ya 58 mm) olmalıdır. Test çapında çərçivə kəsilirsə "Çap" pəncərəsində "Kağız ölçüsü: Çap sürücüsünün ölçüsü" seçin. Çox uzun çeklərdə (50+ sətir) sürücü maksimum uzunluğu məhdudlaşdıra bilər, o halda da həmin seçim işləyir.
@@ -114,9 +121,29 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 
 **Code.gs v6-ya keçid (v3/v4/v5-dən):** `apps-script/Code.gs`-i köhnənin yerinə yapışdırın → `setup()` işə salın → Deploy → Manage deployments → ✏️ → Version: **New version** → Deploy (ünvan və token dəyişmir). `setup()` işlədəndə Google "Connect to an external service" icazəsi istəyəcək (bildiriş üçün) — təsdiqləyin. Sonra hər brauzerdə Ctrl+F5. Bildiriş üçün hər menecer cihazında "Bildiriş → Aktiv et" və "Test bildirişi" edin. `setup()` `Suppliers` və `Push` vərəqlərini yaradır və `StockReceipts`-ə yeni sütunları (təchizatçı, partiya) əlavə edir; onu işə salmasanız da vərəqlər ilk yazıda yaranır, amma köhnə `StockReceipts` başlığı yenilənməz.
 
-## Vacib təhlükəsizlik qeydi
+## Təhlükəsizlik (GitHub Pages + Google Sheets/Apps Script)
 
-Giriş və icazələr bu mərhələdə **brauzerin içində** yoxlanılır. Bu, kassirin səhvən icazəsiz düyməyə basmasının qarşısını alır, amma kompyuterə texniki girişi olan biri lokal bazanı dəyişə bilər. Server tərəfində rol yoxlaması (Apps Script) və Admin/Menecer üçün 2FA növbəti mərhələdədir; o vaxta qədər kassa kompyuterini ayrıca Windows hesabı ilə qoruyun.
+**Model:** serverə giriş yalnız `SYNC_TOKEN` ilə olur; token kimdədirsə, "tərəfdaş cihaz"dır. Rollar (Kassir/Menecer/Admin) və PIN-lər **brauzerdə** yoxlanılır, server istifadəçini tanımır. Bu mərhələdə bu, bilinən məhdudiyyətdir (`tests/security.test.js` RİSK-1…8). Ona görə əsas qoruma: **token və cədvəl məxfi qalsın, cihazlar etibarlı olsun**.
+
+**Mütləq edin:**
+1. **Token ≥ 32 təsadüfi simvol** olsun (Apps Script → Project Settings → Script properties → `SYNC_TOKEN`). Dəyişəndə hər cihazda "Serverə qoş"da yenisini yazın. Token-i heç vaxt GitHub-a, mesajlaşma qruplarına, skrinşotlara qoymayın; kimsə işdən çıxanda tokeni dəyişin.
+2. **Cədvəl (Sheets) yalnız sizin hesabda qalsın:** "Share" → *Restricted*, heç kimə "link ilə" açmayın. Bu faylı yalnız Admin görsün (mühasib hesabat istəyirsə, ayrıca *Viewer* kimi və yalnız adı ilə). Apps Script veb-tətbiqi "Execute as: Me", "Who has access: Anyone" qalır (token bunu qoruyur), amma ünvanı (`/exec`) açıq yerdə paylaşmayın.
+3. **Standart PIN-ləri dəyişin / artıq lazım olmayan hesabları söndürün** (Mühasib 1/2 hələ standart PIN-dədir; PIN-lər kodda və GitHub-da açıqdır). Admin və Menecer PIN-i ≥ 6 rəqəm. 5 səhv cəhddən sonra 5 dəq. bloklama var və yenilənmə ilə sıfırlanmır.
+4. **Google və GitHub hesablarında 2FA** (Authenticator/passkey). Bu iki hesab bütün sistemin açarıdır: GitHub-a giriş = kodu dəyişib bütün kassalara zərərli skript göndərmək.
+5. **Kassa cihazı:** ayrıca Windows hesabı, avtomatik ekran kilidi, kiosk rejimi (`chrome --kiosk-printing --app=...`), brauzerdə başqa sayt/uzantı olmasın. Brauzerin DevTools-u olan şəxs PIN-siz Admin ola bilər (RİSK-7), bunu yalnız cihaz nəzarəti azaldır.
+6. **Cihazın saatı "avtomatik" olsun.** Səhv saat çek tarixini pozur; tətbiq artıq server saatına görə damğaları düzəldir və üst paneldə "Saat səhvdir" göstərir, amma düzgün həll avtomatik saatdır.
+7. **Ehtiyat nüsxə:** Sheets → File → Version history avtomatik var; əlavə olaraq həftədə bir *File → Make a copy* (başqa Drive qovluğuna) edin. Audit və Events vərəqlərini silməyin: araşdırma yalnız onlarla mümkündür.
+
+**GitHub Pages haqqında:**
+- Repo **public**-dirsə kod, `SPREADSHEET_ID`, demo PIN-lər və commit müəllifinin e-poçtu hamıya görünür. Təhlükəsizlik tokenə əsaslandığı üçün bu kritik deyil, amma ID-ni gizli saxlamaq mümkün deyil. Gizli repo + Pages ödənişli planda mümkündür; alternativ: Cloudflare Pages/Netlify (gizli repo ilə pulsuz).
+- Eyni hesabın bütün Pages saytları (`<user>.github.io/...`) **bir mənşəni (origin)** paylaşır: orada başqa layihə/sayt yerləşdirməyin, çünki onun skripti bu tətbiqin IndexedDB-sini (token daxil) oxuya bilər (RİSK-8). Tövsiyə: ayrıca GitHub hesabı və ya öz domeniniz.
+- GitHub HTTP başlıq (header) təyin etməyə imkan vermir. Tətbiq CSP-ni `<meta>` ilə tətbiq edir (`default-src 'self'`, yalnız `script.google.com` və Google Fonts-a icazə), çərçivəyə salınma isə JavaScript ilə bloklanır. Başlıqlı CSP lazımdırsa, saytı Cloudflare Pages/Netlify-ə qoyun (`_headers` faylı ilə başlıq təyin olunur).
+- `main` budağını qoruyun (Settings → Branches → Require PR/status checks), Actions secrets-ə token qoymayın, Dependabot-u açın.
+- Google Fonts hər cihazdan Google-a sorğu göndərir (məxfilik); istəsəniz şriftləri `fonts/` qovluğuna endirib `'self'`-dən verin.
+
+**Kod səviyyəsində edilənlər (bu mərhələ):** CSP; XSS yoxlaması (ad, qeyd, şablon, URL); CSV/Excel formul inyeksiyasının zərərsizləşdirilməsi; serverdən gələn hadisələrin tip/uzunluq/aralıq yoxlaması (zəhərli hadisə bütün cihazları dondura bilməz); girişdə bloklamanın yenilənmədən sonra qalması; service worker yalnız uğurlu cavabları saxlayır; token müqayisəsi sabit vaxtlıdır, `doPost` boş/yanlış gövdədə çökmür; nömrə aralıqları serverdə 1000 ilə məhdud; çekdə ≤ 100 sətir (Sheets xanası 50 000 simvol).
+
+**Açıq risklər (Səviyyə 2 – BRD v1.3 üçün):** server tərəfində istifadəçiyə bağlı imza / cihaz açarları, PIN hash-larının cihazlara yayılmaması, hadisələrin rol əsasında serverdə rədd edilməsi. Bunlar olmadan token-i əldə edən daxili şəxs saxta hadisə göndərə bilər (RİSK-1…6); audit izində hadisənin hansı cihazdan gəldiyi görünür.
 
 ## Struktur
 

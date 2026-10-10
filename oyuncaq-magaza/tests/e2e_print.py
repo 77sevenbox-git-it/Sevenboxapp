@@ -10,6 +10,15 @@ from pypdf import PdfReader
 from PIL import Image
 import zxingcpp
 
+
+def wf(pg, expr, timeout=30000):
+    """wait_for_function sətri eval ilə işlədir, CSP (script-src 'self') isə eval-ı qadağan edir; ona görə ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if pg.evaluate('() => !!(' + expr + ')'): return
+        pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TMP = tempfile.mkdtemp(prefix='print-')
 srv = subprocess.Popen([sys.executable, '-m', 'http.server', '8766', '-d', ROOT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -59,6 +68,7 @@ try:
         b = p.chromium.launch()
         pg = b.new_page(viewport={'width': 1200, 'height': 900}, timezone_id='Asia/Baku')
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
+        pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
         pg.goto('http://localhost:8766/index.html'); pg.wait_for_selector('.users button')
         store = "({ name: 'Oyuncaq Dünyası', voen: '1234567891', address: 'Bakı, Nizami küç. 10', registerName: 'Kassa 1' })"
@@ -66,7 +76,7 @@ try:
         def do_print(setup_js, html_js, kind):
             pg.evaluate("() => { Print._reset(); Print.save(%s); }" % setup_js)
             pg.evaluate("() => { window.__printed = 0; return Print.print(%s, '%s'); }" % (html_js, kind))
-            pg.wait_for_function('window.__printed >= 1')
+            wf(pg, 'window.__printed >= 1')
             return pg.evaluate("() => document.getElementById('print-page-css').textContent")
 
         def to_pdf(name):
@@ -155,13 +165,13 @@ try:
         check(pg.is_visible('#pl-w'), 'ayarlar: "Digər ölçü" en/hündürlük sahələrini açır')
         pg.fill('#pl-w', '45'); pg.fill('#pl-h', '25')
         pg.evaluate("() => { window.__printed = 0; }")
-        pg.click('#pl-test'); pg.wait_for_function('window.__printed >= 1')
+        pg.click('#pl-test'); wf(pg, 'window.__printed >= 1')
         saved = pg.evaluate("() => JSON.parse(localStorage.getItem('mag.print'))")
         check(saved['receipt']['paper'] == 58 and saved['label']['w'] == 45 and saved['label']['h'] == 25, 'ayarlar: test çapı ayarı yadda saxlayır %s' % json.dumps(saved))
         css = pg.evaluate("() => document.getElementById('print-page-css').textContent")
         check('size:45mm 25mm' in css, 'ayarlar: test etiketi seçilmiş ölçüdə (%s)' % css)
         pg.evaluate("() => { window.__printed = 0; }")
-        pg.click('#pr-test'); pg.wait_for_function('window.__printed >= 1')
+        pg.click('#pr-test'); wf(pg, 'window.__printed >= 1')
         check('ÇAP SINAĞI' in pg.inner_text('#print-area'), 'ayarlar: test çeki çap olunur')
         path = to_pdf('test_receipt'); pages = pdf_pages(path)
         check(len(pages) == 1 and abs(pages[0][0] - 58) < 0.6, 'test çeki: 58 mm, 1 səhifə')

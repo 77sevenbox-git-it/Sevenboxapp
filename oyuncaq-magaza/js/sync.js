@@ -13,7 +13,7 @@
 
   // Testlərdə dəyişdirilə bilər (Sync.timing)
   var T = { idle: 4000, fast: 1500, hidden: 15000, kick: 300, minGap: 700, errorMin: 4000, errorMax: 30000, timeout: 30000, pingTimeout: 15000, boost: 10000 };
-  var BLOCKS = { productSeq: { size: 100, low: 30 }, receiptSeq: { size: 500, low: 150 } };
+  var BLOCKS = { productSeq: { size: 300, low: 100 }, receiptSeq: { size: 1000, low: 400 } };   // oflayn ehtiyat: aralıq həmişə ≥ "low" qədər qalır (server tavanı BLOCK_MAX = 1000)
 
   var running = null, again = false, started = false, timer = null, kickTimer = null, fastUntil = 0, lastStart = 0, fails = 0, inflight = null;
   var listeners = [];
@@ -234,7 +234,7 @@
       }
 
       return step(0).then(function () { return legacy ? ensureBlocksLegacy(c) : null; }).then(backfillPass).then(function () {
-        if (skew !== null) state.skewMs = Math.round(skew);
+        if (skew !== null) { state.skewMs = Math.round(skew); if (root.Services && root.Services.setClockOffset) root.Services.setClockOffset(skew); }
         if (total.received) fastUntil = Math.max(fastUntil, Date.now() + T.boost);   // söhbət gedir: növbəti cavab tez gəlsin
         if (Object.keys(touched).length) emit('applied', touched);
         return total;

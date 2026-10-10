@@ -159,12 +159,20 @@ function cacheRaise(total) {
 }
 
 /* ---------- Giriş nöqtəsi ---------- */
+// Açarın müqayisəsi: sətir deyilsə rədd; uzunluq eynidirsə bütün simvollar müqayisə olunur (ilk fərqdə dayanmır)
+function sameToken(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  var diff = 0;
+  for (var i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 function doPost(e) {
   var body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json({ ok: false, error: 'JSON səhvdir' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ ok: false, error: 'JSON səhvdir' });
 
   var token = PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN');
-  if (!token || body.token !== token) return json({ ok: false, error: 'İcazə yoxdur' });
+  if (!token || !sameToken(body.token, token)) return json({ ok: false, error: 'İcazə yoxdur' });
 
   try {
     switch (body.action) {

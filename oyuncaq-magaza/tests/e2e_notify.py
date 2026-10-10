@@ -5,6 +5,15 @@ və serverdən real push BURADA yoxlanmır — server tərəfi tests/push.test.j
 import subprocess, time, sys, os
 from playwright.sync_api import sync_playwright
 
+
+def wf(pg, expr, timeout=30000):
+    """wait_for_function sətri eval ilə işlədir, CSP (script-src 'self') isə eval-ı qadağan edir; ona görə ifadə evaluate ilə dövri yoxlanılır."""
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout:
+        if pg.evaluate('() => !!(' + expr + ')'): return
+        pg.wait_for_timeout(50)
+    raise TimeoutError('gözlənilən şərt yerinə yetmədi: ' + expr[:100])
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.environ.get('SHOTS', '/tmp/shots'); os.makedirs(OUT, exist_ok=True)
 PORT = 8768
@@ -20,6 +29,7 @@ try:
         ctx = b.new_context(viewport={'width': 1200, 'height': 800}, timezone_id='Asia/Baku', permissions=['notifications'])
         pg = ctx.new_page()
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
+        pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.goto(URL)
         pg.wait_for_selector('.users button')
 
@@ -41,7 +51,7 @@ try:
         cdp.on('ServiceWorker.workerRegistrationUpdated', lambda e: regs.update({r['scopeURL']: r['registrationId'] for r in e['registrations']}))
         cdp.send('ServiceWorker.enable')
         pg.evaluate("() => navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => 1)")
-        pg.wait_for_function("navigator.serviceWorker.controller !== undefined || true")
+        wf(pg, "navigator.serviceWorker.controller !== undefined || true")
         time.sleep(1)
         rid = regs.get(f'http://localhost:{PORT}/')
         check(rid is not None, f'service worker qeydiyyatdadır (registrationId={rid})')

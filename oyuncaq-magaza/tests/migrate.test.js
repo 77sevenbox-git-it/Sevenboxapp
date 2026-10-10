@@ -77,10 +77,10 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     assert.ok(A.Services.deviceId());
   });
 
-  await t('köhnə (özəlləşdirilmiş) icazə matrisi: product.edit olan rola "stock.receive" verilir, Kassirə verilmir, qalanı toxunulmaz', async () => {
+  await t('köhnə (özəlləşdirilmiş) icazə matrisi: product.edit olan rola "stock.receive" verilir, Kassirə yalnız sorğu icazəsi (stock.request) verilir, qalanı toxunulmaz', async () => {
     const m = (await A.DB.get('meta', 'matrix')).value;
     assert.deepStrictEqual(Array.from(m.menecer).sort(), ['pos.sell', 'product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);
-    assert.deepStrictEqual(Array.from(m.kassir), ['pos.sell']);
+    assert.deepStrictEqual(Array.from(m.kassir), ['pos.sell', 'stock.request']);
     assert.deepStrictEqual(Array.from(m.admin), ['admin.permissions']);
     assert.deepStrictEqual(Array.from(m.muhasib), []);
   });

@@ -202,6 +202,8 @@
     "Eyni mağaza barkodu iki məhsulda: \"{0}\" və \"{1}\" ({2})": "The same store barcode on two products: \"{0}\" and \"{1}\" ({2})",
     "Çek № {0} iki cihazda verilib (hər ikisi saxlanıldı)": "Receipt #{0} was issued on two devices (both were kept)",
     "Hadisə tətbiq olunmadı ({0}): {1}": "Event not applied ({0}): {1}",
+    "Etibarsız hadisə rədd edildi ({0})": "Invalid event rejected ({0})",
+    "Bu səhifə çərçivə içində açıla bilməz": "This page cannot be opened inside a frame",
     "Satış etmək": "Make sales",
     "Endirimi təsdiqləmək": "Approve discounts",
     "Çekdən sətir silmək": "Remove lines from a receipt",
@@ -590,6 +592,9 @@
     "Say {0}-dən çox ola bilməz": "Quantity cannot exceed {0}",
     "Qeyd 200 simvoldan uzun ola bilməz": "The note cannot be longer than 200 characters",
     "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "A request for this product is already waiting for the manager. To change it, cancel it first.",
-    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} requests a stock receipt: \"{1}\", {2} pcs"
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} requests a stock receipt: \"{1}\", {2} pcs",
+    "Saat səhvdir": "Clock is wrong",
+    "Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını \"avtomatik\" rejimə keçirin": "This device's clock differs from the server by {0} min. Receipt dates are corrected automatically, but please switch the device to automatic time",
+    "Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün": "A receipt can have at most {0} lines. Split it into two receipts"
   });
 })(typeof window !== 'undefined' ? window : globalThis);
