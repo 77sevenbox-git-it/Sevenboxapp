@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-15';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-16';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
