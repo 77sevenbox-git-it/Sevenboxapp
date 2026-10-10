@@ -570,6 +570,26 @@
     "Naməlum açar": "Bilinmeyen anahtar",
     "Server məşğuldur, sonra təkrar olunacaq": "Sunucu meşgul, daha sonra tekrar denenecek",
     "Bildiriş ünvanı tanınmır": "Bildirim adresi tanınmıyor",
-    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Bu cihaz bildirimler için kayıtlı değil"
+    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Bu cihaz bildirimler için kayıtlı değil",
+    "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Mal kabul isteği göndermek (yönetici onaylar)",
+    "Qəbul təsdiqləndi, qalıq artırıldı: {0} ədəd": "Kabul onaylandı, stok artırıldı: {0} adet",
+    "Hazırkı qalıq: {0}": "Mevcut stok: {0}",
+    "Təsdiqlə və qəbul et": "Onayla ve kabul et",
+    "Mal gəldi: menecerə təsdiq sorğusu göndər": "Mal geldi: yöneticiye onay isteği gönder",
+    "Mal gəldi": "Mal geldi",
+    "Gözləyir": "Bekliyor",
+    "Ləğv edildi": "İptal edildi",
+    "Vaxtı bitib": "Süresi doldu",
+    "Mal qəbulu sorğularım": "Mal kabul isteklerim",
+    "Qalıq menecer təsdiqləyəndən sonra artır.": "Stok, yönetici onayladıktan sonra artar.",
+    "Vaxt": "Zaman",
+    "— bilmirəm / menecer seçəcək —": "— bilmiyorum / yönetici seçecek —",
+    "Mal gəldi — {0}": "Mal geldi — {0}",
+    "Gələn malın sayını yazın. Sorğu menecerə gedir; qalıq menecer təsdiqləyəndən sonra artacaq (hazırkı qalıq: {0}).": "Gelen malın adedini yazın. İstek yöneticiye gider; stok onaydan sonra artar (mevcut stok: {0}).",
+    "Server qoşulmayıb: sorğu menecerin cihazına çata bilməz. Mal qəbulunu menecer özü etməlidir": "Sunucu bağlı değil: istek yöneticinin cihazına ulaşamaz. Mal kabulünü yönetici kendisi yapmalıdır.",
+    "Say {0}-dən çox ola bilməz": "Adet {0} değerinden fazla olamaz",
+    "Qeyd 200 simvoldan uzun ola bilməz": "Not 200 karakterden uzun olamaz",
+    "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "Bu ürün için istek zaten yöneticinin yanıtını bekliyor. Değiştirmek istiyorsanız önce iptal edin.",
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} mal kabulü istiyor: \"{1}\", {2} adet"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

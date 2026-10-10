@@ -72,9 +72,9 @@ const staticKeys = [...new Set(keysAll.filter(k => k.key != null).map(k => k.key
     assert.deepStrictEqual(u, [], 'bükülməmiş mətnlər:\n' + u.join('\n'));
   });
 
-  await t('dinamik _t(dəyişən) yalnız bükücü funksiyalarda işlənir (print.js rt, ui.js req)', async () => {
+  await t('dinamik _t(dəyişən) yalnız bükücü funksiyalarda işlənir (print.js rt, ui.js req, services.js approvalText)', async () => {
     const dyn = keysAll.filter(k => k.dynamic).map(k => k.file);
-    dyn.forEach(f => assert.ok(f === 'print.js' || f === 'ui.js', 'gözlənilməz dinamik açar: ' + f));
+    dyn.forEach(f => assert.ok(f === 'print.js' || f === 'ui.js' || f === 'services.js', 'gözlənilməz dinamik açar: ' + f));
   });
 
   await t('az: mətn dəyişmir, yer tutucular doldurulur, @@kontekst göstərilmir', async () => {

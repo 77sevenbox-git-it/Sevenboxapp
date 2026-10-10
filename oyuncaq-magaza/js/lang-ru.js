@@ -570,6 +570,26 @@
     "Naməlum açar": "Неизвестный ключ",
     "Server məşğuldur, sonra təkrar olunacaq": "Сервер занят, повтор позже",
     "Bildiriş ünvanı tanınmır": "Адрес уведомлений не распознан",
-    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Это устройство не зарегистрировано для уведомлений"
+    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Это устройство не зарегистрировано для уведомлений",
+    "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Отправлять запрос на приём товара (подтверждает менеджер)",
+    "Qəbul təsdiqləndi, qalıq artırıldı: {0} ədəd": "Приём подтверждён, остаток увеличен: {0} шт.",
+    "Hazırkı qalıq: {0}": "Текущий остаток: {0}",
+    "Təsdiqlə və qəbul et": "Подтвердить и принять",
+    "Mal gəldi: menecerə təsdiq sorğusu göndər": "Товар пришёл: отправить менеджеру запрос на подтверждение",
+    "Mal gəldi": "Товар пришёл",
+    "Gözləyir": "Ожидает",
+    "Ləğv edildi": "Отменён",
+    "Vaxtı bitib": "Срок истёк",
+    "Mal qəbulu sorğularım": "Мои запросы на приём товара",
+    "Qalıq menecer təsdiqləyəndən sonra artır.": "Остаток увеличится после подтверждения менеджером.",
+    "Vaxt": "Время",
+    "— bilmirəm / menecer seçəcək —": "— не знаю / выберет менеджер —",
+    "Mal gəldi — {0}": "Товар пришёл — {0}",
+    "Gələn malın sayını yazın. Sorğu menecerə gedir; qalıq menecer təsdiqləyəndən sonra artacaq (hazırkı qalıq: {0}).": "Укажите количество пришедшего товара. Запрос уйдёт менеджеру; остаток увеличится после его подтверждения (текущий остаток: {0}).",
+    "Server qoşulmayıb: sorğu menecerin cihazına çata bilməz. Mal qəbulunu menecer özü etməlidir": "Сервер не подключён: запрос не дойдёт до устройства менеджера. Приём товара должен оформить сам менеджер.",
+    "Say {0}-dən çox ola bilməz": "Количество не может быть больше {0}",
+    "Qeyd 200 simvoldan uzun ola bilməz": "Примечание не может быть длиннее 200 символов",
+    "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "Запрос по этому товару уже ждёт ответа менеджера. Чтобы изменить, сначала отмените его.",
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} просит принять товар: «{1}», {2} шт."
   });
 })(typeof window !== 'undefined' ? window : globalThis);

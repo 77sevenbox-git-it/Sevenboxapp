@@ -21,6 +21,7 @@
     'product.view': _t('Məhsullara baxmaq'),
     'product.edit': _t('Məhsul yaratmaq və dəyişmək'),
     'stock.receive': _t('Mal qəbul etmək (qalığı artırmaq)'),
+    'stock.request': _t('Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)'),
     'product.price.set': _t('Satış qiymətini təyin etmək'),
     'product.cost.view': _t('Alış qiymətini görmək'),
     'label.print': _t('Etiket çap etmək'),
@@ -35,13 +36,14 @@
     admin: Object.keys(PERMISSIONS),
     menecer: ['pos.sell', 'pos.discount.request', 'pos.discount.approve', 'pos.line.delete', 'pos.return.request', 'pos.return.approve',
       'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view', 'supplier.view', 'supplier.manage'],
-    kassir: ['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print'],
+    kassir: ['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print', 'stock.request'],
     muhasib: ['product.view', 'product.cost.view', 'report.view', 'supplier.view']
   };
 
   // İcazə matrisinin versiyası. 3-dən əvvəl "stock.receive" yox idi, mal qəbulu "product.edit" ilə gedirdi.
   // 4: təchizatçı icazələri. "supplier.manage" mal qəbul edən rollara, "supplier.view" mal qəbul edən və ya hesabata baxan rollara verilir.
-  var MATRIX_VERSION = 4;
+  // 5: "stock.request" — kassir mal gəldiyini bildirən sorğu göndərir, qalığı menecer təsdiqləyəndə artır (kassirə verilir).
+  var MATRIX_VERSION = 5;
   function upgradeMatrix(m) {
     var out = {};
     Object.keys(m || {}).forEach(function (role) {
@@ -50,6 +52,7 @@
       if (list.indexOf('product.edit') !== -1) add('stock.receive');
       if (list.indexOf('stock.receive') !== -1) add('supplier.manage');
       if (list.indexOf('stock.receive') !== -1 || list.indexOf('report.view') !== -1) add('supplier.view');
+      if (role === 'kassir') add('stock.request');
       out[role] = list;
     });
     return out;

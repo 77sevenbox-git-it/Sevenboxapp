@@ -106,15 +106,40 @@
     });
   }
 
-  H['stock.received'] = function (t, ev, d, sum) {
+  // Təsdiqlənmiş mal qəbulu sorğusu (d.approvalId): partiyanın id-si sorğudan törəyir (lot_<sorğu id>). İki menecer eyni sorğunu eyni anda
+  // fərqli cihazlarda təsdiqləsə, qalıq iki dəfə artmır: yalnız qalib qərar qalır (sorğuların qaydası ilə eyni — daha erkən qərar; bərabərdirsə id-si kiçik olan).
+  // Qalibin sayı/qiyməti/təchizatçısı fərqlidirsə partiya və qalıq qalibə düzəldilir (orta maya düzəlmir, yalnız son qiymət).
+  function receivedFromApproval(t, ev, d, sum, cur) {
+    var inAt = d.at || ev.at, inKey = inAt + '|' + (ev.userId || ''), curKey = (cur.at || '') + '|' + (cur.userId || '');
+    if (inKey >= curKey) return Promise.resolve();                       // bizdəki qərar qalibdir (və ya eynidir)
     return t.get('products', d.productId).then(function (p) {
-      if (!p) return;
-      var before = p.stock;
-      Object.assign(p, Rules.applyReceipt(p, d.qty, d.unitCost));
-      sum.touched.products = true;
-      return t.put('products', p).then(function () {
-        return t.put('stockMoves', { id: 'sm_' + ev.id, productId: p.id, type: 'receipt', qty: d.qty, before: before, after: p.stock, unitCost: d.unitCost, note: 'başqa cihaz', at: ev.at, userId: ev.userId });
-      }).then(function () { return putLot(t, ev, d, sum); });
+      var delta = d.qty - cur.qty;
+      return Promise.resolve().then(function () {
+        if (!p) return;
+        if (delta) {
+          var before = p.stock; p.stock += delta; sum.touched.products = true;
+          return t.put('products', p).then(function () { return t.put('stockMoves', { id: 'sm_' + ev.id, productId: p.id, type: 'correction', qty: delta, before: before, after: p.stock, unitCost: d.unitCost, note: 'təsdiq düzəlişi', at: ev.at, userId: ev.userId }); });
+        }
+      }).then(function () {
+        sum.touched.lots = true;
+        return t.put('lots', { id: d.lotId, productId: d.productId, supplierId: d.supplierId || null, qty: d.qty, unitCost: d.unitCost, at: inAt, userId: ev.userId, note: d.note || '', approvalId: d.approvalId });
+      });
+    });
+  }
+
+  H['stock.received'] = function (t, ev, d, sum) {
+    var existing = d.approvalId && d.lotId ? t.get('lots', d.lotId) : Promise.resolve(null);
+    return existing.then(function (cur) {
+      if (cur) return receivedFromApproval(t, ev, d, sum, cur);
+      return t.get('products', d.productId).then(function (p) {
+        if (!p) return;
+        var before = p.stock;
+        Object.assign(p, Rules.applyReceipt(p, d.qty, d.unitCost));
+        sum.touched.products = true;
+        return t.put('products', p).then(function () {
+          return t.put('stockMoves', { id: 'sm_' + ev.id, productId: p.id, type: 'receipt', qty: d.qty, before: before, after: p.stock, unitCost: d.unitCost, note: 'başqa cihaz', at: ev.at, userId: ev.userId });
+        }).then(function () { return putLot(t, ev, d, sum); });
+      });
     });
   };
 
@@ -218,7 +243,7 @@
       var at = d.decidedAt || ev.at, by = (d.by && d.by.id) || '';
       // İlk cavab qalib gəlir. İki cihaz eyni anda fərqli cavab veribsə, vaxtı erkən olan (bərabərdirsə id-si kiçik olan) hər yerdə qalır
       if (a.status !== 'pending' && (a.decidedAt || '') + '|' + ((a.decidedBy && a.decidedBy.id) || '') <= at + '|' + by) return;
-      a.status = d.decision; a.decidedBy = d.by || null; a.decidedAt = at;
+      a.status = d.decision; a.decidedBy = d.by || null; a.decidedAt = at; a.result = d.result || null;
       sum.touched.approvals = true;
       return t.put('approvals', a);
     });

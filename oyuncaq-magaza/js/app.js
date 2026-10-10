@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.10-5';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.10-6';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -107,7 +107,7 @@
       refreshStatus();
       if (document.querySelector('.modal-back')) return;       // açıq pəncərəni pozmuruq
       if ((t.products || t.sales) && app.route === 'pos') root.POS.refresh();
-      else if ((t.products || t.sales || t.users) && root.Screens._refresh) root.Screens._refresh();
+      else if ((t.products || t.sales || t.users || (t.approvals && app.route === 'products')) && root.Screens._refresh) root.Screens._refresh();
     });
   }
 

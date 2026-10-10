@@ -105,15 +105,51 @@
   function approvalsModal(onChange) {
     var list = h('div', { class: 'req-list' });
     UI.modal({ title: _t('Təsdiq sorğuları'), body: list, buttons: [{ text: _t('Bağla') }] });
+    // Enter bu pəncərədəki sahələrdə pəncərəni bağlamasın (təsdiq yalnız düymə ilə)
+    function noEnter(e) { if (e.key === 'Enter') e.preventDefault(); }
+
+    // Mal qəbulu sorğusu: təsdiq edən sayı, təchizatçını və alış qiymətini yoxlayıb düzəldə bilər, sonra qalıq artır
+    function stockItem(a, products, suppliers, decide) {
+      var pl = a.payload || {}, p = products.filter(function (x) { return x.id === pl.productId; })[0];
+      var qty = h('input', { class: 'input', type: 'number', min: '1', step: '1', value: String(pl.qty), 'data-f': 'qty', 'aria-label': _t('Say'), style: 'width:90px', onkeydown: noEnter });
+      var sup = h('select', { class: 'input', 'data-f': 'sup', 'aria-label': _t('Təchizatçı'), onkeydown: noEnter },
+        h('option', { value: '' }, suppliers.length ? _t('— təchizatçı seçin —') : _t('— təchizatçı yoxdur —')),
+        suppliers.map(function (x) { return h('option', { value: x.id, selected: x.id === pl.supplierId }, x.name); }));
+      var showCost = can('product.cost.view');
+      var cost = showCost ? h('input', { class: 'input mono', inputmode: 'decimal', 'data-f': 'cost', 'aria-label': _t('Alış qiyməti (ədəd), ₼'), style: 'width:110px', onkeydown: noEnter,
+        value: p && p.lastCost != null ? M.format(p.lastCost).replace(/\s/g, '') : '' }) : null;
+      function go() {
+        var n = parseInt(qty.value, 10), c = null;
+        try {
+          if (cost) { c = M.parse(cost.value); if (c == null) throw new Error(_t('Alış qiyməti səhvdir')); }
+          if (suppliers.length && !sup.value) throw new Error(_t('Təchizatçını seçin'));
+        } catch (e) { UI.toast(e.message, 'bad'); return; }
+        decide('approved', { qty: n, supplierId: sup.value || null, unitCost: c }, _t('Qəbul təsdiqləndi, qalıq artırıldı: {0} ədəd', [n]));
+      }
+      return h('div', { class: 'req-item', 'data-kind': 'stock.receive', 'data-ap': a.id },
+        h('div', null, h('b', null, UI.reqText(a))),
+        h('div', { class: 'muted', style: 'font-size:13px' }, a.requestedBy.name + ' · ' + UI.fmtDate(a.at) + (p ? ' · ' + _t('Hazırkı qalıq: {0}', [p.stock]) : '')),
+        pl.note ? h('div', { class: 'muted', style: 'font-size:13px' }, _t('Qeyd') + ': ' + pl.note) : null,
+        h('div', { class: 'row', style: 'align-items:flex-end;flex-wrap:wrap' },
+          h('div', { class: 'field' }, h('label', null, _t('Say')), qty),
+          h('div', { class: 'field', style: 'flex:1;min-width:140px' }, h('label', null, _t('Təchizatçı')), sup),
+          cost ? h('div', { class: 'field' }, h('label', null, _t('Alış qiyməti (ədəd), ₼')), cost) : null),
+        h('div', { class: 'row', style: 'justify-content:flex-end' },
+          h('button', { class: 'btn danger small', type: 'button', 'data-act': 'reject', onclick: function () { decide('rejected'); } }, _t('Rədd et')),
+          h('button', { class: 'btn primary small', type: 'button', 'data-act': 'approve', onclick: go }, _t('Təsdiqlə və qəbul et'))));
+    }
+
     function load() {
-      return pendingForMe().then(function (items) {
+      return Promise.all([pendingForMe(), S.listProducts(), S.listSuppliers().catch(function () { return []; })]).then(function (r) {
+        var items = r[0], products = r[1], suppliers = r[2];
         UI.clear(list);
         if (!items.length) list.appendChild(h('p', { class: 'muted', style: 'margin:0' }, _t('Gözləyən sorğu yoxdur.')));
         items.forEach(function (a) {
-          function decide(d) {
-            return S.decideApproval(a.id, d).then(function () { UI.toast(d === 'approved' ? _t('Təsdiqləndi') : _t('Rədd edildi')); if (onChange) onChange(); return load(); })
+          function decide(d, opts, okMsg) {
+            return S.decideApproval(a.id, d, opts).then(function () { UI.toast(d === 'approved' ? (okMsg || _t('Təsdiqləndi')) : _t('Rədd edildi')); if (onChange) onChange(); if (root.Screens._refresh) root.Screens._refresh(); return load(); })
               .catch(function (e) { UI.toast(e.message, 'bad'); return load(); });
           }
+          if (a.kind === 'stock.receive' && a.payload) { list.appendChild(stockItem(a, products, suppliers, decide)); return; }
           list.appendChild(h('div', { class: 'req-item' },
             h('div', null, h('b', null, UI.reqText(a))),
             h('div', { class: 'muted', style: 'font-size:13px' }, a.requestedBy.name + ' · ' + UI.fmtDate(a.at)),
@@ -130,6 +166,8 @@
   function products(el) {
     UI.clear(el);
     var showCost = can('product.cost.view');
+    var canAsk = can('stock.request') && !can('stock.receive');         // kassir: qalığı özü artıra bilmir, menecerə sorğu göndərir
+    var myBox = h('div', { class: 'card', id: 'my-requests', style: 'margin-top:16px;display:none' });
     var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: _t('Ad, mağaza və ya istehsalçı barkodu'), style: 'min-width:280px' });
     var body = h('tbody');
     var all = [], bySup = {};
@@ -159,14 +197,35 @@
           h('td', null, p.active ? h('span', { class: 'badge ok' }, _t('Aktiv')) : h('span', { class: 'badge off' }, _t('Passiv'))),
           h('td', { style: 'white-space:nowrap' },
             can('product.edit') ? h('button', { class: 'btn small', onclick: function () { productForm(p, load); } }, _t('Dəyiş')) : null, ' ',
-            can('stock.receive') ? h('button', { class: 'btn small', onclick: function () { receiveForm(p, load); } }, _t('Qəbul')) : null, ' ',
+            can('stock.receive') ? h('button', { class: 'btn small', onclick: function () { receiveForm(p, load); } }, _t('Qəbul')) : null,
+            canAsk ? h('button', { class: 'btn small', 'data-act': 'ask-receive', title: _t('Mal gəldi: menecerə təsdiq sorğusu göndər'), onclick: function () { requestReceiveForm(p, load); } }, _t('Mal gəldi')) : null, ' ',
             can('supplier.view') ? h('button', { class: 'btn small', 'data-act': 'lots', onclick: function () { lotsModal(p); } }, _t('Partiyalar')) : null, ' ',
             can('label.print') ? h('button', { class: 'btn small', onclick: function () { labelForm(p); } }, _t('Etiket')) : null)));
       });
     }
+    var REQ_STATE = { pending: _t('Gözləyir'), approved: _t('Təsdiqləndi'), rejected: _t('Rədd edildi'), cancelled: _t('Ləğv edildi'), expired: _t('Vaxtı bitib') };
+    function drawMine(reqs) {
+      myBox.style.display = reqs.length ? '' : 'none';
+      UI.clear(myBox);
+      if (!reqs.length) return;
+      myBox.appendChild(h('h2', { style: 'margin:0 0 4px;font-size:18px' }, _t('Mal qəbulu sorğularım')));
+      myBox.appendChild(h('p', { class: 'muted', style: 'margin:0 0 8px;font-size:13px' }, _t('Qalıq menecer təsdiqləyəndən sonra artır.')));
+      myBox.appendChild(h('div', { class: 'table-wrap' }, h('table', null,
+        h('thead', null, h('tr', null, h('th', null, _t('Vaxt')), h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Say')), h('th', null, _t('Təchizatçı')), h('th', null, _t('Status')), h('th', null, ''))),
+        h('tbody', null, reqs.slice(0, 15).map(function (a) {
+          var pl = a.payload || {}, got = a.result && a.result.qty != null && a.result.qty !== pl.qty ? ' → ' + a.result.qty : '';
+          return h('tr', { 'data-ap': a.id, 'data-state': a.state },
+            h('td', null, UI.fmtDate(a.at)), h('td', null, pl.productName || ''), h('td', { class: 'num' }, String(pl.qty) + got), h('td', null, pl.supplierName || '—'),
+            h('td', null, h('span', { class: 'badge' + (a.state === 'approved' ? ' ok' : a.state === 'pending' ? '' : ' off') }, REQ_STATE[a.state] || a.state),
+              a.state === 'rejected' && a.decidedBy ? h('div', { class: 'muted', style: 'font-size:12px' }, a.decidedBy.name) : null),
+            h('td', null, a.state === 'pending' ? h('button', { class: 'btn small', type: 'button', 'data-act': 'cancel-req', onclick: function () {
+              S.cancelApproval(a.id).then(function () { UI.toast(_t('Sorğu ləğv edildi')); return load(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+            } }, _t('Ləğv et')) : null));
+        })))));
+    }
     function load() {
-      return Promise.all([S.listProducts(), S.stockBySupplier().catch(function () { return {}; })]).then(function (r) {
-        all = r[0].map(function (p) { return S.sanitizeForRole(p, showCost); }); bySup = r[1]; draw();
+      return Promise.all([S.listProducts(), S.stockBySupplier().catch(function () { return {}; }), canAsk ? S.listMyStockRequests() : Promise.resolve([])]).then(function (r) {
+        all = r[0].map(function (p) { return S.sanitizeForRole(p, showCost); }); bySup = r[1]; draw(); drawMine(r[2]);
       });
     }
     root.Screens._refresh = load;     // başqa cihazdan dəyişiklik gələndə siyahı yenilənir
@@ -182,6 +241,7 @@
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Satış ₼')),
           showCost ? h('th', { class: 'num' }, _t('Orta maya ₼')) : null, h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Təchizatçı (qalıq)')), h('th', null, _t('Status')), h('th', null, ''))),
         body)),
+      myBox,
       can('product.edit') && can('stock.receive') ? seedBox : null));
     load().then(function () { q.focus(); });
   }
@@ -266,6 +326,34 @@
           UI.toast(_t('Qalıq: {0}', [np.stock])); close(); onSaved();
           labelForm(np, n);
         });
+      } }]
+    });
+  }
+
+  // Kassir: "mal gəldi" sorğusu. Alış qiymətini kassir görmür və yazmır; qalığı menecer təsdiqləyəndə artır.
+  function requestReceiveForm(p, onSaved) {
+    var qty = h('input', { class: 'input', id: 'q-qty', type: 'number', min: '1', step: '1', value: '1' });
+    var note = h('input', { class: 'input', id: 'q-note', maxlength: '200', autocomplete: 'off', placeholder: _t('Qaimə №, izah') });
+    var sup = h('select', { class: 'input', id: 'q-sup' });
+    S.listSuppliers().then(function (list) {
+      UI.clear(sup);
+      sup.appendChild(h('option', { value: '' }, list.length ? _t('— bilmirəm / menecer seçəcək —') : _t('— təchizatçı yoxdur —')));
+      list.forEach(function (x) { sup.appendChild(h('option', { value: x.id }, x.name)); });
+    }).catch(function () { /* siyahı olmasa təchizatçısız sorğu göndərilir */ });
+    UI.modal({
+      title: _t('Mal gəldi — {0}', [p.name]),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('p', { class: 'muted', style: 'margin:0' }, _t('Gələn malın sayını yazın. Sorğu menecerə gedir; qalıq menecer təsdiqləyəndən sonra artacaq (hazırkı qalıq: {0}).', [p.stock])),
+        h('div', { class: 'grid2' },
+          h('div', { class: 'field' }, h('label', { for: 'q-qty' }, _t('Say')), qty),
+          h('div', { class: 'field' }, h('label', { for: 'q-sup' }, _t('Təchizatçı')), sup)),
+        h('div', { class: 'field' }, h('label', { for: 'q-note' }, _t('Qeyd')), note)),
+      buttons: [{ text: _t('İmtina') }, { text: _t('Menecerə göndər'), kind: 'primary', submit: true, onClick: function (close) {
+        var n = parseInt(qty.value, 10);
+        return root.Sync.endpoint().then(function (url) {
+          if (!url) throw new Error(_t('Server qoşulmayıb: sorğu menecerin cihazına çata bilməz. Mal qəbulunu menecer özü etməlidir'));
+          return S.requestStockReceipt(p.id, n, sup.value || null, note.value);
+        }).then(function () { close(); UI.toast(_t('Sorğu menecerə göndərildi')); if (onSaved) onSaved(); });
       } }]
     });
   }

@@ -58,10 +58,18 @@ t('köhnə matris yenilənir: product.edit olan rola stock.receive əlavə olunu
   const old = { menecer: ['product.edit'], kassir: ['pos.sell'], muhasib: ['report.view'] };
   const up = Rules.upgradeMatrix(old);
   assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);   // 4: təchizatçı icazələri
-  assert.deepStrictEqual(up.kassir, ['pos.sell']);
+  assert.deepStrictEqual(up.kassir, ['pos.sell', 'stock.request']);      // 5: kassir mal gəldi sorğusu göndərə bilir
   assert.deepStrictEqual(up.muhasib, ['report.view', 'supplier.view']);      // hesabata baxan təchizatçı hesabatını görür, dəyişə bilmir
   assert.deepStrictEqual(old.menecer, ['product.edit']);
   assert.deepStrictEqual(Rules.upgradeMatrix(up), up);
+});
+t('mal gəldi sorğusu: yalnız Kassirdə (menecer və admin birbaşa qəbul edir), köhnə matrisə Kassir üçün əlavə olunur', () => {
+  assert.ok(Rules.PERMISSIONS['stock.request']);
+  assert.ok(Rules.can(null, 'kassir', 'stock.request') && !Rules.can(null, 'kassir', 'stock.receive'));
+  assert.ok(!Rules.can(null, 'menecer', 'stock.request') && !Rules.can(null, 'muhasib', 'stock.request'));
+  assert.ok(Rules.MATRIX_VERSION >= 5);
+  const up = Rules.upgradeMatrix({ kassir: ['pos.sell', 'product.view'], menecer: ['product.edit'] });
+  assert.ok(up.kassir.includes('stock.request') && !up.menecer.includes('stock.request'));
 });
 t('5% endirim icazəli', () => assert.strictEqual(Rules.validateDiscountPercent(5), null));
 

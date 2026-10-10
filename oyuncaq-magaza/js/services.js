@@ -100,7 +100,19 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3).then(migrateV4);
+    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5);
+  }
+
+  // v4 → v5: "stock.request" icazəsi (kassir mal gəldiyini menecerə sorğu ilə bildirir). Köhnə matris eyni qaydayla yenilənir.
+  function migrateV5() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 5) return;
+      return DB.atomic(['meta'], function (t) {
+        return t.get('meta', 'matrix').then(function (x) {
+          return t.put('meta', { key: 'matrix', value: Rules.upgradeMatrix(x ? x.value : Rules.DEFAULT_MATRIX) });
+        }).then(function () { return t.put('meta', { key: 'schema', value: 5 }); });
+      });
+    });
   }
 
   // v3 → v4: təchizatçılar və partiyalar. İcazə matrisi yenilənir; köhnə cihazın artıq buraxdığı təchizatçı/partiya hadisələri
@@ -176,7 +188,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 4 }),
+              t.put('meta', { key: 'schema', value: 5 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -481,7 +493,7 @@
   }
 
   function listSuppliers(opts) {
-    return requirePerm(['supplier.view', 'stock.receive']).then(function () {
+    return requirePerm(['supplier.view', 'stock.receive', 'stock.request']).then(function () {
       return DB.getAll('suppliers').then(function (list) {
         list = list.filter(function (s) { return (opts && opts.all) || s.active; });
         return list.sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
@@ -523,27 +535,77 @@
   // Mal qəbulu. Hər qəbul bir PARTİYADIR (FIFO): məhsul, təchizatçı, say, alış qiyməti, vaxt — bütün cihazlarda eyni.
   // Orta çəkili maya (FR-24) saxlanılır. Yalnız "stock.receive" icazəsi olan rol (defolt: Menecer, Admin).
   // unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür. supplierId verilməyibsə partiya "təchizatçısız"dır.
+  var RECEIPT_STORES = ['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'audit', 'outbox'];
+  var MAX_RECEIPT_QTY = 100000;
+  function validateReceiptQty(qty) {
+    if (!Number.isInteger(qty) || qty <= 0) return _t('Say müsbət tam ədəd olmalıdır');
+    if (qty > MAX_RECEIPT_QTY) return _t('Say {0}-dən çox ola bilməz', [MAX_RECEIPT_QTY]);
+    return null;
+  }
+
+  // Qəbulun özü (tranzaksiya daxilində): qalıq, orta maya, partiya, audit. Birbaşa qəbul və təsdiqlənmiş sorğu eyni kodu işlədir.
+  // o: {productId, qty, unitCost, note, supplierId, approval: {id, requestedBy}} — approval olarsa partiyanın id-si sorğudan törəyir (lot_<sorğu id>):
+  // iki menecer eyni sorğunu eyni anda təsdiqləsə də qalıq iki dəfə artmır (bax: replica.js, stock.received).
+  function receiveInTx(t, user, o, at) {
+    return Promise.all([t.get('products', o.productId), o.supplierId ? t.get('suppliers', o.supplierId) : Promise.resolve(null)]).then(function (r) {
+      var p = r[0], sup = r[1], unitCost = o.unitCost;
+      if (!p) throw err(_t('Məhsul tapılmadı'));
+      if (o.supplierId && (!sup || !sup.active)) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
+      if (unitCost == null) unitCost = p.lastCost || 0;
+      var before = p.stock, lotId = o.approval ? 'lot_' + o.approval.id : DB.uid('lot');
+      Object.assign(p, Rules.applyReceipt(p, o.qty, unitCost));
+      var lot = { id: lotId, productId: p.id, supplierId: o.supplierId || null, qty: o.qty, unitCost: unitCost, at: at, userId: user.id, note: o.note || '' };
+      if (o.approval) lot.approvalId = o.approval.id;
+      var ev = { productId: p.id, qty: o.qty, unitCost: unitCost, supplierId: lot.supplierId, lotId: lotId, at: at, note: lot.note };
+      if (o.approval) { ev.approvalId = o.approval.id; ev.requestedBy = o.approval.requestedBy; }
+      return t.put('products', p)
+        .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: o.qty, before: before, after: p.stock, unitCost: unitCost, note: o.note || '', at: at, userId: user.id }); })
+        .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: at }); })
+        .then(function () { return t.put('lots', lot); })
+        .then(function () { return log(t, 'stock.received', ev, user, at); })
+        .then(function () { return { product: p, lotId: lotId, qty: o.qty, unitCost: unitCost, supplierId: lot.supplierId }; });
+    });
+  }
+
   function receiveStock(productId, qty, unitCost, note, supplierId) {
     return requirePerm('stock.receive').then(function (user) {
-      if (!Number.isInteger(qty) || qty <= 0) throw err(_t('Say müsbət tam ədəd olmalıdır'));
+      var bad = validateReceiptQty(qty); if (bad) throw err(bad);
       if (unitCost != null && !(unitCost >= 0)) throw err(_t('Alış qiyməti səhvdir'));
-      return DB.atomic(['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'audit', 'outbox'], function (t) {
-        return Promise.all([t.get('products', productId), supplierId ? t.get('suppliers', supplierId) : Promise.resolve(null)]).then(function (r) {
-          var p = r[0], sup = r[1];
-          if (!p) throw err(_t('Məhsul tapılmadı'));
-          if (supplierId && (!sup || !sup.active)) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
-          if (unitCost == null) unitCost = p.lastCost || 0;
-          var before = p.stock, at = now(), lotId = DB.uid('lot');
-          Object.assign(p, Rules.applyReceipt(p, qty, unitCost));
-          var lot = { id: lotId, productId: p.id, supplierId: supplierId || null, qty: qty, unitCost: unitCost, at: at, userId: user.id, note: note || '' };
-          return t.put('products', p)
-            .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: qty, before: before, after: p.stock, unitCost: unitCost, note: note || '', at: at, userId: user.id }); })
-            .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: at }); })
-            .then(function () { return t.put('lots', lot); })
-            .then(function () { return log(t, 'stock.received', { productId: p.id, qty: qty, unitCost: unitCost, supplierId: lot.supplierId, lotId: lotId, at: at, note: lot.note }, user, at); })
-            .then(function () { return p; });
-        });
+      return DB.atomic(RECEIPT_STORES, function (t) {
+        return receiveInTx(t, user, { productId: productId, qty: qty, unitCost: unitCost, note: note, supplierId: supplierId }, now()).then(function (r) { return r.product; });
       });
+    });
+  }
+
+  // Kassir "mal gəldi" sorğusu göndərir; qalıq YALNIZ menecer/admin təsdiqləyəndə artır (decideApproval). Kassir alış qiymətini görmür və yazmır:
+  // qiyməti təsdiq edən yazır (yazmasa son qiymət götürülür). Eyni məhsula gözləyən sorğu varsa ikincisi qəbul edilmir (təsadüfi ikiqat basma).
+  function requestStockReceipt(productId, qty, supplierId, note) {
+    return requirePerm('stock.request').then(function (me) {
+      var bad = validateReceiptQty(qty); if (bad) throw err(bad);
+      note = String(note || '').trim();
+      if (note.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+      return Promise.all([DB.get('products', productId), supplierId ? DB.get('suppliers', supplierId) : Promise.resolve(null), DB.getAll('approvals')]).then(function (r) {
+        var p = r[0], sup = r[1];
+        if (!p || !p.active) throw err(_t('Məhsul tapılmadı'));
+        if (supplierId && (!sup || !sup.active)) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
+        var dup = r[2].some(function (a) { return a.kind === 'stock.receive' && a.status === 'pending' && isFresh(a) && a.requestedBy.id === me.id && a.payload && a.payload.productId === productId; });
+        if (dup) throw err(_t('Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin'));
+        var payload = { productId: p.id, productName: p.name, qty: qty, supplierId: sup ? sup.id : null, supplierName: sup ? sup.name : '', note: note };
+        var tx = approvalText('{0} mal qəbulu istəyir: «{1}», {2} ədəd', [me.name, p.name, qty]);
+        return requestApproval('stock.receive', 'stock.receive', tx.summary, tx.tk, tx.tp, payload);
+      });
+    });
+  }
+
+  // Kassirin öz mal qəbulu sorğuları (son 7 gün), yenidən köhnəyə doğru
+  function listMyStockRequests() {
+    var me = session.user;
+    if (!me) return Promise.resolve([]);
+    var from = Date.now() - 7 * 86400000;
+    return DB.getAll('approvals').then(function (all) {
+      return all.filter(function (a) { return a.kind === 'stock.receive' && a.requestedBy.id === me.id && Date.parse(a.at) >= from; })
+        .map(function (a) { var st = a.status === 'pending' && !isFresh(a) ? 'expired' : a.status; return Object.assign({}, a, { state: st }); })
+        .sort(function (a, b) { return a.at < b.at ? 1 : -1; });
     });
   }
 
@@ -908,14 +970,19 @@
   }
 
   /* ---------- Təsdiq sorğuları (kassir → menecer, serverlə) ---------- */
-  var APPROVAL_TTL = 10 * 60000;
-  function isFresh(a) { return Date.now() - Date.parse(a.at) < APPROVAL_TTL; }
+  // Sorğunun mətni: summary həmişə Azərbaycanca (köhnə cihazlar üçün), tk/tp şablon və dəyərlərdir — menecer öz dilində görür (bax: ui.js, UI.reqText)
+  function approvalText(key, params) { return { summary: _t(key, params, 'az'), tk: key, tp: params }; }
+
+  var APPROVAL_TTL = 10 * 60000;                 // kassada gözləyən əməliyyatlar (sətir silmə, endirim, qaytarma)
+  var STOCK_REQUEST_TTL = 24 * 3600000;          // mal qəbulu sorğusu: kassir gözləmir, menecer sonra da təsdiqləyə bilər
+  function ttlOf(a) { return a.kind === 'stock.receive' ? STOCK_REQUEST_TTL : APPROVAL_TTL; }
+  function isFresh(a) { return Date.now() - Date.parse(a.at) < ttlOf(a); }
 
   // kind: 'line_delete' | 'sale_cancel' | 'discount' | ..., perm: təsdiq üçün lazım olan icazə, summary: menecerə göstərilən mətn
-  function requestApproval(kind, perm, summary, tk, tp) {
+  function requestApproval(kind, perm, summary, tk, tp, payload) {
     var me = session.user;
     if (!me) return Promise.reject(err(_t('Daxil olun'), 'auth'));
-    var rec = { id: DB.uid('ap'), kind: kind, perm: perm, summary: summary, tk: tk || null, tp: tp || null, requestedBy: { id: me.id, name: me.name, role: me.role }, at: now(), status: 'pending', device: device };
+    var rec = { id: DB.uid('ap'), kind: kind, perm: perm, summary: summary, tk: tk || null, tp: tp || null, payload: payload || null, requestedBy: { id: me.id, name: me.name, role: me.role }, at: now(), status: 'pending', device: device };
     return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
       return t.put('approvals', rec).then(function () { return log(t, 'approval.requested', { approval: rec }, me, rec.at); }).then(function () { return rec; });
     });
@@ -927,18 +994,41 @@
     });
   }
 
-  function decideApproval(id, decision) {
+  // opts (yalnız mal qəbulu sorğusunda): təsdiq edən sayı, təchizatçını və alış qiymətini düzəldə bilər: {qty, supplierId, unitCost}
+  function decideApproval(id, decision, opts) {
     if (decision !== 'approved' && decision !== 'rejected') return Promise.reject(err(_t('Qərar səhvdir')));
-    return DB.get('approvals', id).then(function (a) {
-      if (!a) throw err(_t('Sorğu tapılmadı'));
-      return requirePerm(a.perm).then(function (me) {
-        if (a.requestedBy.id === me.id) throw err(_t('Öz sorğunuzu təsdiqləyə bilməzsiniz'));
-        if (a.status !== 'pending') throw err(_t('Sorğuya artıq cavab verilib'));
-        if (!isFresh(a)) throw err(_t('Sorğunun vaxtı bitib'));
-        var at = now();
-        return DB.atomic(['approvals', 'audit', 'outbox'], function (t) {
-          a.status = decision; a.decidedBy = { id: me.id, name: me.name, role: me.role }; a.decidedAt = at;
-          return t.put('approvals', a).then(function () { return log(t, 'approval.decided', { id: a.id, decision: decision, by: a.decidedBy, decidedAt: at }, me, at); }).then(function () { return a; });
+    opts = opts || {};
+    return DB.get('approvals', id).then(function (a0) {
+      if (!a0) throw err(_t('Sorğu tapılmadı'));
+      return requirePerm(a0.perm).then(function (me) {
+        if (a0.requestedBy.id === me.id) throw err(_t('Öz sorğunuzu təsdiqləyə bilməzsiniz'));
+        var stock = decision === 'approved' && a0.kind === 'stock.receive' && a0.payload;
+        var qty = a0.payload && a0.payload.qty, supplierId = a0.payload ? a0.payload.supplierId : null, unitCost = null;
+        if (stock) {
+          if (opts.qty != null) qty = opts.qty;
+          if (opts.supplierId !== undefined) supplierId = opts.supplierId || null;
+          var bad = validateReceiptQty(qty); if (bad) throw err(bad);
+          if (opts.unitCost != null) {
+            if (!(opts.unitCost >= 0)) throw err(_t('Alış qiyməti səhvdir'));
+            unitCost = opts.unitCost;
+          }
+        }
+        return DB.atomic(['approvals'].concat(RECEIPT_STORES), function (t) {
+          // Vəziyyət tranzaksiyanın içində yenidən oxunur: ikiqat klik və ya eyni anda gələn cavab sorğunu iki dəfə icra etməsin
+          return t.get('approvals', id).then(function (a) {
+            if (!a) throw err(_t('Sorğu tapılmadı'));
+            if (a.status !== 'pending') throw err(_t('Sorğuya artıq cavab verilib'));
+            if (!isFresh(a)) throw err(_t('Sorğunun vaxtı bitib'));
+            var at = now();
+            a.status = decision; a.decidedBy = { id: me.id, name: me.name, role: me.role }; a.decidedAt = at;
+            var work = stock
+              ? receiveInTx(t, me, { productId: a.payload.productId, qty: qty, unitCost: unitCost, note: a.payload.note, supplierId: supplierId, approval: { id: a.id, requestedBy: a.requestedBy } }, at)
+                .then(function (r) { a.result = { qty: r.qty, unitCost: r.unitCost, supplierId: r.supplierId, lotId: r.lotId }; })
+              : Promise.resolve();
+            return work.then(function () { return t.put('approvals', a); })
+              .then(function () { return log(t, 'approval.decided', { id: a.id, decision: decision, by: a.decidedBy, decidedAt: at, result: a.result || null }, me, at); })
+              .then(function () { return a; });
+          });
         });
       });
     });
@@ -1001,7 +1091,7 @@
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
     recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
-    requestApproval: requestApproval, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
+    requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
   };
   root.Services = Services;

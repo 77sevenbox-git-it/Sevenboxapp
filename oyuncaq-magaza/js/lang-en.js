@@ -570,6 +570,26 @@
     "Naməlum açar": "Unknown key",
     "Server məşğuldur, sonra təkrar olunacaq": "Server is busy, will retry later",
     "Bildiriş ünvanı tanınmır": "Notification endpoint not recognised",
-    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "This device is not registered for notifications"
+    "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "This device is not registered for notifications",
+    "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Send a stock receipt request (manager approves)",
+    "Qəbul təsdiqləndi, qalıq artırıldı: {0} ədəd": "Receipt approved, stock increased: {0} pcs",
+    "Hazırkı qalıq: {0}": "Current stock: {0}",
+    "Təsdiqlə və qəbul et": "Approve and receive",
+    "Mal gəldi: menecerə təsdiq sorğusu göndər": "Goods arrived: send an approval request to the manager",
+    "Mal gəldi": "Goods arrived",
+    "Gözləyir": "Pending",
+    "Ləğv edildi": "Cancelled",
+    "Vaxtı bitib": "Expired",
+    "Mal qəbulu sorğularım": "My stock receipt requests",
+    "Qalıq menecer təsdiqləyəndən sonra artır.": "Stock increases after the manager approves.",
+    "Vaxt": "Time",
+    "— bilmirəm / menecer seçəcək —": "— not sure / manager will choose —",
+    "Mal gəldi — {0}": "Goods arrived — {0}",
+    "Gələn malın sayını yazın. Sorğu menecerə gedir; qalıq menecer təsdiqləyəndən sonra artacaq (hazırkı qalıq: {0}).": "Enter the quantity that arrived. The request goes to the manager; stock increases after approval (current stock: {0}).",
+    "Server qoşulmayıb: sorğu menecerin cihazına çata bilməz. Mal qəbulunu menecer özü etməlidir": "The server is not connected: the request cannot reach the manager's device. The manager must receive the goods themselves.",
+    "Say {0}-dən çox ola bilməz": "Quantity cannot exceed {0}",
+    "Qeyd 200 simvoldan uzun ola bilməz": "The note cannot be longer than 200 characters",
+    "Bu məhsul üçün sorğu artıq menecerin cavabını gözləyir. Dəyişmək istəyirsinizsə əvvəl onu ləğv edin": "A request for this product is already waiting for the manager. To change it, cancel it first.",
+    "{0} mal qəbulu istəyir: «{1}», {2} ədəd": "{0} requests a stock receipt: \"{1}\", {2} pcs"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

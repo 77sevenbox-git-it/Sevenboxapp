@@ -467,7 +467,7 @@ async function loginAs(role) {
   await t('təchizatçı: Menecer yaradır; Kassir yarada bilmir; Mühasib baxır amma dəyişmir; ad təkrarlana bilmir', async () => {
     S._session.user = { id: 'u_kassir', name: 'Kassir', role: 'kassir' };
     await rejects(S.createSupplier({ name: 'Alfa MMC' }), /icazəniz yoxdur/);
-    await rejects(S.listSuppliers(), /icazəniz yoxdur/);
+    assert.deepStrictEqual(await S.listSuppliers(), []);     // Kassir mal gəldi sorğusunda təchizatçı seçir: adlara baxa bilir, yaradıb dəyişə bilmir
     await loginAs('menecer');
     alfa = await S.createSupplier({ name: ' Alfa  MMC ', phone: '+994 50 111 22 33', note: 'VÖEN 123' });
     beta = await S.createSupplier({ name: 'Beta Toys' });

@@ -7,6 +7,7 @@ const acorn = require('acorn');
 const JS = path.join(__dirname, '..', 'js');
 const AZ = /[əƏğĞıİöÖüÜşŞçÇ]/;
 const FN = '_t';
+const FN2 = 'approvalText';     // services.js: approvalText(açar, [dəyərlər]) — _t kimi açar götürür
 
 function files() { return fs.readdirSync(JS).filter(f => f.endsWith('.js') && !/^lang-|^i18n\.js$/.test(f)); }
 function parse(src) { return acorn.parse(src, { ecmaVersion: 2020, locations: true, sourceType: 'script' }); }
@@ -28,7 +29,7 @@ function keys() {
     const ast = parse(fs.readFileSync(path.join(JS, f), 'utf8'));
     walk(ast, null, null, (n) => {
       const isReq = n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && n.callee.object.name === 'UI' && n.callee.property.name === 'req';
-      if (n.type === 'CallExpression' && ((n.callee.type === 'Identifier' && n.callee.name === FN) || isReq)) {
+      if (n.type === 'CallExpression' && ((n.callee.type === 'Identifier' && (n.callee.name === FN || n.callee.name === FN2)) || isReq)) {
         const a = n.arguments[isReq ? 1 : 0];
         if (isReq && n.arguments[2]) { /* parametrlər üçüncü argumentdadır */ }
         const pa = isReq ? n.arguments[2] : n.arguments[1];
@@ -50,7 +51,7 @@ function unwrapped() {
     walk(ast, null, null, function visit(n, p) { /* aşağıda parent zənciri ilə */ });
     (function rec(n, anc) {
       if (!n || typeof n.type !== 'string') return;
-      const inT = anc.some(a => a.type === 'CallExpression' && ((a.callee.type === 'Identifier' && a.callee.name === FN) || (a.callee.type === 'MemberExpression' && a.callee.object.name === 'UI' && a.callee.property.name === 'req')));
+      const inT = anc.some(a => a.type === 'CallExpression' && ((a.callee.type === 'Identifier' && (a.callee.name === FN || a.callee.name === FN2)) || (a.callee.type === 'MemberExpression' && a.callee.object.name === 'UI' && a.callee.property.name === 'req')));
       if (!inT && ((n.type === 'Literal' && typeof n.value === 'string') || n.type === 'TemplateElement')) {
         const v = n.type === 'Literal' ? n.value : n.value.cooked;
         if (AZ.test(v)) out.push({ file: f, line: n.loc.start.line, text: v });
@@ -70,7 +71,7 @@ function unwrapped() {
 const ALLOW = [
   /^barcode\.js:/, /^db\.js:/,
   /^services\.js:.*(Mühasib [12]|\[Mağaza adı\]|\[VÖEN\]|\[Ünvan\]|Konstruktor dəsti|Yumşaq ayı|Maqnit|Qız qalası|Puzzl|Nümunə qalıq)/,
-  /^replica\.js:.*başqa cihaz/,
+  /^replica\.js:.*(başqa cihaz|təsdiq düzəlişi)/,
   /^print\.js:.*(Konstruktor dəsti|ƏÖÜĞŞİÇ|Sınaq məhsulu|Azərbaycanca)/,   // "Azərbaycanca" — dil seçimində hər dilin öz adı ilə yazılır
   /^sync\.js:\d+:(İcazə yoxdur|JSON səhvdir|Naməlum əməliyyat|Naməlum açar|Server məşğuldur, sonra təkrar olunacaq|Bildiriş ünvanı tanınmır|Bu cihaz bildiriş üçün qeydiyyatdan keçməyib)$/   // Code.gs-in qaytardığı xəta mətnləri (müqayisə üçün; ekrana srvErr() ilə tərcümə olunmuş çıxır)
 ];

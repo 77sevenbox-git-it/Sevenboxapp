@@ -73,7 +73,7 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     assert.notStrictEqual(admin.updatedAt, A.Services.EPOCH, 'dəyişdirilmiş PIN yenilik sayılır');
     assert.strictEqual(users.find(u => u.id === 'u_menecer').updatedAt, A.Services.EPOCH, 'toxunulmamış istifadəçi sınaq vəziyyətindədir');
     assert.strictEqual((await A.DB.getAll('sales')).length, 1);
-    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 4);
+    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 5);
     assert.ok(A.Services.deviceId());
   });
 
