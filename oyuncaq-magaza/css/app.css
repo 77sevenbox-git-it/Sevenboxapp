@@ -212,3 +212,22 @@ tr.inactive td { color: var(--faint); }
   .boot-blocks i, .boot-name b, .boot-dots i { animation: none; }
   .boot-dots i { opacity: .6; }
 }
+
+/* Təchizatçı hesabat sənədi (A4): ekranda öncəbaxış, çapda tam səhifə */
+.sdoc { color: #000; background: #fff; font-family: Arial, Helvetica, sans-serif; font-size: 12px; line-height: 1.35; }
+.sdoc h1 { margin: 0; font-size: 18px; } .sdoc h2 { margin: 10px 0 6px; font-size: 16px; text-align: center; letter-spacing: .04em; }
+.sdoc h3 { margin: 14px 0 4px; font-size: 13px; }
+.sdoc .sd-head { text-align: center; border-bottom: 1px solid #000; padding-bottom: 6px; }
+.sdoc table { width: 100%; border-collapse: collapse; }
+.sdoc .sd-meta td { padding: 2px 6px 2px 0; vertical-align: top; } .sdoc .sd-meta td:first-child { width: 110px; color: #333; }
+.sdoc .sd-tab th, .sdoc .sd-tab td { border: 1px solid #888; padding: 3px 5px; text-align: left; vertical-align: top; }
+.sdoc .sd-tab thead th { background: #eee; }
+.sdoc .sd-tab tr.first td { border-top: 2px solid #000; }
+.sdoc .n { text-align: right !important; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sdoc .sd-tab tfoot th { border: 1px solid #000; background: #f4f4f4; }
+.sdoc .sd-acc td { border-bottom: 1px solid #bbb; padding: 4px 6px; } .sdoc .sd-acc tr.total td { border: 2px solid #000; font-size: 14px; font-weight: 700; }
+.sdoc .sd-note { color: #333; font-size: 11px; margin: 6px 0 0; } .sdoc .sd-empty { margin: 4px 0; font-style: italic; }
+.sdoc .sd-sign { display: flex; justify-content: space-between; gap: 24px; margin-top: 36px; }
+.sdoc table { page-break-inside: auto; } .sdoc tr { page-break-inside: avoid; }
+.sdoc-preview { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px; background: #fff; max-height: 52vh; overflow: auto; }
+@media print { .sdoc { font-size: 11pt; } .sdoc h1 { font-size: 16pt; } }

@@ -84,6 +84,15 @@ Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir
 - Növbəni bağlayanda digər kassaların satışları da hesabata düşsün deyə əvvəlcə server yenilənir.
 - Sətir silmə sorğusu gözləyərkən internet kəsilərsə, menecer PIN-i ilə təsdiqləmək qalır.
 
+## Təchizatçı borcu, ödənişlər və hesabat sənədi
+**Təchizatçılar → Hesab** düyməsi (borcu görmək: «Təchizatçılara baxmaq» + «Alış qiymətini görmək» və ya «Təchizatçıya ödəniş etmək» icazəsi).
+- **Borc** = açılış borcu + hesablanan məbləğ − ödənişlər. Hesablanan məbləğin əsasını Admin təchizatçı üzrə seçir (təchizatçı formasında): **alınan mal** (defolt; partiyanın sayı × alış qiyməti, mal qəbulu vaxtı ilə) və ya **satılan mal** (komissiyaya götürülmüş mal: yalnız FIFO ilə satılan hissənin alış qiyməti, qaytarmalar çıxılır). Açılış borcu — sistemdən əvvəlki borcdur (avans üçün mənfi). Əsası sonradan dəyişmək keçmiş borcu da yenidən hesablayır.
+- **Ödəniş** («Ödəniş et»): **nağd** — məbləğ AÇIQ növbənin kassasından çıxır (adi «kassadan məxaric» kimi də yazılır → gözlənilən nağd azalır, Z hesabatında «o cümlədən təchizatçılara» sətri). Kassada olan nağddan çox çıxmır; növbə açıq olmalıdır. **Bank** — kassaya toxunmur. Borcdan çox ödəniş yalnız təsdiqlə (avans). İcazə: `supplier.pay` (defolt yalnız Admin; Admin matrisdə başqa rola verə bilər).
+- **Ləğv**: səbəb məcburidir; nağd idisə məbləğ açıq növbənin kassasına geri mədaxil olur (iki cihaz eyni anda ləğv etsə də yalnız bir mədaxil). Ödənişlər silinmir, ləğv kimi qalır.
+- **Hesabat sənədi** («Hesabat sənədi»): dövr (bu gün defolt, dünən, ay, seçilmiş tarixlər, bütün vaxt) üzrə təchizatçının malı olan **çeklər** (qaytarmalar mənfi), **hesablaşma** (əvvəlki borc + hesablanan − ödənişlər = **QALIQ BORC**), ödənişlər və (alınan mal əsasında) alınan mal siyahısı. Çap/PDF (A4), «Paylaş» (telefonda/Windows-da sistem paylaşma pəncərəsi) və «Kopyala» (WhatsApp/e-poçta yapışdırmaq üçün mətn). Sənədin dili ayrıca seçilir (AZ/RU/EN/TR). Sənəd faylı yaradılmır: fayl lazımdırsa «Çap et / PDF» → «PDF kimi saxla».
+- Sheets: `SupplierPayments` vərəqi (ödənişlər + ləğv), `Suppliers`-də `debtBasis`, `openingDebt` sütunları, nağd hərəkətlər `CashMoves`-da. Code.gs-i yeniləyəndən sonra `setup()` işlədin.
+- **Məhdudiyyətlər:** təchizatçıya mal qaytarma (kredit-nota) və fakturaların özü hələ yoxdur: belə düzəlişi açılış borcuna yazmaq olar; «satılan mal» əsasında offlayn cihaz gec sinxronlaşanda FIFO bölgüsü təchizatçılar arasında düzələ bilər (borc da ona uyğun dəyişir); alış qiyməti 0 olan partiyalar borca düşmür (sənəddə xəbərdarlıq var).
+
 ## Giriş forması (rol üzrə PIN və ya şifrə)
 Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında hər rol üçün seçir: **PIN** (4–8 rəqəm) və ya **şifrə** (≥ 8 simvol, ən azı 1 böyük hərf, 1 kiçik hərf, 1 rəqəm, 1 işarə; boşluq olmaz; ə, ğ, ı, ö, ü, ş, ç hərf sayılır). İlkin vəziyyət: hamı PIN.
 - **Dəyişiklikdən sonra** (Admin forma seçib, rolu dəyişib və ya kodu sıfırlayıb) həmin şəxs **öz hazırkı (və ya Admin-in verdiyi) kodu ilə** daxil olur, dərhal yeni kodu **rolun formasında** seçməlidir; seçənə qədər işə keçə bilmir.
@@ -132,6 +141,7 @@ node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
 node tests/archive.test.js     # arxivləşdirmə: 2500 hadisə, köhnə kursor arxivdən oxuyur, soyuq cihaz eyni vəziyyəti alır, yarımçıq qalma bərpası, xətada heç nə silinmir, xana sayı azalır
 node tests/auth.test.js        # rol üzrə PIN/şifrə: siyasət, şifrə qaydaları, PBKDF2 (Node ilə eyni), məcburi dəyişmə, rol dəyişimi, bloklama, saxta siyasət hadisələri
+node tests/supplier.test.js    # tədarükçü borcu: iki əsas, ödəniş/ləğv, kassaya təsir, icazələr, sinxron, saxta hadisələr, 4 dildə hesabat sənədi
 node tests/migrate.test.js     # köhnə (v1) brauzer bazasının yeni sxemə keçməsi
 node tests/push.test.js        # server push: P-256/ES256 hesabı Node kriptoqrafiyası ilə yoxlanır, kimə push gedir, xəta halları
 node tests/notify.test.js      # brauzer tərəfi: abunə, icazə, qeydiyyat/söndürmə, test, yerli bildiriş (API-lər təqlid olunur)

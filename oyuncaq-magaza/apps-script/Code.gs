@@ -53,7 +53,8 @@ var SHEETS = {
   Returns: ['id', 'saleId', 'receiptNo', 'at', 'amount', 'cashAmount', 'bankAmount', 'bankType', 'approvedBy', 'reason'],
   Products: ['id', 'name', 'category', 'brand', 'ageGroup', 'storeBarcode', 'mfrBarcode', 'price', 'avgCost', 'lastCost', 'minStock', 'active', 'updatedAt'],
   StockReceipts: ['at', 'productId', 'qty', 'unitCost', 'userId', 'supplierId', 'lotId', 'note'],
-  Suppliers: ['id', 'name', 'phone', 'note', 'active', 'updatedAt'],
+  Suppliers: ['id', 'name', 'phone', 'note', 'active', 'updatedAt', 'debtBasis', 'openingDebt'],
+  SupplierPayments: ['id', 'supplierId', 'supplierName', 'at', 'amount', 'method', 'shiftId', 'cashMoveId', 'userName', 'note', 'voidedAt', 'voidReason', 'updatedAt'],
   Shifts: ['id', 'status', 'openedAt', 'openedBy', 'openingCash', 'closedAt', 'closedBy', 'expectedCash', 'countedCash', 'diff', 'note'],
   CashMoves: ['id', 'shiftId', 'type', 'amount', 'reason', 'at', 'userId', 'approvedBy'],
   Audit: ['at', 'type', 'userId', 'json'],
@@ -63,7 +64,7 @@ var SHEETS = {
 };
 
 // Bu hadisələr öz vərəqlərində var, "Audit"-də təkrarlanmır (Audit = təhlükəsizlik və əməliyyat jurnalı)
-var HEAVY = { 'sale.created': 1, 'return.created': 1, 'product.created': 1, 'product.updated': 1, 'stock.received': 1, 'supplier.upserted': 1,
+var HEAVY = { 'sale.created': 1, 'return.created': 1, 'product.created': 1, 'product.updated': 1, 'stock.received': 1, 'supplier.upserted': 1, 'supplier.paid': 1, 'supplier.pay_voided': 1,
   'shift.opened': 1, 'shift.closed': 1, 'cash.in': 1, 'cash.out': 1 };
 
 function setup() {
@@ -561,7 +562,14 @@ function project(batch, it) {
       break;
     case 'supplier.upserted': {
       var sp = d.supplier;
-      batch.table('Suppliers').upsert([sp.id, sp.name, sp.phone || '', sp.note || '', sp.active, sp.updatedAt]);
+      batch.table('Suppliers').upsert([sp.id, sp.name, sp.phone || '', sp.note || '', sp.active, sp.updatedAt, sp.debtBasis || 'received', (sp.openingDebt || 0) / 100]);
+      break;
+    }
+    case 'supplier.paid':
+    case 'supplier.pay_voided': {
+      // Ödəniş (nağd olarsa kassa hərəkəti ayrıca cash.out/in hadisəsi ilə CashMoves-a düşür). Ləğv hadisəsi ödənişin yenilənmiş surətini daşıyır
+      var py = d.pay;
+      if (py && py.id) batch.table('SupplierPayments').upsert([py.id, py.supplierId, py.supplierName || '', py.at, (py.amount || 0) / 100, py.method, py.shiftId || '', py.cashMoveId || '', py.userName || '', py.note || '', py.voidedAt || '', py.voidReason || '', py.updatedAt || py.at]);
       break;
     }
     case 'shift.opened':

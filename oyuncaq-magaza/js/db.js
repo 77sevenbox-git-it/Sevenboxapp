@@ -4,7 +4,7 @@
   'use strict';
 
   var DB_NAME = 'magaza';
-  var VERSION = 3;
+  var VERSION = 4;
   var STORES = {
     products: { keyPath: 'id', indexes: [['storeBarcode', true], ['mfrBarcode', false]] },
     // receiptNo unikal deyil: fərqli kassalardan gələn çekin yazılması heç vaxt rədd olunmamalıdır (pul məlumatı itməsin)
@@ -20,6 +20,7 @@
     approvals: { keyPath: 'id', indexes: [['status', false]] },
     suppliers: { keyPath: 'id', indexes: [] },
     lots: { keyPath: 'id', indexes: [['productId', false]] },
+    supplierPays: { keyPath: 'id', indexes: [['supplierId', false]] },
     meta: { keyPath: 'key', indexes: [] }
   };
 

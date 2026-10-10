@@ -88,6 +88,87 @@
       (ret.bankAmount ? '<div class="r"><span>' + BANK[ret.bankType] + '</span><span>' + M.format(ret.bankAmount) + '</span></div>' : ''), cfg);
   }
 
+  /* ---------- Təchizatçı hesabat sənədi (A4) ----------
+     Günün sonunda təchizatçıya göndərilir: onun malının satıldığı çeklər, ödənişlər və qalıq borc. Dil ayrıca seçilir (təchizatçı başqa dildə oxuya bilər). */
+  // Sənədin dili interfeys dilindən ayrıdır: "_t" adı QƏSDƏN saxlanılıb (tərcümə açarlarını tarayıcı bu adla tapır)
+  function stmT(lang) { return function (key, params) { return root.I18n ? root.I18n.t(key, params, lang) : String(key).replace(/\{(\d+)\}/g, function (m, i) { return params && params[i] != null ? params[i] : m; }); }; }
+  function dayText(ds) { var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ds || ''); return m ? m[3] + '.' + m[2] + '.' + m[1] : ''; }
+  function periodText(stm, _t) {
+    var a = dayText(stm.range && stm.range.fromDay), b = dayText(stm.range && stm.range.toDay);
+    if (a && b) return a === b ? a : a + ' – ' + b;
+    if (a) return _t('{0} tarixindən', [a]);
+    if (b) return _t('{0} tarixinə qədər', [b]);
+    return _t('Bütün vaxt');
+  }
+  function stmLabels(stm, _t) {
+    var sold = stm.basis === 'sold';
+    return { accrued: sold ? _t('Satılan malın alış dəyəri') : _t('Alınan mal'), basisNote: sold ? _t('Borc yalnız satılmış malın alış qiyməti ilə hesablanır.') : _t('Borc təchizatçıdan alınan malın alış qiyməti ilə hesablanır.') };
+  }
+  function methodText(m, _t) { return m === 'cash' ? _t('Nağd') : _t('Bank'); }
+
+  function statementHtml(stm, lang) {
+    var M = root.Money, _t = stmT(lang), sold = stm.basis === 'sold', L = stmLabels(stm, _t);
+    var store = stm.store || {};
+    function money(v) { return M.format(v); }
+    function row(a, b, cls) { return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td>' + a + '</td><td class="n">' + b + '</td></tr>'; }
+    var out = '<div class="sdoc"><div class="sd-head"><h1>' + esc(store.name || '') + '</h1><div>' + (store.voen ? _t('VÖEN') + ' ' + esc(store.voen) + ' · ' : '') + esc(store.address || '') + '</div></div>' +
+      '<h2>' + _t('TƏCHİZATÇI HESABATI') + '</h2>' +
+      '<table class="sd-meta"><tr><td>' + _t('Təchizatçı') + '</td><td><b>' + esc(stm.supplier.name) + '</b></td></tr><tr><td>' + _t('Dövr') + '</td><td>' + esc(periodText(stm, _t)) + '</td></tr>' +
+      '<tr><td>' + _t('Hazırlandı') + '</td><td>' + esc(U().fmtDate(stm.at, lang)) + ' · ' + esc(stm.by) + '</td></tr></table>';
+
+    out += '<h3>' + _t('1. Satış çekləri (bu təchizatçının malı)') + '</h3>';
+    if (!stm.receipts.length) out += '<p class="sd-empty">' + _t('Bu dövrdə bu təchizatçının malı satılmayıb') + '</p>';
+    else {
+      out += '<table class="sd-tab"><thead><tr><th>' + _t('Çek №') + ' / ' + _t('Tarix') + '</th><th>' + _t('Məhsul') + '</th><th class="n">' + _t('Say') + '</th><th class="n">' + _t('Qiymət') + '</th><th class="n">' + _t('Məbləğ') + '</th>' + (sold ? '<th class="n">' + _t('Alış dəyəri') + '</th>' : '') + '</tr></thead><tbody>';
+      stm.receipts.forEach(function (r) {
+        var head = (r.kind === 'ret' ? _t('Qaytarma') + ' · ' : '') + String(r.receiptNo || '').padStart(6, '0') + ' · ' + U().fmtDate(r.at, lang);
+        r.lines.forEach(function (ln, i) {
+          out += '<tr class="' + (i === 0 ? 'first' : '') + '"><td>' + (i === 0 ? esc(head) : '') + '</td><td>' + esc(ln.name) + '</td><td class="n">' + ln.qty + '</td><td class="n">' + money(ln.price) + '</td><td class="n">' + money(ln.revenue) + '</td>' + (sold ? '<td class="n">' + money(ln.cost) + '</td>' : '') + '</tr>';
+        });
+      });
+      out += '</tbody><tfoot><tr><th colspan="2">' + _t('Cəmi') + '</th><th class="n">' + stm.sales.qty + '</th><th></th><th class="n">' + money(stm.sales.revenue) + '</th>' + (sold ? '<th class="n">' + money(stm.sales.cost) + '</th>' : '') + '</tr></tfoot></table>';
+    }
+
+    out += '<h3>' + _t('2. Hesablaşma') + '</h3><table class="sd-acc">' +
+      row(_t('Əvvəlki borc'), money(stm.opening)) +
+      row('+ ' + L.accrued, money(stm.accrued)) +
+      row('− ' + _t('Ödənişlər'), money(stm.paidTotal)) +
+      (stm.reversedTotal ? row('+ ' + _t('Ləğv edilmiş ödənişlər'), money(stm.reversedTotal)) : '') +
+      row(stm.closing < 0 ? _t('Qalıq (avans: təchizatçı mağazaya borcludur)') : _t('QALIQ BORC'), money(stm.closing) + ' AZN', 'total') + '</table>' +
+      '<p class="sd-note">' + esc(L.basisNote) + '</p>';
+
+    if (stm.payments.length || stm.reversed.length) {
+      out += '<h3>' + _t('3. Ödənişlər') + '</h3><table class="sd-tab"><thead><tr><th>' + _t('Tarix') + '</th><th>' + _t('Üsul') + '</th><th>' + _t('Qeyd') + '</th><th class="n">' + _t('Məbləğ') + '</th></tr></thead><tbody>';
+      stm.payments.forEach(function (p) { out += '<tr><td>' + esc(U().fmtDate(p.at, lang)) + '</td><td>' + methodText(p.method, _t) + '</td><td>' + esc(p.note || '') + '</td><td class="n">' + money(p.amount) + '</td></tr>'; });
+      stm.reversed.forEach(function (p) { out += '<tr><td>' + esc(U().fmtDate(p.voidedAt, lang)) + '</td><td>' + _t('Ləğv') + '</td><td>' + esc(U().fmtDate(p.at, lang)) + ' · ' + esc(p.voidReason || '') + '</td><td class="n">−' + money(p.amount) + '</td></tr>'; });
+      out += '</tbody></table>';
+    }
+    if (!sold && stm.accruedItems.length) {
+      out += '<h3>' + _t('4. Alınan mal') + '</h3><table class="sd-tab"><thead><tr><th>' + _t('Tarix') + '</th><th>' + _t('Məhsul') + '</th><th class="n">' + _t('Say') + '</th><th class="n">' + _t('Alış qiyməti') + '</th><th class="n">' + _t('Məbləğ') + '</th></tr></thead><tbody>';
+      stm.accruedItems.forEach(function (it) { out += '<tr><td>' + esc(U().fmtDate(it.at, lang)) + '</td><td>' + esc(it.name) + '</td><td class="n">' + it.qty + '</td><td class="n">' + money(it.unitCost) + '</td><td class="n">' + money(it.amount) + '</td></tr>'; });
+      out += '</tbody></table>';
+    }
+    out += '<div class="sd-sign"><div>' + _t('Təhvil verdi') + ': ____________________</div><div>' + _t('Qəbul etdi') + ': ____________________</div></div></div>';
+    return out;
+  }
+
+  // Mətn forması (mesajlaşma proqramına yapışdırmaq / paylaşmaq üçün)
+  function statementText(stm, lang) {
+    var M = root.Money, _t = stmT(lang), sold = stm.basis === 'sold', L = stmLabels(stm, _t), store = stm.store || {};
+    var o = [(store.name || ''), _t('TƏCHİZATÇI HESABATI') + ': ' + stm.supplier.name, _t('Dövr') + ': ' + periodText(stm, _t), ''];
+    if (!stm.receipts.length) o.push(_t('Bu dövrdə bu təchizatçının malı satılmayıb'));
+    stm.receipts.forEach(function (r) {
+      o.push((r.kind === 'ret' ? _t('Qaytarma') + ' ' : _t('Çek №') + ' ') + String(r.receiptNo || '').padStart(6, '0') + ' (' + U().fmtDate(r.at, lang) + ')');
+      r.lines.forEach(function (ln) { o.push('  ' + ln.name + ' × ' + ln.qty + ' = ' + M.format(ln.revenue) + (sold ? ' [' + _t('Alış dəyəri') + ' ' + M.format(ln.cost) + ']' : '')); });
+    });
+    if (stm.receipts.length) o.push('', _t('Satış cəmi') + ': ' + stm.sales.qty + ' ' + _t('ədəd') + ', ' + M.format(stm.sales.revenue) + ' AZN');
+    o.push('', _t('Əvvəlki borc') + ': ' + M.format(stm.opening), '+ ' + L.accrued + ': ' + M.format(stm.accrued), '− ' + _t('Ödənişlər') + ': ' + M.format(stm.paidTotal));
+    if (stm.reversedTotal) o.push('+ ' + _t('Ləğv edilmiş ödənişlər') + ': ' + M.format(stm.reversedTotal));
+    o.push((stm.closing < 0 ? _t('Qalıq (avans: təchizatçı mağazaya borcludur)') : _t('QALIQ BORC')) + ': ' + M.format(stm.closing) + ' AZN');
+    stm.payments.forEach(function (p) { o.push('  ' + U().fmtDate(p.at, lang) + ' ' + methodText(p.method, _t) + ' ' + M.format(p.amount) + (p.note ? ' (' + p.note + ')' : '')); });
+    return o.join('\n');
+  }
+
   /* ---------- Etiket ---------- */
   // Etiketin ölçüsünə görə yerləşmə (mm): ad (1–2 sətir), qiymət, barkod. Kiçik etiketdə kənar boşluq azalır ki, barkod 0,25 mm zolaqla sığsın.
   function labelLayout(w, h) {
@@ -143,7 +224,9 @@
     var area = document.getElementById('print-area');
     if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
     area.innerHTML = html;
-    if (kind === 'label') {
+    if (kind === 'doc') {
+      css = '@page{size:A4;margin:12mm}';
+    } else if (kind === 'label') {
       css = cfg.label.mode === 'driver' ? '@page{margin:0}' : '@page{size:' + cfg.label.w + 'mm ' + cfg.label.h + 'mm;margin:0}';
     } else if (cfg.receipt.mode === 'driver') {
       css = '@page{margin:0}';
@@ -227,7 +310,7 @@
     return m;
   }
 
-  root.Print = { rt: rt, settings: settings, save: save, sanitize: sanitize, receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, wrap: wrap,
+  root.Print = { rt: rt, settings: settings, save: save, sanitize: sanitize, receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, statementHtml: statementHtml, statementText: statementText, labelsHtml: labelsHtml, wrap: wrap,
     print: print, settingsModal: settingsModal, barcodeInfo: barcodeInfo, labelLayout: labelLayout, testReceiptHtml: testReceiptHtml, testLabelHtml: testLabelHtml,
     LABEL_PRESETS: LABEL_PRESETS, PAPER: PAPER, _reset: function () { cache = null; } };
   if (typeof module !== 'undefined') module.exports = root.Print;

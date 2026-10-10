@@ -116,8 +116,8 @@ async function snapshot(d) {
   const startCells = be.grid();
   let ids = [], cellsBefore = 0, run1, seg1;
 
-  await t('başlanğıc: boş sütun və sətirlər kəsilib (26 sütunluq vərəq yoxdur), xana sayı ~35 min', async () => {
-    assert.ok(startCells < 40000, 'xana sayı: ' + startCells);
+  await t('başlanğıc: boş sütun və sətirlər kəsilib (26 sütunluq vərəq yoxdur), xana sayı ~40 min', async () => {
+    assert.ok(startCells < 45000, 'xana sayı: ' + startCells);
     Object.keys(be.store.sheets).forEach(n => assert.ok(be.store.sheets[n].maxCols <= 20, n + ' sütun: ' + be.store.sheets[n].maxCols));
   });
 

@@ -73,7 +73,7 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     assert.notStrictEqual(admin.updatedAt, A.Services.EPOCH, 'dəyişdirilmiş PIN yenilik sayılır');
     assert.strictEqual(users.find(u => u.id === 'u_menecer').updatedAt, A.Services.EPOCH, 'toxunulmamış istifadəçi sınaq vəziyyətindədir');
     assert.strictEqual((await A.DB.getAll('sales')).length, 1);
-    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 5);
+    assert.strictEqual((await A.DB.get('meta', 'schema')).value, 6);
     assert.ok(A.Services.deviceId());
   });
 
@@ -81,7 +81,7 @@ async function t(name, fn) { try { await fn(); passed++; } catch (e) { failed++;
     const m = (await A.DB.get('meta', 'matrix')).value;
     assert.deepStrictEqual(Array.from(m.menecer).sort(), ['pos.sell', 'product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);
     assert.deepStrictEqual(Array.from(m.kassir), ['pos.sell', 'stock.request']);
-    assert.deepStrictEqual(Array.from(m.admin), ['admin.permissions']);
+    assert.deepStrictEqual(Array.from(m.admin), ['admin.permissions', 'supplier.pay']);   // Admin-ə ödəniş icazəsi avtomatik verilir
     assert.deepStrictEqual(Array.from(m.muhasib), []);
   });
 

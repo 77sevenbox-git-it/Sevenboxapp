@@ -375,18 +375,35 @@
     });
   }
 
-  // Təchizatçı əlavə etmək / dəyişmək. onDone(supplier)
+  // "1 250,50" / "-300" → qəpik (mənfi ola bilər: avans). Boş = 0, səhv = null
+  function parseSigned(v) {
+    v = String(v == null ? '' : v).trim(); if (!v) return 0;
+    var neg = /^[-−–]/.test(v), m = M.parse(v.replace(/^[-−–]\s*/, ''));
+    return m == null ? null : (neg ? -m : m);
+  }
+
+  // Təchizatçı əlavə etmək / dəyişmək. onDone(supplier). Borc əsası və açılış borcu yalnız "supplier.pay" icazəsi olana göstərilir.
   function supplierForm(sp, onDone) {
     var name = h('input', { class: 'input', id: 'sp-name', maxlength: '60', autocomplete: 'off', value: sp ? sp.name : '', placeholder: _t('Şirkət və ya şəxs adı') });
     var phone = h('input', { class: 'input', id: 'sp-phone', maxlength: '40', autocomplete: 'off', value: sp ? sp.phone : '' });
     var note = h('input', { class: 'input', id: 'sp-note', maxlength: '300', autocomplete: 'off', value: sp ? sp.note : '', placeholder: _t('VÖEN, ünvan, şərtlər…') });
+    var canDebt = can('supplier.pay'), cur = sp ? (sp.debtBasis || 'received') : 'received';
+    var basis = canDebt ? h('select', { class: 'input', id: 'sp-basis' },
+      h('option', { value: 'received', selected: cur === 'received' }, _t('Alınan mal (təchizatçıdan gələn)')), h('option', { value: 'sold', selected: cur === 'sold' }, _t('Satılan mal (yalnız satılan hissə)'))) : null;
+    var open = canDebt ? h('input', { class: 'input mono', id: 'sp-open', inputmode: 'decimal', autocomplete: 'off', value: sp && sp.openingDebt ? M.format(sp.openingDebt) : '' }) : null;
     UI.modal({
       title: sp ? _t('Təchizatçını dəyiş') : _t('Yeni təchizatçı'),
       body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
         h('div', { class: 'field' }, h('label', { for: 'sp-name' }, _t('Ad *')), name),
-        h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'sp-phone' }, _t('Telefon')), phone), h('div', { class: 'field' }, h('label', { for: 'sp-note' }, _t('Qeyd')), note))),
+        h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'sp-phone' }, _t('Telefon')), phone), h('div', { class: 'field' }, h('label', { for: 'sp-note' }, _t('Qeyd')), note)),
+        canDebt ? h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'sp-basis' }, _t('Borc nəyə görə hesablanır')), basis), h('div', { class: 'field' }, h('label', { for: 'sp-open' }, _t('Açılış borcu, ₼')), open)) : null,
+        canDebt ? h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Açılış borcu — sistemdən əvvəl təchizatçıya olan borc (avans üçün mənfi yazın). Əsası sonradan dəyişmək keçmiş borcu da yenidən hesablayır.')) : null),
       buttons: [{ text: _t('İmtina') }, { text: _t('Yadda saxla'), kind: 'primary', submit: true, onClick: function (close) {
         var d = { name: name.value, phone: phone.value, note: note.value };
+        if (canDebt) {
+          var ov = parseSigned(open.value); if (ov == null) throw new Error(_t('Açılış borcu səhvdir'));
+          d.debtBasis = basis.value; d.openingDebt = ov;
+        }
         var op = sp ? S.updateSupplier(sp.id, d) : S.createSupplier(d);
         return op.then(function (r) { close(); UI.toast(_t('Yadda saxlanıldı')); if (onDone) onDone(r.supplier || r); });
       } }]
@@ -435,6 +452,134 @@
     });
   }
 
+  /* ================= Təchizatçı hesabı: borc, ödəniş, hesabat sənədi ================= */
+  function debtLine(v) { return v < 0 ? M.format(-v) + ' ₼ (' + _t('avans') + ')' : M.format(v) + ' ₼'; }
+
+  // Ödəniş formu. Nağd olarsa məbləğ AÇIQ növbənin kassasından çıxır; borcdan çox yazılsa əvvəl təsdiq tələb olunur.
+  function payForm(sp, debt, done) {
+    var amt = h('input', { class: 'input mono', id: 'pay-a', inputmode: 'decimal', autocomplete: 'off' });
+    var method = h('select', { class: 'input', id: 'pay-m' }, h('option', { value: 'cash' }, _t('Nağd (kassadan çıxır)')), h('option', { value: 'bank' }, _t('Bank köçürməsi (kassaya toxunmur)')));
+    var note = h('input', { class: 'input', id: 'pay-n', maxlength: '200', autocomplete: 'off', placeholder: _t('məs. 12 oktyabr üçün') });
+    var over = h('input', { type: 'checkbox', id: 'pay-over' });
+    var overRow = h('label', { class: 'warn-text', style: 'display:flex;gap:8px;align-items:center', hidden: true }, over, _t('Borcdan çox ödənişi (avans) təsdiqləyirəm'));
+    var hint = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status' });
+    function sync() { hint.textContent = method.value === 'cash' ? _t('Məbləğ açıq növbənin kassasından çıxır: kassada olmalı nağd azalır və Z hesabatında "təchizatçılara" sətri görünür.') : _t('Bank ödənişi kassadakı nağdı dəyişmir.'); }
+    method.addEventListener('change', sync); sync();
+    var full = debt > 0 ? h('button', { class: 'btn small', type: 'button', id: 'pay-full', onclick: function () { amt.value = M.format(debt).replace(/\s/g, ''); amt.focus(); } }, _t('Bütün borc: {0} ₼', [M.format(debt)])) : null;
+    UI.modal({
+      title: _t('Ödəniş — {0}', [sp.name]),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'muted' }, _t('Hazırkı borc: {0}', [debtLine(debt)])),
+        h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'pay-a' }, _t('Məbləğ, ₼')), amt), h('div', { class: 'field' }, h('label', { for: 'pay-m' }, _t('Üsul')), method)),
+        full, h('div', { class: 'field' }, h('label', { for: 'pay-n' }, _t('Qeyd')), note), hint, overRow),
+      buttons: [{ text: _t('İmtina') }, { text: _t('Ödə'), kind: 'primary', submit: true, onClick: function (close) {
+        var v = M.parse(amt.value); if (v == null || v <= 0) throw new Error(_t('Məbləğ səhvdir'));
+        return S.paySupplier(sp.id, v, method.value, note.value, { confirmOver: over.checked }).then(function () {
+          close(); UI.toast(_t('Ödəniş qeydə alındı')); if (done) done();
+        }).catch(function (e) { if (e.code === 'overpay') overRow.hidden = false; throw e; });
+      } }]
+    });
+  }
+
+  function voidPayForm(p, done) {
+    var why = h('input', { class: 'input', id: 'void-r', maxlength: '200', autocomplete: 'off' });
+    UI.modal({
+      title: _t('Ödənişi ləğv et'),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', null, UI.fmtDate(p.at) + ' · ' + M.format(p.amount) + ' ₼ · ' + (p.method === 'cash' ? _t('Nağd') : _t('Bank'))),
+        h('div', { class: 'field' }, h('label', { for: 'void-r' }, _t('Səbəb *')), why),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, p.method === 'cash' ? _t('Nağd ödəniş ləğv olunanda məbləğ açıq növbənin kassasına geri mədaxil yazılır.') : _t('Bank ödənişi ləğv olunur, kassaya toxunulmur.'))),
+      buttons: [{ text: _t('İmtina') }, { text: _t('Ləğv et'), kind: 'danger', submit: true, onClick: function (close) {
+        return S.voidSupplierPay(p.id, why.value).then(function () { close(); UI.toast(_t('Ödəniş ləğv edildi')); if (done) done(); });
+      } }]
+    });
+  }
+
+  function copyText(text) {
+    if (root.navigator && root.navigator.clipboard && root.navigator.clipboard.writeText) return root.navigator.clipboard.writeText(text);
+    return new Promise(function (resolve, reject) {
+      var ta = h('textarea', { style: 'position:fixed;left:-9999px' }); ta.value = text; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy') ? resolve() : reject(new Error('copy')); } catch (e) { reject(e); } finally { ta.remove(); }
+    });
+  }
+
+  // Günün sonunda təchizatçıya göndəriləcək sənəd: öncəbaxış + çap/PDF + paylaş/kopyala
+  function statementDialog(sp) {
+    var preset = h('select', { class: 'input', id: 'st-preset' }, [['today', _t('Bu gün')], ['yesterday', _t('Dünən')], ['month', _t('Bu ay')], ['prev', _t('Keçən ay')], ['all', _t('Bütün vaxt')], ['custom', _t('Seçilmiş tarixlər')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    var from = h('input', { class: 'input', id: 'st-from', type: 'date' }), to = h('input', { class: 'input', id: 'st-to', type: 'date' });
+    var lang = h('select', { class: 'input', id: 'st-lang' }, (root.I18n ? root.I18n.langs : []).map(function (l) { return h('option', { value: l.code, selected: l.code === root.Print.settings().receipt.lang }, l.name); }));
+    var preview = h('div', { class: 'sdoc-preview', id: 'st-preview', tabindex: '0' });
+    var warn = h('div', { class: 'warn-text', id: 'st-warn', role: 'alert', hidden: true, style: 'font-size:14px' });
+    var cur = null, seq = 0;
+    function range() {
+      var t = todayBaku(), v = preset.value, f = '', e = '';
+      if (v === 'today') { f = t; e = addDays(t, 1); }
+      else if (v === 'yesterday') { f = addDays(t, -1); e = t; }
+      else if (v === 'month') { f = monthStart(t, 0); e = monthStart(t, 1); }
+      else if (v === 'prev') { f = monthStart(t, -1); e = monthStart(t, 0); }
+      else if (v === 'custom') { f = from.value; e = to.value ? addDays(to.value, 1) : ''; }
+      if (v !== 'custom') { from.value = f; to.value = e ? addDays(e, -1) : ''; }
+      return { from: dayIso(f), to: dayIso(e), fromDay: f, toDay: e ? addDays(e, -1) : '' };
+    }
+    function build() {
+      var my = ++seq;
+      return S.supplierStatement(sp.id, range()).then(function (stm) {
+        if (my !== seq) return;
+        cur = stm; render();
+        warn.hidden = !stm.unpricedLots;
+        warn.textContent = stm.unpricedLots ? _t('Diqqət: {0} partiyanın alış qiyməti 0-dır, borca daxil olmayıb. Qiyməti mal qəbulunda yazın.', [stm.unpricedLots]) : '';
+      }).catch(function (e) { UI.toast(e.message, 'bad'); });
+    }
+    function render() { if (cur) preview.innerHTML = root.Print.statementHtml(cur, lang.value); }
+    preset.addEventListener('change', build);
+    [from, to].forEach(function (c) { c.addEventListener('change', function () { preset.value = 'custom'; build(); }); });
+    lang.addEventListener('change', render);
+    UI.modal({
+      title: _t('Hesabat sənədi — {0}', [sp.name]), wide: true,
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: 'st-preset' }, _t('Dövr')), preset), h('div', { class: 'field' }, h('label', { for: 'st-from' }, _t('Başlanğıc')), from), h('div', { class: 'field' }, h('label', { for: 'st-to' }, _t('Son')), to), h('div', { class: 'field' }, h('label', { for: 'st-lang' }, _t('Sənədin dili')), lang)),
+        warn, preview),
+      buttons: [{ text: _t('Bağla') },
+        { text: _t('Kopyala'), onClick: function () { if (!cur) return; return copyText(root.Print.statementText(cur, lang.value)).then(function () { UI.toast(_t('Mətn kopyalandı: mesajlaşma proqramına yapışdırın')); }, function () { throw new Error(_t('Kopyalamaq alınmadı')); }); } },
+        { text: _t('Paylaş'), onClick: function () {
+          if (!cur) return;
+          var text = root.Print.statementText(cur, lang.value);
+          if (root.navigator && root.navigator.share) return root.navigator.share({ title: _t('Təchizatçı hesabatı', null, lang.value) + ' — ' + sp.name, text: text }).catch(function (e) { if (e && e.name !== 'AbortError') throw e; });
+          return copyText(text).then(function () { UI.toast(_t('Paylaşma bu cihazda yoxdur: mətn kopyalandı')); });
+        } },
+        { text: _t('Çap et / PDF'), kind: 'primary', submit: true, onClick: function () { if (!cur) return; return UI.printHtml(root.Print.statementHtml(cur, lang.value), 'doc'); } }]
+    });
+    range(); build();
+  }
+
+  // Hesab pəncərəsi: borc, ödəniş, ödənişlər siyahısı, hesabat sənədi
+  function supplierAccount(sp, onChange) {
+    var box = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    UI.modal({ title: _t('Hesab — {0}', [sp.name]), wide: true, body: box, buttons: [{ text: _t('Bağla') }], onClose: function () { if (onChange) onChange(); } });
+    function load() {
+      return Promise.all([S.supplierBalances(), S.listSupplierPays(sp.id), S.listSuppliers({ all: true })]).then(function (r) {
+        var cur = r[2].filter(function (x) { return x.id === sp.id; })[0] || sp, b = r[0].balances[sp.id] || { debt: 0 }, canPay = r[0].canPay, debt = b.debt;
+        UI.clear(box);
+        box.appendChild(h('div', { class: 'card', id: 'acc-debt', style: 'padding:14px 18px' },
+          h('div', { class: 'muted' }, debt < 0 ? _t('Avans (təchizatçı mağazaya borcludur)') : _t('Təchizatçıya borcumuz')),
+          h('div', { style: 'font-size:28px;font-weight:700' }, M.format(Math.abs(debt)) + ' ₼'),
+          h('div', { class: 'muted', style: 'font-size:13px' }, (cur.debtBasis === 'sold' ? _t('Hesablama: satılan malın alış qiyməti ilə') : _t('Hesablama: alınan malın alış qiyməti ilə')) + (cur.openingDebt ? ' · ' + _t('açılış borcu {0} ₼', [M.format(cur.openingDebt)]) : ''))));
+        box.appendChild(h('div', { class: 'row' },
+          canPay ? h('button', { class: 'btn primary', type: 'button', id: 'acc-pay', onclick: function () { payForm(cur, debt, load); } }, _t('Ödəniş et')) : null,
+          h('button', { class: 'btn', type: 'button', id: 'acc-doc', onclick: function () { statementDialog(cur); } }, _t('Hesabat sənədi (çek siyahısı + borc)'))));
+        var tb = h('tbody');
+        if (!r[1].length) tb.appendChild(h('tr', null, h('td', { colspan: '6', class: 'empty' }, _t('Hələ ödəniş yoxdur'))));
+        r[1].forEach(function (p) {
+          tb.appendChild(h('tr', { class: p.voidedAt ? 'inactive' : '', 'data-pay': p.id }, h('td', null, UI.fmtDate(p.at)), h('td', null, p.method === 'cash' ? _t('Nağd') : _t('Bank')), h('td', { class: 'num' }, M.format(p.amount)),
+            h('td', null, p.userName || ''), h('td', { class: 'muted' }, p.voidedAt ? _t('Ləğv: {0}', [p.voidReason || '']) : (p.note || '')),
+            h('td', { style: 'text-align:right' }, canPay && !p.voidedAt ? h('button', { class: 'btn small danger', type: 'button', 'data-act': 'void', onclick: function () { voidPayForm(p, load); } }, _t('Ləğv et')) : null)));
+        });
+        box.appendChild(h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'pay-table' }, h('thead', null, h('tr', null, h('th', null, _t('Tarix')), h('th', null, _t('Üsul')), h('th', { class: 'num' }, _t('Məbləğ ₼')), h('th', null, _t('Kim')), h('th', null, _t('Qeyd')), h('th', null, ''))), tb)));
+      }).catch(function (e) { UI.clear(box); box.appendChild(h('div', { class: 'muted' }, e.message)); });
+    }
+    return load();
+  }
+
   /* ================= Təchizatçılar ================= */
   var BAKU = 'Asia/Baku';
   function todayBaku() { return new Intl.DateTimeFormat('en-CA', { timeZone: BAKU, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
@@ -455,7 +600,7 @@
 
   function suppliers(el) {
     UI.clear(el);
-    var canManage = can('supplier.manage');
+    var canManage = can('supplier.manage'), canDebt = can('supplier.pay') || (can('supplier.view') && can('product.cost.view'));
     var tb = h('tbody'), repBody = h('tbody'), repFoot = h('tfoot'), repHead = h('thead');
     var preset = h('select', { class: 'input', id: 'rp-preset' }, [['month', _t('Bu ay')], ['today', _t('Bu gün')], ['yesterday', _t('Dünən')], ['prev', _t('Keçən ay')], ['all', _t('Bütün vaxt')], ['custom', _t('Seçilmiş tarixlər')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
     var from = h('input', { class: 'input', id: 'rp-from', type: 'date' }), to = h('input', { class: 'input', id: 'rp-to', type: 'date' });
@@ -473,15 +618,20 @@
     }
 
     function loadSuppliers() {
-      return Promise.all([S.listSuppliers({ all: true }), S.supplierReport({})]).then(function (r) {
+      return Promise.all([S.listSuppliers({ all: true }), S.supplierReport({}), canDebt ? S.supplierBalances().catch(function () { return null; }) : Promise.resolve(null)]).then(function (r) {
         var hand = {}; r[1].rows.forEach(function (x) { hand[x.supplierId || ''] = x; });
+        var bal = r[2] ? r[2].balances : {};
         UI.clear(tb);
-        if (!r[0].length) tb.appendChild(h('tr', null, h('td', { colspan: '6', class: 'empty' }, _t('Hələ təchizatçı yoxdur'))));
+        if (!r[0].length) tb.appendChild(h('tr', null, h('td', { colspan: canDebt ? '7' : '6', class: 'empty' }, _t('Hələ təchizatçı yoxdur'))));
         r[0].forEach(function (sp) {
-          var x = hand[sp.id];
+          var x = hand[sp.id], b = bal[sp.id];
           tb.appendChild(h('tr', { 'data-sup': sp.name, class: sp.active ? '' : 'inactive' }, h('td', null, sp.name), h('td', null, sp.phone || '—'), h('td', { class: 'muted' }, sp.note || ''),
-            h('td', { class: 'num' }, String(x ? x.onHandQty : 0)), h('td', null, sp.active ? h('span', { class: 'badge ok' }, _t('Aktiv')) : h('span', { class: 'badge off' }, _t('Söndürülüb'))),
-            h('td', { style: 'text-align:right;white-space:nowrap' }, canManage ? [
+            h('td', { class: 'num' }, String(x ? x.onHandQty : 0)),
+            canDebt ? h('td', { class: 'num', 'data-debt': b ? String(b.debt) : '' }, b ? (b.debt < 0 ? h('span', { class: 'muted' }, M.format(b.debt) + ' (' + _t('avans') + ')') : h('b', null, M.format(b.debt))) : '—') : null,
+            h('td', null, sp.active ? h('span', { class: 'badge ok' }, _t('Aktiv')) : h('span', { class: 'badge off' }, _t('Söndürülüb'))),
+            h('td', { style: 'text-align:right;white-space:nowrap' },
+              canDebt ? [h('button', { class: 'btn small', type: 'button', 'data-act': 'account', onclick: function () { supplierAccount(sp, loadAll); } }, _t('Hesab')), ' '] : null,
+              canManage ? [
               h('button', { class: 'btn small', type: 'button', 'data-act': 'edit', onclick: function () { supplierForm(sp, loadAll); } }, _t('Redaktə')), ' ',
               h('button', { class: 'btn small' + (sp.active ? ' danger' : ''), type: 'button', 'data-act': 'toggle', onclick: function () {
                 S.updateSupplier(sp.id, { active: !sp.active }).then(function () { UI.toast(sp.active ? _t('Söndürüldü') : _t('Aktiv edildi')); loadAll(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
@@ -541,7 +691,7 @@
     el.appendChild(h('div', { class: 'page' },
       h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:16px' }, h('h1', { style: 'margin:0' }, _t('Təchizatçılar')),
         canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, _t('+ Yeni təchizatçı')) : null),
-      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
+      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), canDebt ? h('th', { class: 'num' }, _t('Borc ₼')) : null, h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
       h('div', { class: 'card', style: 'margin-top:24px' },
         h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
           h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Hansı təchizatçının malından nə qədər satılıb')),
@@ -678,7 +828,7 @@
               h('div', { class: 'muted', style: 'font-size:14px;margin-bottom:8px' }, _t('Açılıb: {0} · {1}', [UI.fmtDate(sh.openedAt), sh.openedByName])),
               line(_t('Çek sayı'), String(rep.count)), line(_t('Satış (endirimdən əvvəl)'), M.format(rep.gross)), line(_t('Endirim'), M.format(rep.discount)),
               line(_t('Nağd satış'), M.format(rep.cash)), line(_t('POS kart'), M.format(rep.pos)), line(_t('Karta köçürmə'), M.format(rep.transfer)),
-              line(_t('Qaytarmalar'), M.format(rep.returns)), line(_t('Kassaya mədaxil'), M.format(rep.cashIn)), line(_t('Kassadan məxaric'), M.format(rep.cashOut)),
+              line(_t('Qaytarmalar'), M.format(rep.returns)), line(_t('Kassaya mədaxil'), M.format(rep.cashIn)), line(_t('Kassadan məxaric'), M.format(rep.cashOut)), rep.supplierPaid ? line(_t('o cümlədən təchizatçılara'), M.format(rep.supplierPaid)) : null,
               line(_t('Başlanğıc nağd'), M.format(sh.openingCash)), line(_t('Kassada olmalı nağd'), M.format(rep.expectedCash), true)),
             h('div', { class: 'card', style: 'padding:18px 20px;display:flex;flex-direction:column;gap:12px' },
               h('b', null, _t('Növbəni bağla')),
@@ -721,7 +871,7 @@
       out += '<div class="r"><span>' + _t('Açılış') + '</span><span>' + UI.fmtDate(s.openedAt, lang) + '</span></div><div class="r"><span>' + _t('Bağlanış') + '</span><span>' + UI.fmtDate(s.closedAt, lang) + '</span></div><hr>';
       row(_t('Çek sayı'), String(r.count));
       rowNZ(_t('Satış'), r.gross); rowNZ(_t('Endirim'), r.discount); rowNZ(_t('Nağd'), r.cash); rowNZ(_t('POS kart'), r.pos); rowNZ(_t('Köçürmə'), r.transfer); rowNZ(_t('Qaytarma'), r.returns);
-      rowNZ(_t('Kassaya mədaxil'), r.cashIn); rowNZ(_t('Kassadan məxaric'), r.cashOut);
+      rowNZ(_t('Kassaya mədaxil'), r.cashIn); rowNZ(_t('Kassadan məxaric'), r.cashOut); rowNZ(_t('o cümlədən təchizatçılara'), r.supplierPaid);
       out += '<hr>';
       rowNZ(_t('Başlanğıc nağd'), s.openingCash);
       row(_t('Gözlənilən nağd'), M.format(s.expectedCash)); row(_t('Sayılmış nağd'), M.format(s.countedCash));

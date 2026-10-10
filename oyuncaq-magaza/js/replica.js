@@ -6,7 +6,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var DB = root.DB, Rules = root.Rules;
   var EPOCH = '1970-01-01T00:00:00.000Z';
-  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'meta', 'audit'];
+  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'supplierPays', 'meta', 'audit'];
   var MASTER_FIELDS = ['name', 'category', 'brand', 'ageGroup', 'mfrBarcode', 'price', 'minStock', 'active'];
 
   // Outbox id-sindən audit id-sini çıxarır: yeni "vaxt_000123_a_uuid" və köhnə "vaxt_a_uuid" formatı
@@ -171,11 +171,13 @@
   // Yalnız təkrar tətbiq təhlükəsiz (idempotent) hadisələr işlənir; qalıq, çek və s. toxunulmaz qalır.
   var BACKFILL = {
     'supplier.upserted': function (t, ev, d, sum) { return putSupplier(t, d, sum); },
+    'supplier.paid': function (t, ev, d, sum) { return putPay(t, ev, d, sum); },
+    'supplier.pay_voided': function (t, ev, d, sum) { return voidPay(t, ev, d, sum); },
     'stock.received': function (t, ev, d, sum) { return putLot(t, ev, d, sum); }
   };
   function backfill(events) {
     var sum = { applied: 0, touched: {} };
-    return DB.atomic(['suppliers', 'lots'], function (t) {
+    return DB.atomic(['suppliers', 'lots', 'supplierPays'], function (t) {
       return each(events, function (ev) {
         var fn = BACKFILL[ev.type]; if (!fn) return;
         sum.applied++;
@@ -241,6 +243,29 @@
   }
   H['cash.in'] = cashHandler;
   H['cash.out'] = cashHandler;
+
+  // Təchizatçıya ödəniş (nağd olarsa kassa hərəkəti ayrıca cash.out hadisəsi ilə gəlir). Eyni id təkrar yazılmır.
+  function putPay(t, ev, d, sum) {
+    var p = d.pay; if (!p || !p.id) return Promise.resolve();
+    return t.get('supplierPays', p.id).then(function (cur) {
+      if (cur) return;
+      sum.touched.suppliers = true;
+      return t.put('supplierPays', p);
+    });
+  }
+  H['supplier.paid'] = putPay;
+  // Ləğv: ilk ləğv qalib gəlir (iki cihaz eyni anda ləğv edərsə vaxtı erkən olan, bərabərdirsə id-si kiçik olan). Ödəniş hələ gəlməyibsə (nadir) hadisə atılır.
+  function voidPay(t, ev, d, sum) {
+    return t.get('supplierPays', d.id).then(function (cur) {
+      if (!cur) return;
+      var by = (d.by && d.by.id) || '';
+      if (cur.voidedAt && cur.voidedAt + '|' + (cur.voidedBy || '') <= d.at + '|' + by) return;
+      cur.voidedAt = d.at; cur.voidedBy = by; cur.voidedByName = (d.by && d.by.name) || ''; cur.voidReason = d.reason || ''; cur.updatedAt = d.at;
+      sum.touched.suppliers = true;
+      return t.put('supplierPays', cur);
+    });
+  }
+  H['supplier.pay_voided'] = voidPay;
 
   H['approval.requested'] = function (t, ev, d, sum) {
     var a = d.approval; if (!a || !a.id) return;
@@ -310,7 +335,16 @@
     'stock.received': function (d) {
       return idOk(d.productId) && iOk(d.qty, 1, QTY_MAX) && nOk(d.unitCost, 0, MONEY_MAX) && oId(d, 'lotId') && oId(d, 'approvalId') && oId(d, 'supplierId') && oS(d, 'note', 500) && oS(d, 'at', 40);
     },
-    'supplier.upserted': function (d) { var s = d.supplier; return isObj(s) && idOk(s.id) && nameOk(s.name, 200) && oS(s, 'phone', 500) && oS(s, 'note', 500) && oB(s, 'active') && oS(s, 'updatedAt', 40); },
+    'supplier.upserted': function (d) {
+      var s = d.supplier; return isObj(s) && idOk(s.id) && nameOk(s.name, 200) && oS(s, 'phone', 500) && oS(s, 'note', 500) && oB(s, 'active') && oS(s, 'updatedAt', 40) &&
+        (s.debtBasis == null || s.debtBasis === 'received' || s.debtBasis === 'sold') && (s.openingDebt == null || iOk(s.openingDebt, -MONEY_MAX, MONEY_MAX));
+    },
+    'supplier.paid': function (d) {
+      var p = d.pay; return payOk(p);
+    },
+    'supplier.pay_voided': function (d) {
+      return idOk(d.id) && sOk(d.at, 40) && oS(d, 'reason', 500) && (d.by == null || (isObj(d.by) && oId(d.by, 'id') && oS(d.by, 'name', 80))) && (d.pay == null || payOk(d.pay));
+    },
     'sale.created': function (d) {
       var s = d.sale; if (!isObj(s) || !idOk(s.id) || !iOk(s.receiptNo, 0, 1e9) || !sOk(s.at, 40) || !oS(s, 'shiftId', 120) || !oS(s, 'cashierId', 120) || !oS(s, 'cashierName', 80) || !(s.receiptBarcode == null || eanOk(s.receiptBarcode))) return false;
       if (!arr(s.lines, 1, 500, function (l) { return isObj(l) && idOk(l.productId) && nameOk(l.name, 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.price, 0, MONEY_MAX) && oN(l, 'unitCost', 0, MONEY_MAX) && oS(l, 'storeBarcode', 40); })) return false;
@@ -348,6 +382,10 @@
     }
   };
   function shiftOk(s) { return isObj(s) && idOk(s.id) && (s.status === 'open' || s.status === 'closed') && sOk(s.openedAt, 40) && oS(s, 'closedAt', 40) && oS(s, 'note', 500) && oN(s, 'openingCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'expectedCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'countedCash', -MONEY_MAX, MONEY_MAX) && oN(s, 'diff', -MONEY_MAX, MONEY_MAX); }
+  function payOk(p) {
+    return isObj(p) && idOk(p.id) && idOk(p.supplierId) && iOk(p.amount, 1, MONEY_MAX) && (p.method === 'cash' || p.method === 'bank') && sOk(p.at, 40) && oS(p, 'note', 500) && oS(p, 'userName', 80) && oS(p, 'userId', 120) &&
+      oS(p, 'supplierName', 200) && oS(p, 'shiftId', 120) && oId(p, 'cashMoveId') && oS(p, 'voidedAt', 40) && oS(p, 'voidReason', 500) && oS(p, 'updatedAt', 40);
+  }
   function moveOk(m) { return isObj(m) && idOk(m.id) && oS(m, 'shiftId', 120) && nOk(m.amount, 0, MONEY_MAX) && oS(m, 'type', 40) && oS(m, 'reason', 500) && oS(m, 'at', 40) && oS(m, 'userId', 120); }
 
   function applyOne(t, ev, sum) {

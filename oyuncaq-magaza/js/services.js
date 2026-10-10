@@ -140,7 +140,24 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5);
+    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6);
+  }
+
+  // v5 → v6: təchizatçı ödənişləri ("supplier.pay" icazəsi, "supplierPays" anbarı). Köhnə versiyalı cihaz yeni hadisələri tanımayıb ötürmüş ola bilər:
+  // bir dəfəlik "doldurma" onları serverdən alır (idempotent hadisələr: supplier.paid / supplier.pay_voided; kassa hərəkəti cash.out/in artıq köhnə cihazda da işləyir).
+  function migrateV6() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 6) return;
+      return DB.get('meta', 'syncCursor').then(function (c) {
+        var cur = c ? c.value : 0;
+        return DB.atomic(['meta'], function (t) {
+          return t.get('meta', 'matrix').then(function (x) {
+            return t.put('meta', { key: 'matrix', value: Rules.upgradeMatrix(x ? x.value : Rules.DEFAULT_MATRIX) });
+          }).then(function () { return t.put('meta', { key: 'backfill', value: { upTo: cur, next: 0, done: cur === 0 } }); })
+            .then(function () { return t.put('meta', { key: 'schema', value: 6 }); });
+        });
+      });
+    });
   }
 
   // v4 → v5: "stock.request" icazəsi (kassir mal gəldiyini menecerə sorğu ilə bildirir). Köhnə matris eyni qaydayla yenilənir.
@@ -231,7 +248,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 5 }),
+              t.put('meta', { key: 'schema', value: 6 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -610,8 +627,11 @@
     if (suppliers.some(function (s) { return s.id !== selfId && nameKey(s.name) === nameKey(n); })) return _t('Bu adda təchizatçı artıq var');
     if (String(d.phone || '').length > 40) return _t('Telefon çox uzundur');
     if (String(d.note || '').length > 300) return _t('Qeyd 300 simvoldan uzun ola bilməz');
+    if (d.debtBasis != null && DEBT_BASES.indexOf(d.debtBasis) === -1) return _t('Borc əsası səhvdir');
+    if (d.openingDebt != null && (!Number.isInteger(d.openingDebt) || Math.abs(d.openingDebt) > MAX_PAY)) return _t('Açılış borcu səhvdir');
     return null;
   }
+  var DEBT_BASES = ['received', 'sold'], PAY_METHODS = ['cash', 'bank'], MAX_PAY = 1e9;      // 1e9 qəpik = 10 mln ₼
 
   function listSuppliers(opts) {
     return requirePerm(['supplier.view', 'stock.receive', 'stock.request']).then(function () {
@@ -622,12 +642,17 @@
     });
   }
 
+  // Borc əsası və açılış borcu pula təsir edir: yalnız "supplier.pay" icazəsi olan dəyişə bilər
+  function debtFieldsAllowed(user, d) {
+    if (d.debtBasis == null && d.openingDebt == null) return Promise.resolve();
+    return matrix().then(function (m) { if (!Rules.can(m, user.role, 'supplier.pay')) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [Rules.PERMISSIONS['supplier.pay']]), 'forbidden'); });
+  }
   function createSupplier(d) {
     return requirePerm('supplier.manage').then(function (user) {
-      return DB.getAll('suppliers').then(function (all) {
+      return debtFieldsAllowed(user, d || {}).then(function () { return DB.getAll('suppliers'); }).then(function (all) {
         var bad = validateSupplier(d || {}, all); if (bad) throw err(bad);
         var at = now();
-        var s = { id: DB.uid('sup'), name: cleanName(d.name), phone: String(d.phone || '').trim(), note: String(d.note || '').trim(), active: true, updatedAt: at };
+        var s = { id: DB.uid('sup'), name: cleanName(d.name), phone: String(d.phone || '').trim(), note: String(d.note || '').trim(), active: true, updatedAt: at, debtBasis: d.debtBasis || 'received', openingDebt: d.openingDebt || 0 };
         return DB.atomic(['suppliers', 'audit', 'outbox'], function (t) {
           return t.put('suppliers', s).then(function () { return log(t, 'supplier.upserted', { supplier: s, reason: 'created' }, user, at); }).then(function () { return s; });
         });
@@ -637,14 +662,18 @@
 
   function updateSupplier(id, patch) {
     return requirePerm('supplier.manage').then(function (user) {
-      return DB.getAll('suppliers').then(function (all) {
+      return debtFieldsAllowed(user, patch || {}).then(function () { return DB.getAll('suppliers'); }).then(function (all) {
         var cur = all.filter(function (s) { return s.id === id; })[0];
         if (!cur) throw err(_t('Təchizatçı tapılmadı'));
         var next = Object.assign({}, cur);
         ['name', 'phone', 'note'].forEach(function (k) { if (patch[k] != null) next[k] = k === 'name' ? cleanName(patch[k]) : String(patch[k]).trim(); });
         if (patch.active != null) next.active = !!patch.active;
+        if (patch.debtBasis != null) next.debtBasis = patch.debtBasis;
+        if (patch.openingDebt != null) next.openingDebt = patch.openingDebt;
+        if (next.debtBasis == null) next.debtBasis = 'received';
+        if (next.openingDebt == null) next.openingDebt = 0;
         var bad = validateSupplier(next, all, id); if (bad) throw err(bad);
-        if (JSON.stringify(next) === JSON.stringify(cur)) return { supplier: cur, unchanged: true };
+        if (JSON.stringify(next) === JSON.stringify(Object.assign({}, cur, { debtBasis: cur.debtBasis || 'received', openingDebt: cur.openingDebt || 0 }))) return { supplier: cur, unchanged: true };
         next.updatedAt = nowAfter(cur.updatedAt);
         return DB.atomic(['suppliers', 'audit', 'outbox'], function (t) {
           return t.put('suppliers', next).then(function () { return log(t, 'supplier.upserted', { supplier: next, reason: 'updated' }, user, next.updatedAt); }).then(function () { return { supplier: next }; });
@@ -738,7 +767,7 @@
       var res = root.Fifo.replay({ lots: r[0], sales: r[1], returns: r[2], stock: stock, avgCost: avg });
       var names = {}; r[4].forEach(function (s) { names[s.id] = s.name; });
       var pnames = {}; r[3].forEach(function (p) { pnames[p.id] = p.name; });
-      return { res: res, sales: r[1], returns: r[2], suppliers: r[4], names: names, pnames: pnames };
+      return { res: res, lots: r[0], sales: r[1], returns: r[2], suppliers: r[4], names: names, pnames: pnames };
     });
   }
 
@@ -796,6 +825,122 @@
           if (f) f.qty += L.remaining; else arr.push({ name: nm, qty: L.remaining });
         });
         return out;
+      });
+    });
+  }
+
+  /* ---------- Təchizatçı hesabı: borc, ödənişlər, hesabat sənədi ----------
+     Borc = açılış borcu + hesablanan məbləğ (alınan mal və ya satılan malın alış dəyəri — təchizatçı üzrə seçilir) − ödənişlər.
+     Nağd ödəniş AÇIQ növbənin kassasından çıxır: "kassadan məxaric" (cash.out) kimi də yazılır, ona görə gözlənilən nağd, Z hesabatı və köhnə versiyalı cihazlar düzgün işləyir.
+     Bank ödənişi kassaya toxunmur. Ləğv: nağd idisə kassaya geri mədaxil (cash.in) yazılır. Borcu görmək: "supplier.pay" və ya ("supplier.view" + "product.cost.view"). */
+  function debtAccess() {
+    return requirePerm(['supplier.pay', 'supplier.view']).then(function (user) {
+      return matrix().then(function (m) {
+        var canPay = Rules.can(m, user.role, 'supplier.pay');
+        if (!(canPay || Rules.can(m, user.role, 'product.cost.view'))) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [Rules.PERMISSIONS['product.cost.view']]), 'forbidden');
+        return { user: user, canPay: canPay };
+      });
+    });
+  }
+
+  // {supplierId: {debt, basis}} — cədvəldə borc sütunu üçün
+  function supplierBalances() {
+    return debtAccess().then(function (a) {
+      return Promise.all([fifoState(), DB.getAll('supplierPays')]).then(function (r) {
+        var st = r[0], out = {};
+        st.suppliers.forEach(function (s) { out[s.id] = { debt: root.Fifo.debtAt(s, st.lots, r[1].filter(function (p) { return p.supplierId === s.id; }), st.res, st.sales, st.returns, ''), basis: s.debtBasis || 'received' }; });
+        return { balances: out, canPay: a.canPay };
+      });
+    });
+  }
+
+  function listSupplierPays(supplierId) {
+    return debtAccess().then(function () {
+      return DB.byIndex('supplierPays', 'supplierId', supplierId).then(function (list) { return list.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; }); });
+    });
+  }
+
+  // Hesab çıxarışı (sənədin məlumatı). range: {from, to} ISO [from, to) və ya boş (bütün vaxt); fromDay/toDay yalnız sənədin başlığında göstərilir.
+  function supplierStatement(supplierId, range) {
+    range = range || {};
+    return debtAccess().then(function (a) {
+      return Promise.all([fifoState(), DB.byIndex('supplierPays', 'supplierId', supplierId), storeInfo()]).then(function (r) {
+        var st = r[0], sup = st.suppliers.filter(function (x) { return x.id === supplierId; })[0];
+        if (!sup) throw err(_t('Təchizatçı tapılmadı'));
+        var stm = root.Fifo.supplierStatement({ sup: sup, lots: st.lots, pays: r[1], res: st.res, sales: st.sales, returns: st.returns, from: range.from || '', to: range.to || '' });
+        stm.accruedItems.forEach(function (it) { it.name = st.pnames[it.productId] || it.productId; });
+        stm.supplier = { id: sup.id, name: sup.name, phone: sup.phone || '', note: sup.note || '' };
+        stm.range = { from: range.from || '', to: range.to || '', fromDay: range.fromDay || '', toDay: range.toDay || '' };
+        stm.store = r[2]; stm.by = a.user.name; stm.at = now();
+        return stm;
+      });
+    });
+  }
+
+  // Ödəniş. method: 'cash' (açıq növbənin kassasından çıxır) | 'bank'. opts.confirmOver: borcdan çox (avans) ödənişi təsdiqləyir.
+  function paySupplier(supplierId, amount, method, note, opts) {
+    return requirePerm('supplier.pay').then(function (user) {
+      if (!Number.isInteger(amount) || amount <= 0) throw err(_t('Məbləğ səhvdir'));
+      if (amount > MAX_PAY) throw err(_t('Məbləğ çox böyükdür'));
+      if (PAY_METHODS.indexOf(method) === -1) throw err(_t('Ödəniş üsulunu seçin'));
+      note = String(note || '').trim();
+      if (note.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+      return Promise.all([fifoState(), DB.byIndex('supplierPays', 'supplierId', supplierId), method === 'cash' ? currentShift() : Promise.resolve(null)]).then(function (r) {
+        var st = r[0], sup = st.suppliers.filter(function (x) { return x.id === supplierId; })[0], shift = r[2];
+        if (!sup) throw err(_t('Təchizatçı tapılmadı'));
+        if (method === 'cash' && !shift) throw err(_t('Nağd ödəniş üçün növbə açıq olmalıdır: pul kassadan çıxır'), 'no_shift');
+        return (shift ? shiftReport(shift) : Promise.resolve(null)).then(function (rep) {
+        // Kassada olmayan pul çıxmasın (məbləğdə səhv, və ya başqa kassanın satışı hələ gəlməyib): bank ödənişi və ya əvvəl kassaya mədaxil seçilə bilər
+        if (rep && amount > rep.expectedCash) throw err(_t('Kassada kifayət qədər nağd yoxdur: olmalı nağd {0} ₼. Bank ödənişi seçin və ya əvvəl kassaya mədaxil yazın', [Money.format(Math.max(rep.expectedCash, 0))]), 'no_cash');
+        var debt = root.Fifo.debtAt(sup, st.lots, r[1], st.res, st.sales, st.returns, '');
+        if (amount > debt && !(opts && opts.confirmOver)) throw err(_t('Ödəniş borcdan ({0} ₼) çoxdur. Avans kimi yazmaq üçün təsdiqləyin', [Money.format(Math.max(debt, 0))]), 'overpay');
+        var at = now(), id = DB.uid('sp');
+        var pay = { id: id, supplierId: sup.id, supplierName: sup.name, amount: amount, method: method, at: at, userId: user.id, userName: user.name, note: note, updatedAt: at };
+        var move = null;
+        if (method === 'cash') {
+          move = { id: DB.uid('cm'), shiftId: shift.id, type: 'out', amount: amount, reason: _t('Tədarükçüyə ödəniş: {0}', [sup.name], 'az') + (note ? ' — ' + note : ''), at: at, userId: user.id, approvedBy: user.id, supplierPayId: id };
+          pay.shiftId = shift.id; pay.cashMoveId = move.id;
+        }
+        return DB.atomic(['supplierPays', 'cashMoves', 'shifts', 'audit', 'outbox'], function (t) {
+          return (move ? t.get('shifts', shift.id) : Promise.resolve(null)).then(function (sh) {
+            if (move && (!sh || sh.status !== 'open')) throw err(_t('Növbə açıq deyil'));
+            return t.put('supplierPays', pay);
+          }).then(function () { return move ? t.put('cashMoves', move) : null; })
+            .then(function () { return move ? log(t, 'cash.out', { move: move }, user, at) : null; })
+            .then(function () { return log(t, 'supplier.paid', { pay: pay }, user, at); })
+            .then(function () { return { pay: pay, move: move, debtBefore: debt }; });
+        });
+        });
+      });
+    });
+  }
+
+  // Ödənişi ləğv etmək (səhv yazılıb). Nağd idisə məbləğ kassaya geri mədaxil olur (açıq növbə lazımdır). Qeyd məcburidir. Təkrar ləğv olmur.
+  function voidSupplierPay(payId, reason) {
+    return requirePerm('supplier.pay').then(function (user) {
+      reason = String(reason || '').trim();
+      if (reason.length < 3) throw err(_t('Səbəbi yazın'));
+      if (reason.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+      return Promise.all([DB.get('supplierPays', payId), currentShift()]).then(function (r) {
+        var pay = r[0], shift = r[1];
+        if (!pay) throw err(_t('Ödəniş tapılmadı'));
+        if (pay.voidedAt) throw err(_t('Ödəniş artıq ləğv edilib'));
+        if (pay.method === 'cash' && !shift) throw err(_t('Nağd ödənişi ləğv etmək üçün növbə açıq olmalıdır: pul kassaya qayıdır'), 'no_shift');
+        var at = nowAfter(pay.at);
+        // Sabit id: iki cihaz eyni ödənişi ləğv etsə də kassaya yalnız bir mədaxil düşür (replica.js eyni id-ni təkrar yazmır)
+        var move = pay.method === 'cash' ? { id: 'cm_void_' + pay.id, shiftId: shift.id, type: 'in', amount: pay.amount, reason: _t('Ləğv edilmiş ödəniş: {0}', [pay.supplierName], 'az'), at: at, userId: user.id, approvedBy: user.id, supplierPayId: pay.id } : null;
+        return DB.atomic(['supplierPays', 'cashMoves', 'audit', 'outbox'], function (t) {
+          return t.get('supplierPays', payId).then(function (cur) {
+            if (!cur || cur.voidedAt) throw err(_t('Ödəniş artıq ləğv edilib'));
+            cur.voidedAt = at; cur.voidedBy = user.id; cur.voidedByName = user.name; cur.voidReason = reason; cur.updatedAt = at;
+            return t.put('supplierPays', cur).then(function () {
+              return t.get('cashMoves', 'cm_void_' + payId);
+            }).then(function (ex) { return move && !ex ? t.put('cashMoves', move) : null; })
+              .then(function () { return move ? log(t, 'cash.in', { move: move }, user, at) : null; })
+              .then(function () { return log(t, 'supplier.pay_voided', { id: payId, at: at, by: { id: user.id, name: user.name }, reason: reason, pay: cur }, user, at); })
+              .then(function () { return cur; });
+          });
+        });
       });
     });
   }
@@ -866,6 +1011,8 @@
       sum.expectedCash = Rules.expectedCash(shift, d.sales, d.returns, d.cashMoves);
       sum.cashIn = d.cashMoves.filter(function (m) { return m.type === 'in'; }).reduce(function (a, m) { return a + m.amount; }, 0);
       sum.cashOut = d.cashMoves.filter(function (m) { return m.type === 'out'; }).reduce(function (a, m) { return a + m.amount; }, 0);
+      // o cümlədən təchizatçılara ödənilən (ləğv edilənlər çıxılır)
+      sum.supplierPaid = d.cashMoves.filter(function (m) { return m.supplierPayId; }).reduce(function (a, m) { return a + (m.type === 'out' ? m.amount : -m.amount); }, 0);
       return sum;
     });
   }
@@ -1215,7 +1362,7 @@
     receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
-    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier,
+    recentSales: recentSales, outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, setClockOffset: setClockOffset, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session

@@ -28,6 +28,7 @@
     'report.view': _t('Hesabatlara baxmaq'),
     'supplier.view': _t('Təchizatçılara və təchizatçı hesabatına baxmaq'),
     'supplier.manage': _t('Təchizatçı əlavə etmək və dəyişmək'),
+    'supplier.pay': _t('Təchizatçıya ödəniş etmək (nağd olarsa kassadan çıxır)'),
     'admin.users': _t('İstifadəçiləri idarə etmək'),
     'admin.permissions': _t('İcazə matrisini dəyişmək')
   };
@@ -43,7 +44,8 @@
   // İcazə matrisinin versiyası. 3-dən əvvəl "stock.receive" yox idi, mal qəbulu "product.edit" ilə gedirdi.
   // 4: təchizatçı icazələri. "supplier.manage" mal qəbul edən rollara, "supplier.view" mal qəbul edən və ya hesabata baxan rollara verilir.
   // 5: "stock.request" — kassir mal gəldiyini bildirən sorğu göndərir, qalığı menecer təsdiqləyəndə artır (kassirə verilir).
-  var MATRIX_VERSION = 5;
+  // 6: "supplier.pay" — təchizatçıya ödəniş və borc hesabı. Yalnız Admin-ə verilir (pul kassadan çıxır); Admin başqa rola özü verə bilər.
+  var MATRIX_VERSION = 6;
   function upgradeMatrix(m) {
     var out = {};
     Object.keys(m || {}).forEach(function (role) {
@@ -53,6 +55,7 @@
       if (list.indexOf('stock.receive') !== -1) add('supplier.manage');
       if (list.indexOf('stock.receive') !== -1 || list.indexOf('report.view') !== -1) add('supplier.view');
       if (role === 'kassir') add('stock.request');
+      if (role === 'admin') add('supplier.pay');
       out[role] = list;
     });
     return out;
