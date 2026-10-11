@@ -2,6 +2,7 @@
 Tətbiq service worker-i yalnız HTTPS-də qeydiyyatdan keçirir, ona görə sınaq öz imzalı sertifikatla yerli HTTPS server qurur. İşə salmaq: python3 tests/e2e_offline.py"""
 import subprocess, time, sys, os, json, ssl, threading, http.server, functools, tempfile, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB, MOCK = 8774, 8794
@@ -50,17 +51,16 @@ try:
         pg = ctx.new_page()
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
         pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
-        pg.goto(f'https://localhost:{WEB}/index.html'); pg.wait_for_selector('.users button')
+        pg.goto(f'https://localhost:{WEB}/index.html'); pg.wait_for_selector('#connect-gate')
 
         sw_ok = poll(lambda: pg.evaluate("() => navigator.serviceWorker.getRegistration().then(r => !!(r && r.active))"), 15)
         if not sw_ok:
             print('SKIP: service worker bu mühitdə qeydiyyatdan keçmədi — oflayn sınaq atlandı'); sys.exit(0)
         check(sw_ok, 'service worker aktivdir')
         check(poll(lambda: pg.evaluate("() => caches.keys().then(async ks => { const k = ks.find(x => /^magaza-v/.test(x)); if (!k) return false; return (await (await caches.open(k)).keys()).length >= 20; })"), 15), 'tətbiq faylları keşə yazılıb (≥20 fayl)')
-        pg.reload(); pg.wait_for_selector('.users button')
+        pg.reload(); pg.wait_for_selector('#connect-gate')
 
-        pg.click('#connect-btn'); pg.fill('#c-url', URL); pg.fill('#c-tok', TOKEN)
-        pg.get_by_role('button', name='Qoş və yüklə').click(); pg.wait_for_selector('.modal-back', state='detached')
+        gate_connect(pg, URL, TOKEN)
         pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '1234'); pg.keyboard.press('Enter'); pg.wait_for_selector('#op')
         pg.fill('#op', '1234'); pg.fill('#np1', '4827'); pg.fill('#np2', '4827'); pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
         pg.evaluate("() => Services.seedDemoProducts()"); pg.wait_for_timeout(300)

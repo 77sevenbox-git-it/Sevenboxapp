@@ -4,6 +4,7 @@ təsadüfi xətalar və ilişmiş sorğu. Gecikmə modeli real bazadan ölçül�
 Nəticə: hər ssenari üçün saniyə ilə ölçülər; sonda keçdi/uğursuz. Əsl saniyələrlə işləyir, ~4–6 dəqiqə çəkir."""
 import asyncio, json, os, random, statistics, subprocess, sys, time, urllib.request
 from playwright.async_api import async_playwright
+from e2e_util import local_pass_async, gate_connect_async
 
 
 async def wfa(pg, expr, timeout=30000):
@@ -141,16 +142,16 @@ async def open_dev(browser, label):
     pg.on('pageerror', lambda e: errors.append(f'JS xətası ({label}): {e} :: ' + str(getattr(e, "stack", ""))[:600]))
     pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
     await pg.goto(f'http://localhost:{WEB}/index.html')
-    await pg.wait_for_selector('.users button')
+    await pg.wait_for_selector('#connect-gate')
     return Dev(label, pg)
 
 
 async def connect(d):
-    await d.pg.click('#connect-btn')
-    await d.pg.fill('#c-url', URL); await d.pg.fill('#c-tok', TOKEN)
+    await d.pg.wait_for_selector('#connect-gate')
+    await d.pg.fill('#g-url', URL); await d.pg.fill('#g-tok', TOKEN)
     t0 = time.time()
-    await d.pg.get_by_role('button', name='Qoş və yüklə').click()
-    await d.pg.wait_for_selector('.modal-back', state='detached', timeout=120000)
+    await d.pg.click('#g-go')
+    await d.pg.wait_for_selector('.users button', timeout=120000)
     return time.time() - t0
 
 

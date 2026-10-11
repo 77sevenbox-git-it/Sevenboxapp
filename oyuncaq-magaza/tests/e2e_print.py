@@ -6,6 +6,7 @@
 İşə salmaq: python3 tests/e2e_print.py   (pip: pypdf pillow zxing-cpp; sistem: poppler-utils)"""
 import subprocess, time, sys, os, re, json, tempfile
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 from pypdf import PdfReader
 from PIL import Image
 import zxingcpp
@@ -70,7 +71,7 @@ try:
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
         pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
-        pg.goto('http://localhost:8766/index.html'); pg.wait_for_selector('.users button')
+        pg.goto('http://localhost:8766/index.html'); local_pass(pg)
         store = "({ name: 'Oyuncaq Dünyası', voen: '1234567891', address: 'Bakı, Nizami küç. 10', registerName: 'Kassa 1' })"
 
         def do_print(setup_js, html_js, kind):

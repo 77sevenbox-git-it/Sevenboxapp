@@ -2,6 +2,7 @@
 İşə salmaq: python3 tests/e2e.py (layihə qovluğunda http server avtomatik açılır)."""
 import subprocess, time, sys, os
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 
 def wf(pg, expr, timeout=30000):
@@ -45,7 +46,7 @@ try:
         pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
         pg.goto('http://localhost:8765/index.html')
-        pg.wait_for_selector('.users button')
+        local_pass(pg)
         pg.screenshot(path=f'{OUT}/01-login.png')
         login_text = pg.inner_text('body')
         check('1234' not in login_text and 'Sınaq' not in login_text and '2222' not in login_text, 'giriş ekranında sınaq PIN-ləri yazılmayıb')

@@ -458,7 +458,7 @@
     if (!token) return Promise.reject(new Error(_t('Açarı (SYNC_TOKEN) yazın')));
     return verify(url, token).then(function () { return setEndpoint(url, token); }).then(function () { return DB.del('meta', 'revoked'); }).then(function () { return cycle(); }).then(function (r) {
       if (r.error) throw new Error(r.error);
-      return r;
+      return DB.put('meta', { key: 'setup', value: 'done' }).then(function () { return r; });       // yeni cihazın qoşulma ekranı bağlanır, istifadəçilər görünür
     });
   }
 

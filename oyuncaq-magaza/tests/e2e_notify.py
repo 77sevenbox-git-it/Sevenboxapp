@@ -4,6 +4,7 @@ və serverdən real push BURADA yoxlanmır — server tərəfi tests/push.test.j
 İşə salmaq: python3 tests/e2e_notify.py"""
 import subprocess, time, sys, os
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 
 def wf(pg, expr, timeout=30000):
@@ -31,7 +32,7 @@ try:
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
         pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
         pg.goto(URL)
-        pg.wait_for_selector('.users button')
+        local_pass(pg)
 
         # İkonlar əlçatandır və düzgün PNG-dir
         for f, size in [('icons/icon-192.png', (192, 192)), ('icons/icon-512.png', (512, 512)), ('icons/icon-maskable-512.png', (512, 512)), ('icons/badge-96.png', (96, 96)), ('icons/apple-touch-icon.png', (180, 180))]:

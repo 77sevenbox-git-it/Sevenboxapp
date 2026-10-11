@@ -3,6 +3,7 @@ axe-core lazımdır: `npm i -D axe-core` (və ya AXE_PATH=/yol/axe.min.js). Yoxd
 "Critical" pozuntu testi uğursuz edir; "serious/moderate" hesabata düşür (siyahı çıxarılır)."""
 import subprocess, time, sys, os, json, re, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 AXE = os.environ.get('AXE_PATH') or os.path.join(ROOT, 'node_modules', 'axe-core', 'axe.min.js')
@@ -43,14 +44,17 @@ try:
             ctx.add_init_script('window.print = function(){};')
             pg = ctx.new_page()
             pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
-            pg.goto(f'http://localhost:{WEB}/index.html'); pg.wait_for_selector('.users button')
-            audit(pg, 'Giriş ekranı', device)
-            pg.click('#connect-btn'); pg.wait_for_selector('#c-url'); audit(pg, 'Serverə qoşulma pəncərəsi', device)
+            pg.goto(f'http://localhost:{WEB}/index.html'); pg.wait_for_selector('#connect-gate')
+            audit(pg, 'Yeni cihaz: qoşulma qapısı', device)
             if first:      # yalnız ilk cihaz serverə qoşulur (ikinci cihaz birincinin dəyişdirdiyi PIN-i və açıq növbəni alardı)
-                pg.fill('#c-url', URL); pg.fill('#c-tok', TOKEN); pg.get_by_role('button', name='Qoş və yüklə').click()
+                gate_connect(pg, URL, TOKEN)
+                audit(pg, 'Giriş ekranı', device)
             else:
-                pg.keyboard.press('Escape')
-            pg.wait_for_selector('.modal-back', state='detached'); first = False
+                local_pass(pg)
+                audit(pg, 'Giriş ekranı', device)
+                pg.click('#connect-btn'); pg.wait_for_selector('#c-url'); audit(pg, 'Serverə qoşulma pəncərəsi', device)
+                pg.keyboard.press('Escape'); pg.wait_for_selector('.modal-back', state='detached')
+            first = False
             pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '1234'); pg.keyboard.press('Enter'); pg.wait_for_selector('#op')
             audit(pg, 'PIN dəyişmə ekranı', device)
             pg.fill('#op', '1234'); pg.fill('#np1', '4827'); pg.fill('#np2', '4827'); pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')

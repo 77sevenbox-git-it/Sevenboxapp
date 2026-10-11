@@ -2,6 +2,7 @@
 menecerə sətir silmə sorğusu. İşə salmaq: python3 tests/e2e_sync.py"""
 import subprocess, time, sys, os, json, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 
 def wf(pg, expr, timeout=30000):
@@ -53,14 +54,11 @@ def open_page(b):
     pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
     pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
     pg.goto(f'http://localhost:{WEB}/index.html')
-    pg.wait_for_selector('.users button')
+    pg.wait_for_selector('#connect-gate')
     return pg
 
 def connect(pg):
-    pg.click('#connect-btn')
-    pg.fill('#c-url', URL); pg.fill('#c-tok', TOKEN)
-    pg.get_by_role('button', name='Qoş və yüklə').click()
-    pg.wait_for_selector('.modal-back', state='detached')
+    gate_connect(pg, URL, TOKEN)
 
 def login(pg, name, pin):
     pg.get_by_role('button', name=f'{name} {name}' if not name.startswith('Mühasib') else name).click()

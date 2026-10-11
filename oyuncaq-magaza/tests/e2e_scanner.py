@@ -2,6 +2,7 @@
 Yoxlanır: sürətli skan, eyni məhsulun ardıcıl skanı (say), fokus başqa yerdə olanda skan, nağd sahəsinə düşən skan, "Enter"-in iki dəfə basılması (təkrar satış olmamalıdır)."""
 import subprocess, time, sys, os, json, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = 8773
@@ -27,7 +28,7 @@ try:
         pg = ctx.new_page()
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
         pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
-        pg.goto(f'http://localhost:{WEB}/index.html'); pg.wait_for_selector('.users button')
+        pg.goto(f'http://localhost:{WEB}/index.html'); local_pass(pg)
         pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '1234'); pg.keyboard.press('Enter'); pg.wait_for_selector('#op')
         pg.fill('#op', '1234'); pg.fill('#np1', '4827'); pg.fill('#np2', '4827'); pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
         pg.evaluate("() => Services.seedDemoProducts()"); pg.wait_for_timeout(300)

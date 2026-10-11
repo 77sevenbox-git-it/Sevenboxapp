@@ -12,6 +12,53 @@
   function login(el, opts, onDone) {
     if (typeof opts === 'function') { onDone = opts; opts = {}; }
     opts = opts || {};
+    // Yeni (heç vaxt qurulmamış) cihaz: istifadəçi adları görünmədən əvvəl ünvan + açar yazılır. Köhnə quraşdırmalarda bu qeyd yoxdur → birbaşa giriş.
+    return root.DB.get('meta', 'setup').then(function (m) { return m && m.value === 'pending'; }, function () { return false; }).then(function (pending) {
+      if (pending) return connectGate(el, function () { login(el, opts, onDone); });
+      loginForm(el, opts, onDone);
+    });
+  }
+
+  // Yeni cihazın ilk ekranı: yalnız Apps Script ünvanı və bu cihaza verilmiş açar. Qoşulandan sonra (Sync.connect "setup" qeydini bağlayır) istifadəçilər görünür.
+  // "Serversiz" seçimi qəsdən edilir: bu kompüter təkdir, məlumat başqa cihazlara getmir, istifadəçilər hazır (defolt) PIN-lərlə açılır.
+  function connectGate(el, done) {
+    UI.clear(el);
+    var url = h('input', { class: 'input', id: 'g-url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off' });
+    var tok = h('input', { class: 'input', id: 'g-tok', type: 'password', autocomplete: 'off' });
+    var msg = h('p', { class: 'muted', id: 'g-msg', role: 'status', style: 'margin:0;font-size:13px' }, _t('Admin-in verdiyi Apps Script ünvanını və bu cihaz üçün açarı yazın. Qoşulandan sonra istifadəçilər görünəcək.'));
+    var go = h('button', { class: 'btn primary', type: 'submit', id: 'g-go' }, _t('Qoş və yüklə'));
+    function localOnly() {
+      UI.modal({
+        title: _t('Serversiz davam et'), sticky: true,
+        body: h('p', { style: 'margin:0' }, _t('Bu kompüter serverə qoşulmayacaq: məlumat yalnız burada qalacaq və digər cihazlarla sinxron olmayacaq. İstifadəçilər hazır (defolt) PIN-lərlə açılır. Davam edilsin?')),
+        buttons: [{ text: _t('İmtina') }, { text: _t('Serversiz davam et'), kind: 'danger', submit: true, onClick: function (close) {
+          return root.DB.put('meta', { key: 'setup', value: 'done' }).then(function () { close(); done(); });
+        } }]
+      });
+    }
+    var form = h('form', { class: 'card', id: 'connect-gate' },
+      h('div', { class: 'lang-row' }, UI.langSwitch()),
+      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Yeni cihaz: əvvəlcə serverə qoşun'))),
+      msg,
+      h('div', { class: 'field' }, h('label', { for: 'g-url' }, _t('Apps Script veb tətbiq ünvanı')), url),
+      h('div', { class: 'field' }, h('label', { for: 'g-tok' }, _t('Sinxron açarı')), tok),
+      deviceIdLine(),
+      go,
+      h('button', { class: 'btn small', type: 'button', id: 'gate-local', onclick: localOnly }, _t('Serversiz davam et (yalnız bu kompüter)')));
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      go.disabled = true; msg.className = 'muted'; msg.textContent = _t('Yoxlanılır və yüklənir…');
+      root.Sync.connect(url.value, tok.value).then(function (r) {
+        UI.toast(_t('Qoşuldu · {0} qeyd yükləndi', [r.received]));
+        done();
+      }).catch(function (err) { msg.className = 'warn-text'; msg.textContent = err.message; go.disabled = false; });
+    });
+    root.Sync.endpoint().then(function (u) { if (u && !url.value) url.value = u; });     // əvvəlki uğursuz cəhddən qalan ünvan
+    el.appendChild(h('div', { class: 'login' }, h('div', { class: 'login-col' }, form)));
+    url.focus();
+  }
+
+  function loginForm(el, opts, onDone) {
     UI.clear(el);
     var chosen = null;
     var pin = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', id: 'pin', maxlength: '8', autocomplete: 'off', style: 'font-size:22px' });

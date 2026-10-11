@@ -3,6 +3,7 @@
 İşə salmaq: python3 tests/e2e_lang.py"""
 import subprocess, time, sys, os, re
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 
 def wf(pg, expr, timeout=30000):
@@ -57,7 +58,7 @@ try:
             pg.on('pageerror', lambda e, L=L: errors.append(f'[{L}] JS xətası: {e}'))
             pg.on('console', lambda m: errors.append('CSP pozuntusu: ' + m.text[:200]) if 'Content Security Policy' in m.text else None)
             pg.add_init_script('window.print = function(){ window.__printed = (window.__printed||0)+1; };')
-            pg.goto(URL); pg.wait_for_selector('.users button')
+            pg.goto(URL); local_pass(pg)
             check(pg.evaluate("() => I18n.lang()") == 'az', f'[{L}] ilkin dil Azərbaycanca')
             opts = pg.eval_on_selector_all('#lang-sel option', 'els => els.map(e => e.value + ":" + e.textContent)')
             check(opts == ['az:Az', 'ru:Rus', 'en:Eng', 'tr:Tr'], f'[{L}] dil siyahısı (qısaldılmış): {opts}')

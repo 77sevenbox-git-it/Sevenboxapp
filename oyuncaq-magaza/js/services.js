@@ -271,6 +271,7 @@
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
               t.put('meta', { key: 'schema', value: 7 }),
+              t.put('meta', { key: 'setup', value: 'pending' }),            // yeni cihaz: istifadəçi adları serverə qoşulana (və ya "serversiz" seçilənə) qədər göstərilmir
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });

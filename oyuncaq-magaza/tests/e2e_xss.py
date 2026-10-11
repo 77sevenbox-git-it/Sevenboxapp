@@ -5,6 +5,7 @@
 3) CSP işləyən brauzerdə inline skript / eval / kənar ünvana sorğu bloklanır, tətbiq isə normal açılır."""
 import subprocess, time, sys, os, json, re, urllib.request
 from playwright.sync_api import sync_playwright
+from e2e_util import local_pass, gate_connect
 
 
 def wf(pg, expr, timeout=30000):
@@ -64,9 +65,7 @@ try:
         ctx = new_ctx(b, bypass_csp=True)
         pg = ctx.new_page()
         pg.on('pageerror', lambda e: errors.append('JS xətası: ' + str(e)))
-        pg.goto(f'http://localhost:{WEB}/index.html'); pg.wait_for_selector('.users button')
-        pg.click('#connect-btn'); pg.fill('#c-url', URL); pg.fill('#c-tok', TOKEN)
-        pg.get_by_role('button', name='Qoş və yüklə').click(); pg.wait_for_selector('.modal-back', state='detached')
+        pg.goto(f'http://localhost:{WEB}/index.html'); gate_connect(pg, URL, TOKEN)
         pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '1234'); pg.keyboard.press('Enter')
         pg.wait_for_selector('#op'); pg.fill('#op', '1234'); pg.fill('#np1', '4827'); pg.fill('#np2', '4827')
         pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
@@ -184,7 +183,7 @@ try:
         csp_console = []
         pg.on('console', lambda m: csp_console.append(m.text) if 'Content Security Policy' in m.text else None)
         pg.on('pageerror', lambda e: errors.append('JS xətası (CSP): ' + str(e)))
-        pg.goto(f'http://localhost:{WEB}/index.html'); pg.wait_for_selector('.users button')
+        pg.goto(f'http://localhost:{WEB}/index.html'); local_pass(pg)
         check(pg.locator('.users button').count() >= 3, 'CSP altında tətbiq normal açılır (giriş ekranı)')
         check(len(viol) == 0, f'normal açılışda CSP pozuntusu yoxdur: {viol}')
         r = pg.evaluate("""async () => {
