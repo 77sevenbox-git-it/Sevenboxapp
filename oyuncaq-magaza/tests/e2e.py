@@ -20,6 +20,20 @@ time.sleep(1)
 errors = []
 ok = []
 
+def open_menu(pg):
+    if not pg.locator('.menu-pop').count(): pg.click('#menu-btn')
+    pg.wait_for_selector('.menu-pop')
+
+def do_logout(pg):
+    open_menu(pg); pg.click('#logout-btn'); pg.wait_for_selector('.users button')
+
+def dismiss(pg):
+    """Pəncərəni bağlayır: yazılmış sahə varsa Esc bağlamır (FR-110), onda "İmtina" basılır."""
+    pg.keyboard.press('Escape'); pg.wait_for_timeout(150)
+    if pg.locator('.modal-back').count():
+        pg.locator('.modal').get_by_role('button', name='İmtina').click()
+        pg.wait_for_selector('.modal-back', state='detached')
+
 def check(cond, msg):
     (ok if cond else errors).append(msg)
 
@@ -51,7 +65,7 @@ try:
         pg.wait_for_selector('nav')
         check(pg.locator('#op').count() == 0, 'PIN dəyişəndən sonra PIN ekranı bağlanır')
         pg.reload(); pg.wait_for_selector('nav')
-        check(pg.locator('.users button').count() == 0 and 'Admin' in pg.inner_text('.status'), 'səhifəni yeniləyəndə giriş saxlanılır (çıxış vermir)')
+        check(pg.locator('.users button').count() == 0 and 'Admin' in pg.inner_text('.sysbar'), 'səhifəni yeniləyəndə giriş saxlanılır (çıxış vermir)')
 
         # Nümunə məhsullar
         pg.get_by_role('navigation').get_by_role('button', name='Məhsullar').click()
@@ -156,11 +170,11 @@ try:
         pg.get_by_role('button', name='Təsdiqlə və çek çap et (Enter)').click()
         wf(pg, 'window.__printed >= 3')
 
-        # Kassada istehsalçı barkodu → rədd (əvvəl bir məhsula istehsalçı barkodu verək)
+        # Kassada istehsalçı barkodu (FR-103): tək məhsula uyğundursa çeke düşür, mağaza barkodu kimi işləyir
         pg.evaluate("""() => DB.getAll('products').then(ps => { const p = ps.find(x => x.name.startsWith('Puzzl')); p.mfrBarcode = '4006381333931'; return DB.put('products', p); })""")
         pg.fill('#scan', '4006381333931'); pg.keyboard.press('Enter')
-        pg.wait_for_selector('text=istehsalçı barkodudur')
-        check(True, 'istehsalçı barkodu kassada qəbul olunmur')
+        pg.wait_for_selector('tbody tr')
+        check(pg.locator('tbody tr').count() == 1 and 'Puzzl' in pg.inner_text('tbody tr'), 'istehsalçı barkodu kassada çeke məhsul əlavə edir (FR-103)')
 
         # Qaytarma
         pg.get_by_role('navigation').get_by_role('button', name='Qaytarma').click()
@@ -233,17 +247,19 @@ try:
         pg.fill('#u-name', 'elvin babayev'); pg.get_by_role('button', name='Yarat').click()
         pg.wait_for_selector('.modal-err:not([hidden])')
         check('artıq var' in pg.inner_text('.modal-err'), 'təkrar ad pəncərənin içində xəta verir')
-        pg.keyboard.press('Escape')
-        pg.get_by_role('button', name='Çıxış').click(); pg.wait_for_selector('.users button')
+        # FR-110: yazılmış sahə varsa Esc pəncərəni bağlamır (saxlanmamış dəyişiklik qoruması), yalnız "İmtina"
+        pg.keyboard.press('Escape'); pg.wait_for_timeout(200)
+        check(pg.locator('#u-name').count() == 1, 'saxlanmamış yazı varsa Esc pəncərəni bağlamır')
+        pg.get_by_role('button', name='İmtina').click(); pg.wait_for_selector('.modal-back', state='detached')
+        do_logout(pg)
         check(pg.get_by_role('button', name='Elvin Babayev Kassir').count() == 1, 'giriş ekranında "Elvin Babayev" + rol görünür')
         pg.get_by_role('button', name='Elvin Babayev Kassir').click()
         pg.fill('#pin', temp); pg.keyboard.press('Enter'); pg.wait_for_selector('#op')
         pg.fill('#op', temp); pg.fill('#np1', '7391'); pg.fill('#np2', '7391')
         pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
-        st = pg.inner_text('.status')
-        check('Elvin Babayev' in st and 'Kassir' in st, 'status sətrində "Elvin Babayev · Kassir"')
+        check(pg.locator('.sysbar').count() == 0, 'Kassir sistem zolağını görmür (FR-108: yalnız Admin)')
         check(pg.get_by_role('navigation').get_by_role('button', name='İcazələr').count() == 0, 'Kassir icazələr bölməsini görmür')
-        pg.get_by_role('button', name='Çıxış').click(); pg.wait_for_selector('.users button')
+        do_logout(pg)
         pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '4827'); pg.keyboard.press('Enter'); pg.wait_for_selector('nav')
         pg.get_by_role('navigation').get_by_role('button', name='İcazələr').click(); pg.wait_for_selector('#user-add')
         row = pg.locator('tr[data-user="Elvin Babayev"]')
@@ -257,7 +273,7 @@ try:
         pg.locator('tr[data-user="Elvin Babayev (kassa)"] [data-act=toggle]').click(); pg.wait_for_selector('.modal')
         pg.locator('.modal').get_by_role('button', name='Söndür').click()
         pg.wait_for_selector('tr[data-user="Elvin Babayev (kassa)"] .badge.off')
-        pg.get_by_role('button', name='Çıxış').click(); pg.wait_for_selector('.users button')
+        do_logout(pg)
         check(pg.get_by_role('button', name='Elvin Babayev (kassa)').count() == 0, 'söndürülmüş istifadəçi giriş ekranında yoxdur')
         pg.get_by_role('button', name='Admin Admin').click(); pg.fill('#pin', '4827'); pg.keyboard.press('Enter'); pg.wait_for_selector('nav')
         pg.get_by_role('navigation').get_by_role('button', name='Kassa').click(); pg.wait_for_selector('#scan')
@@ -265,7 +281,7 @@ try:
         # Çap: çek və etiket üçün @page ölçüsü verilir, ayarlar pəncərəsi açılır
         css = pg.evaluate("() => document.getElementById('print-page-css').textContent")
         check('size:80mm' in css, f'çek çapında kağız ölçüsü verilir ({css})')
-        pg.click('#print-settings'); pg.wait_for_selector('#pr-paper')
+        pg.click('#menu-btn'); pg.wait_for_selector('#print-settings'); pg.click('#print-settings'); pg.wait_for_selector('#pr-paper')
         check(pg.is_visible('#pl-preset') and pg.is_visible('#pr-test') and pg.is_visible('#pl-test'), '"Çap" ayarlarında çek və etiket bölmələri var')
         pg.keyboard.press('Escape')
 
@@ -282,7 +298,7 @@ try:
         pg.locator('.modal').get_by_role('button', name='Yadda saxla').click()
         pg.wait_for_selector('.modal-err:not([hidden])')
         check('artıq var' in pg.inner_text('.modal-err'), 'təkrar təchizatçı adı pəncərənin içində xəta verir')
-        pg.keyboard.press('Escape')
+        dismiss(pg)
         pg.get_by_role('navigation').get_by_role('button', name='Məhsullar').click()
         pg.fill('#pq', 'FIFO sınaq')
         for sup_name, cost in [('Alfa MMC', '1,00'), ('Beta Toys', '1,20')]:

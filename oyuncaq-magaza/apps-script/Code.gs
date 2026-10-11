@@ -33,6 +33,8 @@ var VERSION = 9;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
+var SEQ_SLACK = 5000;     // cihazın bildirdiyi "min" serverin bildiyi ən böyük nömrədən çox irəli ola bilməz
+var SEQ_LIMIT = 9999999999;   // barkodda nömrə 10 rəqəmdir
 var GRID_LIMIT = 10000000;       // Google Sheets: bir faylda 10 milyon xana. BOŞ xanalar da sayılır (vərəqin şəbəkə ölçüsü)
 var ROW_SLACK = 300;             // vərəqin sonunda saxlanan boş sətir ehtiyatı
 var ARCHIVE_KEEP_DAYS = 45;      // arxivləşdirəndə canlı cədvəldə qalan son günlər
@@ -280,14 +282,30 @@ function authenticate(body) {
   return fail('denied', 'İcazə yoxdur');
 }
 
-// "Son görünmə": keşdə qısa işarə, Script Properties-ə seyrək yazı
+// "Son görünmə": keşdə qısa işarə, Script Properties-ə seyrək yazı.
+// Ümumi açarı bilən şəxs istənilən sayda uydurma cihaz id-si göndərib Script Properties-i (cəmi 500 KB) doldura bilərdi: tanınmayan cihazlar
+// UNKNOWN_MAX ilə məhdudlaşdırılır, dolu olanda ən köhnə tanınmayan sətir əvəz olunur (adi cihazlar bu sayıma düşmür).
+var UNKNOWN_MAX = 40;
 function touchSeen(auth) {
   if (!auth.device) return;
   try {
     var c = CacheService.getScriptCache(), key = 'lsw_' + auth.device;
     if (c.get(key) === auth.kind) return;
+    var props = PropertiesService.getScriptProperties(), mine = 'ls_' + auth.device;
+    if (!devGet(props, auth.device) && props.getProperty(mine) === null) {
+      var keys = props.getKeys(), unknown = [];
+      keys.forEach(function (k) { if (k.indexOf('ls_') === 0 && keys.indexOf('DEV_' + k.slice(3)) === -1) unknown.push(k); });
+      if (unknown.length >= UNKNOWN_MAX) {
+        var oldest = null, oldestAt = '';
+        unknown.forEach(function (k) {
+          var at = ''; try { at = String((JSON.parse(props.getProperty(k)) || {}).at || ''); } catch (e) { /* pozuq: ən köhnə sayılır */ }
+          if (oldest === null || at < oldestAt) { oldest = k; oldestAt = at; }
+        });
+        if (oldest !== null) props.deleteProperty(oldest);
+      }
+    }
     c.put(key, auth.kind, SEEN_EVERY);
-    PropertiesService.getScriptProperties().setProperty('ls_' + auth.device, JSON.stringify({ at: new Date().toISOString(), kind: auth.kind }));
+    props.setProperty(mine, JSON.stringify({ at: new Date().toISOString(), kind: auth.kind }));
   } catch (err) { /* son görünmə vacib deyil: sinxronu pozmur */ }
 }
 
@@ -313,7 +331,7 @@ function auditAdmin(type, data) {
 }
 
 function listDevices(props) {
-  var all = props.getProperties(), devices = [], known = {};
+  var all = props.getProperties(), devices = [], known = Object.create(null);     // null prototip: 'constructor', '__proto__' kimi id-lər siyahıdan gizlənməsin
   function parse(s) { try { return JSON.parse(s); } catch (err) { return null; } }
   Object.keys(all).forEach(function (k) {
     if (k.indexOf('DEV_') !== 0) return;
@@ -528,9 +546,14 @@ function appendItems(ss, items, acked, device, fresh) {
   }
   var windowFull = first > 2;      // pəncərə bütün cədvəli əhatə etmirsə
 
-  var now = new Date().toISOString();
+  var now = new Date().toISOString(), badCount = 0, badSample = '';
   items.forEach(function (it) {
-    if (!it || !it.id) return;
+    if (!it || typeof it !== 'object') return;
+    if (!validEnvelope(it)) {              // formatı pozuq hadisə heç vaxt ümumi jurnala düşmür (bütün cihazlar onu oxuyardı); növbə ilişməsin deyə təsdiqlənir
+      badCount++; if (!badSample) badSample = String(it.id).slice(0, 80);
+      if (typeof it.id === 'string' && it.id.length <= 200) acked.push(it.id);
+      return;
+    }
     var id = String(it.id);
     var dup = !!seen[id];
     if (!dup && windowFull && String(it.at || '') < windowStartAt) dup = existsOlder(ev.sh, first, id);
@@ -553,8 +576,19 @@ function appendItems(ss, items, acked, device, fresh) {
     }
     acked.push(id);
   });
+  if (badCount) batch.table('Audit').add([now, 'server.event_rejected', '', JSON.stringify({ count: badCount, device: String(device).slice(0, 64), sample: badSample })]);
   batch.flush();
   return total;
+}
+
+// Hadisənin zərfi: id/at/type/userId/device sətir və ağlabatan uzunluqda, data obyekt. Klient həmişə bu formada yazır.
+function validEnvelope(it) {
+  return typeof it.id === 'string' && it.id.length > 0 && it.id.length <= 200 &&
+    typeof it.at === 'string' && it.at.length <= 40 &&
+    typeof it.type === 'string' && /^[\w.]{1,60}$/.test(it.type) &&
+    (it.userId == null || (typeof it.userId === 'string' && it.userId.length <= 120)) &&
+    (it.device == null || (typeof it.device === 'string' && it.device.length <= 200)) &&
+    (it.data == null || (typeof it.data === 'object' && !Array.isArray(it.data)));
 }
 
 function existsOlder(sh, firstWindowRow, id) {
@@ -572,7 +606,12 @@ function allocateOne(ss, key, count, min) {
   min = Math.max(parseInt(min, 10) || 0, 0);
   var props = PropertiesService.getScriptProperties();
   var cur = parseInt(props.getProperty(key), 10) || 0;
-  var base = Math.max(cur, min, derivedMax(ss, key));   // cədvəldə artıq olan ən böyük nömrədən də yuxarı
+  var known = Math.max(cur, derivedMax(ss, key));       // serverin bildiyi ən böyük nömrə (cədvəldə artıq olan da daxil)
+  // "min" cihazın istifadə etdiyi ən böyük nömrədir (adətən ≤ known). Uydurma böyük dəyər ardıcıllığı əbədi zəhərləyərdi
+  // (EAN-13 üçün nömrə 10 rəqəmdən çox ola bilməz): yalnız bir az irəliyə icazə verilir.
+  min = Math.min(min, known + SEQ_SLACK);
+  var base = Math.max(known, min);
+  if (base + count > SEQ_LIMIT) return null;           // ardıcıllıq doludur: cihaz mövcud aralıqla işləyir, sorğu çökmür
   props.setProperty(key, String(base + count));
   return { key: key, from: base + 1, to: base + count };
 }
@@ -592,6 +631,7 @@ function handleAllocate(body) {
   if (!lock.tryLock(25000)) return { ok: false, error: 'Server məşğuldur, sonra təkrar olunacaq' };
   try {
     var b = allocateOne(db(), body.key, body.count, body.min);
+    if (!b) return { ok: false, error: 'Nömrə ardıcıllığı həddə çatıb' };
     return { ok: true, from: b.from, to: b.to };
   } finally {
     lock.releaseLock();

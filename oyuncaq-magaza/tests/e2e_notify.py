@@ -85,8 +85,8 @@ try:
         pg.wait_for_selector('nav, #op', timeout=10000)
         if pg.locator('#op').count():                      # ilk giriş: məcburi yeni PIN
             pg.fill('#op', '2222'); pg.fill('#np1', '4827'); pg.fill('#np2', '4827'); pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
-        pg.wait_for_selector('#notify-btn')
-        check(True, 'menecerdə "Bildiriş" düyməsi var')
+        pg.click('#menu-btn'); pg.wait_for_selector('#notify-btn')
+        check(True, 'menecerdə "Bildiriş" bəndi menyuda var')
         pg.click('#notify-btn'); pg.wait_for_selector('#nt-out')
         txt = pg.inner_text('.modal')
         check('Brauzer icazəsi verilib' in txt, 'pəncərədə icazə vəziyyəti göstərilir')
@@ -120,12 +120,13 @@ try:
         check(n2 == 0, 'pəncərə ekrandadırsa sistem bildirişi göstərilmir (səhifənin öz xəbərdarlığı var)')
         pg.evaluate("() => localStorage.removeItem('mag.notify')")
         # Kassirdə düymə yoxdur
-        pg.get_by_role('button', name='Çıxış').click(); pg.wait_for_selector('.users button')
+        pg.click('#menu-btn'); pg.wait_for_selector('.menu-pop'); pg.click('#logout-btn'); pg.wait_for_selector('.users button')
         pg.get_by_role('button', name='Kassir Kassir').click()
         pg.fill('#pin', '1111'); pg.keyboard.press('Enter'); pg.wait_for_selector('nav, #op', timeout=10000)
         if pg.locator('#op').count():
             pg.fill('#op', '1111'); pg.fill('#np1', '7391'); pg.fill('#np2', '7391'); pg.get_by_role('button', name='Saxla və davam et').click(); pg.wait_for_selector('nav')
-        check(pg.locator('#notify-btn').count() == 0, 'kassirdə "Bildiriş" düyməsi yoxdur')
+        pg.click('#menu-btn'); pg.wait_for_selector('.menu-pop')
+        check(pg.locator('#notify-btn').count() == 0 and pg.locator('#logout-btn').count() == 1, 'kassirin menyusunda "Bildiriş" yoxdur (çıxış var)')
         b.close()
 finally:
     srv.terminate()

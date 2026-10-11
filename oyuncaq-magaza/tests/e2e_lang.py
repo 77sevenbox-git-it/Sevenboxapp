@@ -29,6 +29,7 @@ def T(pg, az, lang=None):
 
 def to_lang(pg, code):
     if pg.evaluate("() => I18n.lang()") == code: return
+    if pg.locator('#menu-btn').count() and not pg.locator('.menu-pop').count(): pg.click('#menu-btn')
     with pg.expect_navigation():
         pg.select_option('#lang-sel', code)
     pg.wait_for_selector('nav, .users button')
@@ -43,7 +44,8 @@ def clean(pg, where):
     check(not m, f'{where}: ekranda "undefined/NaN/{{0}}" yoxdur' + (f' (tapıldı: {txt[max(0, m.start()-30):m.end()+30]!r})' if m else ''))
 
 def close_modals(pg):
-    pg.evaluate("() => document.querySelectorAll('.modal-back').forEach(e => e.remove())")
+    # Pəncərələr tətbiqin öz yığını ilə bağlanır (FR-110: açıq pəncərə arxa ekranı "inert" edir; DOM-dan silmək inert-i qoyub gedər)
+    pg.evaluate("() => { if (window.UI && UI.closeAllModals) UI.closeAllModals(); document.querySelectorAll('.modal-back').forEach(e => e.remove()); }")
 
 az_nav = None
 try:
@@ -92,7 +94,7 @@ try:
             other = 'en' if L != 'en' else 'ru'
             to_lang(pg, other)
             check(pg.locator('.users button').count() == 0 and pg.locator('nav').count() == 1, f'[{L}→{other}] dil dəyişəndə çıxış vermir')
-            check('Admin' in pg.inner_text('.status'), f'[{L}→{other}] istifadəçi adı statusda görünür')
+            check('Admin' in pg.inner_text('.sysbar'), f'[{L}→{other}] istifadəçi adı sistem zolağında görünür')
             to_lang(pg, L)
             check(pg.locator('nav').count() == 1, f'[{L}] geri qayıdanda da giriş saxlanılıb')
 
@@ -126,7 +128,7 @@ try:
             check(not CYR.search(rc) or L == 'az', f'[{L}] çekdə kiril yoxdur')
             if L != 'az':
                 # Çap ayarlarında çekin dili seçilir
-                pg.click('#print-settings'); pg.wait_for_selector('#pr-lang')
+                pg.click('#menu-btn'); pg.wait_for_selector('#print-settings'); pg.click('#print-settings'); pg.wait_for_selector('#pr-lang')
                 clean(pg, f'[{L}] çap ayarları')
                 pg.select_option('#pr-lang', L)
                 pg.get_by_role('button', name=T(pg, 'Yadda saxla'), exact=True).first.click()
@@ -171,6 +173,7 @@ try:
             nav_click(pg, 'Çeklər'); pg.wait_for_timeout(300); clean(pg, f'[{L}] çeklər')
             nav_click(pg, 'Təchizatçılar'); pg.wait_for_timeout(300); clean(pg, f'[{L}] təchizatçılar')
             nav_click(pg, 'İcazələr'); pg.wait_for_selector('#user-add'); clean(pg, f'[{L}] icazələr')
+            pg.click('#menu-btn'); pg.wait_for_selector('.menu-pop')
             if pg.locator('#notify-btn').count():
                 pg.click('#notify-btn'); pg.wait_for_selector('#nt-out'); clean(pg, f'[{L}] bildiriş pəncərəsi'); close_modals(pg)
 

@@ -40,20 +40,25 @@ async function loginAs(role) {
     assert.notStrictEqual(lego.storeBarcode, bear.storeBarcode);
   });
 
-  await t('təkrar istehsalçı barkodu xəbərdarlıq verir, bloklamır (AC-02)', async () => {
-    const r = await S.createProduct({ name: 'Konstruktor qırmızı', price: 1450, mfrBarcode: '4006381333931' });
-    assert.strictEqual(r.warnings.length, 1);
-  });
-
-  await t('mağaza barkodu istehsalçı barkodu kimi yazıla bilməz', async () => {
-    await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: lego.storeBarcode }), /mağaza və ya çek barkodudur/);
-  });
-
   await t('kassada istehsalçı barkodu qəbul olunur: tək məhsul birbaşa, mağaza barkodu qalib (FR-103)', async () => {
     const r = await S.lookupForPos('4006381333931');
     assert.strictEqual(r.kind, 'product'); assert.strictEqual(r.via, 'mfr'); assert.strictEqual(r.product.id, lego.id);
     const own = await S.lookupForPos(lego.storeBarcode);
     assert.strictEqual(own.kind, 'product'); assert.ok(!own.via);
+  });
+
+  await t('təkrar istehsalçı barkodu xəbərdarlıq verir, bloklamır (AC-02); kassada 2+ uyğunluq seçim verir (FR-103, AC-13)', async () => {
+    const r = await S.createProduct({ name: 'Konstruktor qırmızı', price: 1450, mfrBarcode: '4006381333931' });
+    assert.strictEqual(r.warnings.length, 1);
+    const c = await S.lookupForPos('4006381333931');
+    assert.strictEqual(c.kind, 'choose'); assert.strictEqual(c.products.length, 2);
+    assert.ok(c.products.some(p => p.id === lego.id));
+    const own = await S.lookupForPos(lego.storeBarcode);       // mağaza barkodu hər zaman qalibdir
+    assert.strictEqual(own.kind, 'product'); assert.strictEqual(own.product.id, lego.id);
+  });
+
+  await t('mağaza barkodu istehsalçı barkodu kimi yazıla bilməz', async () => {
+    await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: lego.storeBarcode }), /mağaza və ya çek barkodudur/);
   });
 
   await t('mal qəbulu: qalıq və orta maya', async () => {

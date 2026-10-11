@@ -21,7 +21,7 @@ function makeDevice(backend, extra) {
     navigator: { onLine: true }, fetch: backend.fetch(),
     sessionStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } }
   };
-  if (extra) { ctx.localStorage = { getItem: () => null, setItem() {} }; ctx.document = { documentElement: {} }; }
+  if (extra) { ctx.localStorage = { getItem: () => null, setItem() {} }; ctx.document = { documentElement: {}, body: {}, addEventListener() {}, querySelectorAll() { return []; } }; ctx.addEventListener = () => {}; }
   ctx.window = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
   const files = (extra ? ['i18n', 'lang-ru', 'lang-en', 'lang-tr'] : []).concat(['money', 'barcode', 'rules', 'fifo', 'db', 'services', 'replica', 'sync']).concat(extra ? ['ui', 'print'] : []);

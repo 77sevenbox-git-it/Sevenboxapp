@@ -73,7 +73,8 @@ def set_pin(pg, old, new):
     pg.wait_for_selector('nav')
 
 def logout(pg):
-    pg.get_by_role('button', name='Çıxış').click()
+    if not pg.locator('.menu-pop').count(): pg.click('#menu-btn')
+    pg.wait_for_selector('.menu-pop'); pg.click('#logout-btn')
     pg.wait_for_selector('.users button')
 
 try:
@@ -218,7 +219,7 @@ try:
 
         # Yeniləmə: giriş və yarımçıq çek qalır (əvvəl hər yeniləmədə çıxış verirdi)
         p1.reload(); p1.wait_for_selector('nav')
-        check(p1.locator('.users button').count() == 0 and 'Kassir' in p1.inner_text('.status'), 'yeniləmədən sonra giriş saxlanılır (çıxış vermir)')
+        check(p1.locator('.users button').count() == 0 and p1.locator('#menu-btn').count() == 1, 'yeniləmədən sonra giriş saxlanılır (çıxış vermir)')
         p1.wait_for_selector('tbody tr .mono')
         check(p1.locator('tbody tr', has_text='Maqnit').count() == 1, 'yeniləmədən sonra yarımçıq çek bərpa olunur')
 

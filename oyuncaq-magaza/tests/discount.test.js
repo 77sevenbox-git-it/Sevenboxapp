@@ -263,7 +263,7 @@ const R = globalThis.Rules, M = globalThis.Money;
       console, setTimeout, clearTimeout, TextEncoder, DOMException, AbortController,
       crypto: nodeCrypto.webcrypto, indexedDB: new IDBFactory(), IDBKeyRange, navigator: { onLine: true }, fetch: backend.fetch(),
       sessionStorage: { getItem: k => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
-      localStorage: { getItem: () => null, setItem() {} }, document: { documentElement: {} }
+      localStorage: { getItem: () => null, setItem() {} }, document: { documentElement: {}, body: {}, addEventListener() {}, querySelectorAll() { return []; } }, addEventListener() {}
     };
     ctx.window = ctx; ctx.globalThis = ctx; vm.createContext(ctx);
     ['i18n', 'lang-ru', 'lang-en', 'lang-tr', 'money', 'barcode', 'rules', 'fifo', 'db', 'services', 'replica', 'sync', 'ui', 'print'].forEach(f => vm.runInContext(fs.readFileSync(path.join(JS, f + '.js'), 'utf8'), ctx, { filename: f + '.js' }));

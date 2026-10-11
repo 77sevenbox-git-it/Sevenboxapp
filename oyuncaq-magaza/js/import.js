@@ -10,6 +10,7 @@
   var MAX_ROWS = 500;                      // bir yükləmədə ən çox məhsul sətri (AS-43)
   var MAX_FILE = 10 * 1024 * 1024;         // fayl ölçüsü
   var MAX_ENTRY = 40 * 1024 * 1024;        // ZIP-in içindəki bir faylın açılmış ölçüsü (zip-bomba qoruması)
+  var MAX_ROW_NO = 100000;                 // Excel sətir nömrəsi bundan böyükdürsə sətir atılır (saxta r="4294967290")
   var MAX_SCAN_ROWS = 20000;               // cədvəldə boş sətirlər çox ola bilər; bundan sonra oxumaq dayanır
 
   /* ---------- Sütun adları: Azərbaycan, ingilis, rus, türk. Açarlar Rules.foldAz ilə sadələşdirilir (ə→e, ı→i, ...) ---------- */
@@ -92,10 +93,42 @@
   }
 
   /* ---------- .xlsx → cədvəl (massiv massivi, hamısı sətir) ---------- */
+  /* ---------- XML oxuyucu (doğrusal vaxtlı) ----------
+     Regex-lər ("<c[^>]*>([\s\S]*?)</c>") bağlanmamış teqlərdə kvadratik geri izləməyə düşür: bir neçə MB-lıq saxta fayl səhifəni dondurardı.
+     Burada yalnız indexOf işlədilir; bağlanmamış teq tapılanda oxuma dayanır. fn(atributlar, daxili mətn, təkTeqMi) false qaytarsa dayanır. */
+  function eachTag(xml, name, fn) {
+    var open = '<' + name, close = '</' + name + '>', pos = 0;
+    for (;;) {
+      var i = xml.indexOf(open, pos); if (i < 0) return;
+      var nx = xml.charAt(i + open.length);
+      if (nx !== ' ' && nx !== '>' && nx !== '/' && nx !== '\t' && nx !== '\n' && nx !== '\r') { pos = i + open.length; continue; }      // <cols>, <rowBreaks> kimi başqa teqlər
+      var gt = xml.indexOf('>', i); if (gt < 0) return;
+      var head = xml.slice(i + open.length, gt);
+      if (head.charAt(head.length - 1) === '/') { if (fn(head.slice(0, -1), '', true) === false) return; pos = gt + 1; continue; }
+      var end = xml.indexOf(close, gt + 1); if (end < 0) return;
+      if (fn(head, xml.slice(gt + 1, end), false) === false) return;
+      pos = end + close.length;
+    }
+  }
+  // <name>…</name> bloklarını silir (bağlanmamış teq tapılsa qalan hissə atılır)
+  function stripTag(xml, name) {
+    var open = '<' + name, close = '</' + name + '>', pos = 0, out = '';
+    for (;;) {
+      var i = xml.indexOf(open, pos); if (i < 0) return out + xml.slice(pos);
+      var nx = xml.charAt(i + open.length);
+      if (nx !== ' ' && nx !== '>' && nx !== '/') { out += xml.slice(pos, i + open.length); pos = i + open.length; continue; }
+      out += xml.slice(pos, i);
+      var e = xml.indexOf(close, i); if (e < 0) return out;
+      pos = e + close.length;
+    }
+  }
+  function firstInner(xml, name) { var r = ''; eachTag(xml, name, function (a, inner) { r = inner; return false; }); return r; }
+  function hasTag(xml, name) { var f = false; eachTag(xml, name, function () { f = true; return false; }); return f; }
+
   function textOfSi(xml) {
-    xml = xml.replace(/<rPh\b[\s\S]*?<\/rPh>/g, '');          // fonetik yazı (yapon və s.) ayrıca hissədir
-    var out = '', re = /<t\b[^>]*>([\s\S]*?)<\/t>/g, m;
-    while ((m = re.exec(xml))) out += decodeEntities(m[1]);
+    xml = stripTag(xml, 'rPh');                               // fonetik yazı (yapon və s.) ayrıca hissədir
+    var out = '';
+    eachTag(xml, 't', function (a, inner) { out += decodeEntities(inner); });
     return out;
   }
   function colIndex(ref) {
@@ -113,58 +146,62 @@
     return String(Math.round(n * 1e9) / 1e9);
   }
   function parseSheet(xml, shared) {
-    var rows = [], rowRe = /<row\b[^>]*>([\s\S]*?)<\/row>/g, rm, scanned = 0, rowNo = 0;
+    var rows = [], scanned = 0, rowNo = 0;
     // Boş sətirlər <row .../> kimi tək teq ola bilər; r atributu varsa sətir nömrəsi ondan götürülür
-    var rowOpen = /<row\b([^>]*?)(\/>|>)/g, pos = 0, om;
-    while ((om = rowOpen.exec(xml))) {
-      var attrs = om[1], rAt = /\br="(\d+)"/.exec(attrs); rowNo = rAt ? parseInt(rAt[1], 10) : rowNo + 1;
-      if (++scanned > MAX_SCAN_ROWS) break;
-      if (om[2] === '/>') continue;
-      var end = xml.indexOf('</row>', rowOpen.lastIndex); if (end < 0) break;
-      var body = xml.slice(rowOpen.lastIndex, end); rowOpen.lastIndex = end + 6;
-      var cells = [], cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g, cm, auto = 0;
-      while ((cm = cellRe.exec(body))) {
-        var ca = cm[1], inner = cm[2] || '', ref = /\br="([A-Za-z]+\d+)"/.exec(ca), type = (/\bt="([^"]*)"/.exec(ca) || [])[1] || 'n';
+    eachTag(xml, 'row', function (attrs, body, selfClosed) {
+      var rAt = /\br="(\d+)"/.exec(attrs); rowNo = rAt ? parseInt(rAt[1], 10) : rowNo + 1;
+      if (++scanned > MAX_SCAN_ROWS) return false;
+      if (selfClosed || rowNo < 1 || rowNo > MAX_ROW_NO) return;        // r="4294967290" kimi saxta nömrə milyardlıq dövr yaratmasın
+      var cells = [], auto = 0;
+      eachTag(body, 'c', function (ca, inner) {
+        var ref = /\br="([A-Za-z]+\d+)"/.exec(ca), type = (/\bt="([^"]*)"/.exec(ca) || [])[1] || 'n';
         var ci = ref ? colIndex(ref[1]) : auto; auto = ci + 1;
-        if (ci < 0 || ci > 200) continue;
-        var val = '', v = /<v\b[^>]*>([\s\S]*?)<\/v>/.exec(inner);
-        if (type === 's') val = v ? (shared[parseInt(v[1], 10)] || '') : '';
+        if (ci < 0 || ci > 200) return;
+        var val = '', vInner = hasTag(inner, 'v') ? firstInner(inner, 'v') : null;
+        if (type === 's') val = vInner !== null ? (shared[parseInt(vInner, 10)] || '') : '';
         else if (type === 'inlineStr') val = textOfSi(inner);
-        else if (type === 'str') val = v ? decodeEntities(v[1]) : '';
-        else if (type === 'b') val = v && v[1].trim() === '1' ? 'TRUE' : 'FALSE';
+        else if (type === 'str') val = vInner !== null ? decodeEntities(vInner) : '';
+        else if (type === 'b') val = vInner !== null && vInner.trim() === '1' ? 'TRUE' : 'FALSE';
         else if (type === 'e') val = '';
-        else val = v ? numText(decodeEntities(v[1])) : '';
+        else val = vInner !== null ? numText(decodeEntities(vInner)) : '';
         cells[ci] = val;
-      }
+      });
       if (cells.length) { for (var k = 0; k < cells.length; k++) if (cells[k] == null) cells[k] = ''; rows[rowNo - 1] = cells; }
-    }
+    });
     var out = []; for (var i = 0; i < rows.length; i++) out.push(rows[i] || []);
     return out;
   }
   function firstSheetPath(wbXml, relsXml) {
-    var sh = /<sheet\b[^>]*>/.exec(wbXml || ''), rid = sh && /\br:id="([^"]+)"/.exec(sh[0]);
+    var rid = null;
+    eachTag(wbXml || '', 'sheet', function (a) { var m = /\br:id="([^"]+)"/.exec(a); rid = m ? m[1] : null; return false; });
     if (rid && relsXml) {
-      var re = /<Relationship\b[^>]*>/g, m;
-      while ((m = re.exec(relsXml))) {
-        if (new RegExp('\\bId="' + rid[1].replace(/[^A-Za-z0-9_]/g, '') + '"').test(m[0])) {
-          var t = /\bTarget="([^"]+)"/.exec(m[0]);
-          if (t) return t[1].charAt(0) === '/' ? t[1].slice(1) : 'xl/' + t[1].replace(/^\.\//, '');
-        }
-      }
+      var want = rid.replace(/[^A-Za-z0-9_]/g, ''), found = null;
+      eachTag(relsXml, 'Relationship', function (a) {
+        var idm = /\bId="([^"]*)"/.exec(a);
+        if (idm && idm[1] === want) { var t = /\bTarget="([^"]+)"/.exec(a); if (t) { found = t[1].charAt(0) === '/' ? t[1].slice(1) : 'xl/' + t[1].replace(/^\.\//, ''); return false; } }
+      });
+      if (found) return found;
     }
     return 'xl/worksheets/sheet1.xml';
   }
-  function readXlsx(bytes, inflate) {
+  function readXlsxRaw(bytes, inflate) {
     var entries = readZipIndex(bytes);
     if (!entries['xl/workbook.xml']) return Promise.reject(new Error(_t('Bu fayl düzgün Excel (.xlsx) faylı deyil')));
     return Promise.all([readEntry(bytes, entries, 'xl/workbook.xml', inflate), readEntry(bytes, entries, 'xl/_rels/workbook.xml.rels', inflate), readEntry(bytes, entries, 'xl/sharedStrings.xml', inflate)]).then(function (r) {
       var path = firstSheetPath(r[0] ? utf8(r[0]) : '', r[1] ? utf8(r[1]) : '');
       var shared = [];
-      if (r[2]) { var sx = utf8(r[2]), re = /<si\b[^>]*>([\s\S]*?)<\/si>/g, m; while ((m = re.exec(sx))) shared.push(textOfSi(m[1])); }
+      if (r[2]) eachTag(utf8(r[2]), 'si', function (a, inner) { shared.push(textOfSi(inner)); });
       return readEntry(bytes, entries, path, inflate).then(function (sheet) {
         if (!sheet) throw new Error(_t('Excel faylında vərəq tapılmadı'));
         return parseSheet(utf8(sheet), shared);
       });
+    });
+  }
+  // Pozulmuş/kəsilmiş zip DataView xətası (RangeError) verir: istifadəçiyə başa düşülən mesaj, həm sinxron, həm asinxron xətalar üçün
+  function readXlsx(bytes, inflate) {
+    return new Promise(function (resolve) { resolve(readXlsxRaw(bytes, inflate)); }).catch(function (e) {
+      if (e instanceof RangeError || e instanceof TypeError) throw new Error(_t('Bu fayl düzgün Excel (.xlsx) faylı deyil'));
+      throw e;
     });
   }
 

@@ -121,7 +121,8 @@ class Dev:
         await self.pg.wait_for_selector('nav')
 
     async def logout(self):
-        await self.pg.get_by_role('button', name='Çıxış').click()
+        if not await self.pg.locator('.menu-pop').count(): await self.pg.click('#menu-btn')
+        await self.pg.wait_for_selector('.menu-pop'); await self.pg.click('#logout-btn')
         await self.pg.wait_for_selector('.users button')
 
     async def nav(self, name): await self.pg.get_by_role('navigation').get_by_role('button', name=name).click()

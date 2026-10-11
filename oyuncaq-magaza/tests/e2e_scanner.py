@@ -66,7 +66,7 @@ try:
         after = [x[1] for x in cart(pg)]
         check(after[0] == before[0] + 1, f'fokus skan sahəsindən çıxıbsa da (fokus: {focus_before}) skan sətrə əlavə olunur: {before} → {after}')
         # 5a. fokus düymədədir ("+" düyməsinə klik edilib), sonra skan
-        pg.locator('button', has_text='+').first.click(); pg.wait_for_timeout(100)
+        pg.locator('.qty-btn[aria-label="Artır"]').first.click(); pg.wait_for_timeout(100)
         focus_btn = pg.evaluate("() => document.activeElement.tagName")
         before = [x[1] for x in cart(pg)]
         scan(pg, bb[1], delay=2); pg.wait_for_timeout(300)
