@@ -12,7 +12,7 @@
   var DB = root.DB, Replica = root.Replica;
 
   // Testlərdə dəyişdirilə bilər (Sync.timing)
-  var T = { idle: 4000, fast: 1500, hidden: 15000, kick: 300, minGap: 700, errorMin: 4000, errorMax: 30000, timeout: 30000, pingTimeout: 15000, boost: 10000 };
+  var T = { idle: 4000, fast: 1500, hidden: 15000, kick: 300, minGap: 700, errorMin: 4000, errorMax: 30000, timeout: 30000, pingTimeout: 15000, boost: 10000, adminWait: 40000 };
   var BLOCKS = { productSeq: { size: 300, low: 100 }, receiptSeq: { size: 1000, low: 400 } };   // oflayn ehtiyat: aralıq həmişə ≥ "low" qədər qalır (server tavanı BLOCK_MAX = 1000)
 
   var running = null, again = false, started = false, timer = null, kickTimer = null, fastUntil = 0, lastStart = 0, fails = 0, inflight = null;
@@ -120,7 +120,7 @@
               : res.code ? _t('Açar bu cihaza uyğun gəlmir. Admin-dən bu cihaz üçün verilən açarı yazın')
               : _t('Açar uyğun gəlmir: tətbiqdəki açar Script properties-dəki SYNC_TOKEN ilə eyni olmalıdır');
           } else msg = srvErr(res.error) || _t('Server xətası');
-          var e = new Error(msg); e.code = res.code || null; throw e;
+          var e = new Error(msg); e.code = res.code || null; e.server = true; throw e;
         }
         return res;
       });
@@ -153,8 +153,44 @@
   // Sinxron dövrü olmayan tək əməliyyat (bildiriş qeydiyyatı və s.). Server qoşulmayıbsa xəta.
   function api(action, extra, opts) {
     return config().then(function (c) {
-      if (!c.url || !c.token) throw new Error(_t('Server qoşulmayıb'));
+      if (!c.url || !c.token) { var ne = new Error(_t('Server qoşulmayıb')); ne.server = true; throw ne; }     // sorğu getmədi: nəticə dəqiqdir
       return post(c.url, Object.assign({ action: action, token: c.token, device: c.device }, extra || {}), { timeout: opts && opts.timeout || 25000 });
+    });
+  }
+
+  /* Cihaz açarı yaratma/yeniləmə (Admin). Açar BU cihazda yaranır və serverə göndərilir (serverdə yalnız hash qalır).
+     Apps Script bəzən 25+ san cavab vermir: server işi görüb ola bilər, cavab isə müştəriyə çatmır. Açar yalnız server cavabında olsaydı, itərdi
+     (11.10: «Açar yarat» → «server cavab vermədi», jurnalda device.created var idi). İndi eyni açarla təkrar sorğu təhlükəsizdir
+     (server eyni nəticəni qaytarır, ikinci yazı yoxdur), ona görə gecikmədə bir dəfə özü təkrarlanır; düymə təkrar basılanda da
+     (pendingKeys) eyni açar işlənir. Cavab dəqiq gələnə (uğur və ya rədd) qədər açar yaddaşda saxlanılır. */
+  var pendingKeys = {};
+  function randomKey() {
+    var c = root.crypto;
+    if (!c || !c.getRandomValues) return '';          // brauzer köhnədirsə açarı server yaradır (köhnə davranış)
+    var a = new Uint8Array(32), s = '', i;
+    c.getRandomValues(a);
+    for (i = 0; i < a.length; i++) s += (a[i] + 256).toString(16).slice(1);
+    return s;
+  }
+  // Nəticə məlum deyil: vaxt bitdi, şəbəkə xətası, JSON əvəzinə səhifə, HTTP xətası. Serverin özünün yazdığı rədd cavabı (e.server) dəqiqdir;
+  // "busy" = kilid alınmadı, heç nə yazılmayıb
+  function unknownOutcome(e) { return !!e && !e.aborted && !e.server; }
+  function deviceKey(kind, extra, hooks) {
+    var action = kind === 'rotate' ? 'devices.rotate' : 'devices.create', slot = action + ':' + (extra && extra.id);
+    var key = pendingKeys[slot] || (pendingKeys[slot] = randomKey());
+    var body = Object.assign({}, extra || {});
+    if (key) body.newKey = key;
+    function attempt(n) {
+      return api(action, body, { timeout: T.adminWait }).catch(function (e) {
+        if (!key || n >= 1 || !(unknownOutcome(e) || (e && e.code === 'busy'))) throw e;
+        if (hooks && hooks.onRetry) hooks.onRetry(e);
+        return attempt(n + 1);
+      });
+    }
+    return attempt(0).then(function (r) { delete pendingKeys[slot]; return r; }, function (e) {
+      if (unknownOutcome(e)) e.uncertain = true;
+      else if (!e || e.code !== 'busy') delete pendingKeys[slot];     // dəqiq rədd cavabı gəldi: bu açar daha lazım deyil
+      throw e;
     });
   }
 
@@ -430,6 +466,6 @@
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, api: api, reserve: reserve, isRevoked: isRevoked, recheck: recheck, exportOutbox: exportOutbox, importOutbox: importOutbox, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, deviceKey: deviceKey, reserve: reserve, isRevoked: isRevoked, recheck: recheck, exportOutbox: exportOutbox, importOutbox: importOutbox, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);

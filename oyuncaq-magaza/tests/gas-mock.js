@@ -8,7 +8,7 @@ const nodeCrypto = require('crypto');
 
 function makeBackend(opts) {
   opts = opts || {};
-  const calls = { sheetApi: 0, openById: 0, requests: 0, propRead: 0, propWrite: 0, cacheOp: 0, lock: 0 };   // propRead/propWrite: Script Properties əməliyyatları (Google kvotası: gmail.com üçün gündə 50 000 oxu+yaz)
+  const calls = { sheetApi: 0, openById: 0, requests: 0, propRead: 0, propWrite: 0, cacheOp: 0, lock: 0, lockWaits: [] };   // propRead/propWrite: Script Properties əməliyyatları (Google kvotası: gmail.com üçün gündə 50 000 oxu+yaz)
   const logs = [];
   const pushLog = [];
   const backendRef = {};
@@ -31,6 +31,7 @@ function makeBackend(opts) {
     }
     setValues(vals) {
       calls.sheetApi++;
+      if (this.sh.failWrites > 0) { this.sh.failWrites--; throw new Error('setValues xətası (təqlid)'); }      // sheet.failWrites = N: növbəti N yazma xəta verir
       if (vals.length !== this.nr || vals.some(v => v.length !== this.nc)) throw new Error('setValues: ölçü uyğun deyil');
       checkCells(vals);
       for (let i = 0; i < this.nr; i++) {
@@ -158,7 +159,8 @@ function makeBackend(opts) {
       get: k => { calls.cacheOp++; if (k in store.cacheExp && store.cacheExp[k] <= Date.now() + store.cacheSkew) { delete store.cache[k]; delete store.cacheExp[k]; } return k in store.cache ? store.cache[k] : null; },
       put: (k, v, ttl) => { calls.cacheOp++; store.cache[k] = String(v); if (ttl) store.cacheExp[k] = Date.now() + store.cacheSkew + ttl * 1000; else delete store.cacheExp[k]; },
       remove: k => { calls.cacheOp++; delete store.cache[k]; delete store.cacheExp[k]; } }) },
-    LockService: { getScriptLock: () => ({ tryLock: () => { calls.lock++; return true; }, releaseLock() {} }) },
+    // backend.lockBusy = true: kilid alınmır (başqa sorğu tutub); calls.lockWaits: hər tryLock-un gözləmə müddəti (ms)
+    LockService: { getScriptLock: () => ({ tryLock: (ms) => { calls.lock++; calls.lockWaits.push(ms); return !backendRef.lockBusy; }, releaseLock() {} }) },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
     // Push xidmətinin təqlidi: backend.pushLog-da hər sorğu (url + başlıqlar); cavabı backend.pushRespond(url, req) təyin edir (defolt 201)
     UrlFetchApp: {

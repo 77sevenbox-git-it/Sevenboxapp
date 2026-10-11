@@ -30,7 +30,7 @@
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
 var VERSION = 9;
-var REV = '2026.10.11-quota';   // dəqiq buraxılış: /exec ünvanını brauzerdə açanda görünür (Deploy-un yeniləndiyini yoxlamaq üçün)
+var REV = '2026.10.11-keyfix';   // dəqiq buraxılış: /exec ünvanını brauzerdə açanda görünür (Deploy-un yeniləndiyini yoxlamaq üçün)
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -276,6 +276,10 @@ function sameToken(a, b) {
 var DEV_RE = /^[A-Za-z0-9_-]{3,64}$/;
 var LEGACY_DAYS = 14;
 var ADMIN_MAX_FAILS = 5;          // ADMIN_KEY-i səhv yazma limiti; aşanda 10 dəqiqə bağlanır
+// Admin əməliyyatının kilid gözləməsi müştərinin gözləməsindən (40 san) QISA olmalıdır: əks halda server işi bitirir, cavab isə
+// müştəri artıq "cavab vermədi" deyəndən sonra çatır (11.10: açar yaradılıb, ekranda "server cavab vermədi" göründü, açar itdi).
+var ADMIN_LOCK_WAIT = 10000;
+var DEV_KEY_RE = /^[0-9a-f]{64}$/;
 var SEEN_EVERY = 300;             // "son görünmə" Script Properties-ə ən çox 5 dəqiqədə bir yazılır (hər sinxronda yazmaq yavaşdır)
 
 function devId(v) { return typeof v === 'string' && DEV_RE.test(v) ? v : ''; }
@@ -367,10 +371,18 @@ function cleanName(v, fallback) {
   return s || fallback || '';
 }
 
+// Jurnal yazısı əməliyyatı yıxmır: cihaz açarı artıq yazılıbsa, Sheets-in təsadüfi xətası "xəta" cavabı qaytarıb açarı itirməməlidir.
+// Bir təkrar cəhd; alınmasa xəta Apps Script-in Executions jurnalında qalır.
 function auditAdmin(type, data) {
-  var b = new Batch(db());
-  b.table('Audit').add([new Date().toISOString(), type, 'server', JSON.stringify(data)]);
-  b.flush();
+  for (var attempt = 0; attempt < 2; attempt++) {
+    try {
+      var b = new Batch(db());
+      b.table('Audit').add([new Date().toISOString(), type, 'server', JSON.stringify(data)]);
+      b.flush();
+      return true;
+    } catch (err) { Logger.log('Audit yazılmadı (' + type + '): ' + err); }
+  }
+  return false;
 }
 
 function listDevices(props) {
@@ -402,7 +414,7 @@ function handleAdmin(body, auth) {
   var props = PropertiesService.getScriptProperties();
   if (body.action === 'devices.list') return listDevices(props);
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(25000)) return fail('busy', 'Server məşğuldur, sonra təkrar olunacaq');
+  if (!lock.tryLock(ADMIN_LOCK_WAIT)) return fail('busy', 'Server məşğuldur, sonra təkrar olunacaq');
   try {
     if (body.action === 'legacy.set') {
       var days = Math.floor(Number(body.days));
@@ -427,9 +439,19 @@ function handleAdmin(body, auth) {
       case 'devices.create':
       case 'devices.rotate':
         if (rec && rec.status === 'revoked') return fail('dev_revoked', 'Cihaz bloklanıb: əvvəlcə bərpa edin');
+        // Açarı Admin-in cihazı özü yaradıb göndərə bilər (newKey): cavab itsə də açar itmir, təkrar sorğu təhlükəsizdir.
+        // Serverə yalnız hash yazılır; newKey göndərilməyibsə (köhnə müştəri) açarı server yaradır.
+        var wanted = '';
+        if (body.newKey !== undefined && body.newKey !== null) {
+          if (typeof body.newKey !== 'string' || !DEV_KEY_RE.test(body.newKey)) return fail('bad', 'Açar formatı səhvdir');
+          wanted = body.newKey;
+        }
+        // Eyni açarla təkrar sorğu (birinci cavab müştəriyə çatmayıb): artıq yazılıbsa dəyişiklik və yeni jurnal sətri yoxdur
+        if (wanted && rec && rec.hash && sameToken(rec.hash, devHash(id, wanted)))
+          return { ok: true, id: id, token: wanted, name: rec.name, replay: true, legacy: legacyInfo(props) };
         if (body.action === 'devices.create' && rec && rec.hash) return fail('exists', 'Bu cihaz üçün açar artıq var. "Yeni açar" seçin');
         if (body.action === 'devices.rotate' && !rec) return fail('missing', 'Cihaz tapılmadı');
-        token = newDeviceToken();
+        token = wanted || newDeviceToken();
         rec = rec || { createdAt: at };
         rec.name = cleanName(body.name, rec.name || id.slice(-8));
         rec.status = 'active'; rec.hash = devHash(id, token);

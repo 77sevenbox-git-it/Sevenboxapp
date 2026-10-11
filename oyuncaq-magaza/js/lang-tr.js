@@ -558,6 +558,8 @@
     "Naməlum əməliyyat": "Bilinmeyen işlem",
     "Naməlum açar": "Bilinmeyen anahtar",
     "Server məşğuldur, sonra təkrar olunacaq": "Sunucu meşgul, daha sonra tekrar denenecek",
+    "Server gec cavab verir: eyni açarla təkrar cəhd edilir": "Sunucu geç yanıt veriyor: aynı anahtarla yeniden deneniyor",
+    "Server cavab vermədi, amma açar yaradılmış ola bilər. Eyni düyməni təkrar basın: eyni açar işlənəcək, itməyəcək": "Sunucu yanıt vermedi ama anahtar oluşturulmuş olabilir. Aynı düğmeye tekrar basın: aynı anahtar işlenecek, kaybolmayacak",
     "Bildiriş ünvanı tanınmır": "Bildirim adresi tanınmıyor",
     "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Bu cihaz bildirimler için kayıtlı değil",
     "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Mal kabul isteği göndermek (yönetici onaylar)",

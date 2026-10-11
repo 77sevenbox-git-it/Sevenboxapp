@@ -558,6 +558,8 @@
     "Naməlum əməliyyat": "Неизвестная операция",
     "Naməlum açar": "Неизвестный ключ",
     "Server məşğuldur, sonra təkrar olunacaq": "Сервер занят, повтор позже",
+    "Server gec cavab verir: eyni açarla təkrar cəhd edilir": "Сервер отвечает медленно: повтор с тем же ключом",
+    "Server cavab vermədi, amma açar yaradılmış ola bilər. Eyni düyməni təkrar basın: eyni açar işlənəcək, itməyəcək": "Сервер не ответил, но ключ мог быть создан. Нажмите ту же кнопку ещё раз: будет обработан тот же ключ, он не потеряется",
     "Bildiriş ünvanı tanınmır": "Адрес уведомлений не распознан",
     "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "Это устройство не зарегистрировано для уведомлений",
     "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Отправлять запрос на приём товара (подтверждает менеджер)",

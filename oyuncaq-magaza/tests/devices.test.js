@@ -233,6 +233,97 @@ const ev = (n) => { const at = new Date().toISOString(); return { id: at + '_' +
     assert.strictEqual(b.rows('Events').length, 0);
   });
 
+  /* 11.10: «Açar yarat» → «server cavab vermədi». Server açarı yaratmışdı (jurnalda device.created), cavab isə müştərinin 25 san gözləməsindən
+     sonra çatdı: açar yalnız cavabda olduğu üçün itdi. Düzəliş: açarı Admin-in cihazı yaradır (newKey), təkrar sorğu eyni nəticəni qaytarır. */
+  const HEX = () => crypto.randomBytes(32).toString('hex');
+
+  await t('newKey: Admin cihazı açarı özü göndərir; serverdə yalnız hash, açar həmin cihazda işləyir', () => {
+    const b = fresh(), key = HEX();
+    const c = admin(b, { action: 'devices.create', id: 'dev_nk1', name: 'NK', newKey: key });
+    assert.ok(c.ok, c.error); assert.strictEqual(c.token, key); assert.ok(!c.replay);
+    assert.ok(!Object.values(b.store.props).some(v => String(v).includes(key)), 'açarın özü heç yerdə saxlanmır');
+    assert.ok(!JSON.stringify(b.rows('Audit')).includes(key), 'Audit-də açar yoxdur');
+    assert.strictEqual(ping(b, key, 'dev_nk1').kind, 'device');
+    assert.strictEqual(ping(b, key, 'dev_nk2').code, 'denied', 'başqa id ilə işləmir');
+  });
+
+  await t('itmiş cavab: eyni newKey ilə təkrar sorğu açarı geri verir, ikinci yazı və ikinci jurnal sətri yoxdur', () => {
+    const b = fresh(), key = HEX();
+    const first = admin(b, { action: 'devices.create', id: 'dev_lost1', name: 'L', newKey: key });   // cavab müştəriyə çatmadı (təqlid: nəticə atılır)
+    assert.ok(first.ok);
+    const writes = b.calls.propWrite, audits = b.rows('Audit').filter(r => r[1] === 'device.created').length;
+    const again = admin(b, { action: 'devices.create', id: 'dev_lost1', name: 'L', newKey: key });
+    assert.ok(again.ok, again.error); assert.strictEqual(again.token, key); assert.strictEqual(again.replay, true);
+    assert.strictEqual(b.calls.propWrite, writes, 'təkrar sorğu Properties-ə yazmır');
+    assert.strictEqual(b.rows('Audit').filter(r => r[1] === 'device.created').length, audits, 'təkrar sorğu yeni jurnal sətri yazmır');
+    assert.strictEqual(ping(b, key, 'dev_lost1').kind, 'device');
+    // başqa açarla (yeni cəhd) yenə "artıq var"
+    assert.strictEqual(admin(b, { action: 'devices.create', id: 'dev_lost1', newKey: HEX() }).code, 'exists');
+  });
+
+  await t('itmiş cavab: devices.rotate da eyni newKey ilə təkrar olunanda təhlükəsizdir (köhnə açar yalnız bir dəfə ləğv olunur)', () => {
+    const b = fresh();
+    const old = admin(b, { action: 'devices.create', id: 'dev_lost2' }).token, key = HEX();
+    assert.ok(admin(b, { action: 'devices.rotate', id: 'dev_lost2', newKey: key }).ok);
+    const again = admin(b, { action: 'devices.rotate', id: 'dev_lost2', newKey: key });
+    assert.ok(again.ok && again.replay && again.token === key);
+    assert.strictEqual(ping(b, old, 'dev_lost2').code, 'denied', 'köhnə açar dayanıb');
+    assert.strictEqual(ping(b, key, 'dev_lost2').kind, 'device');
+    assert.strictEqual(b.rows('Audit').filter(r => r[1] === 'device.rotated').length, 1);
+  });
+
+  await t('təkrar sorğu başqasının açarını açmır: yanlış newKey ilə "exists", ləğv olunmuş cihazda replay işləmir', () => {
+    const b = fresh(), key = HEX();
+    assert.ok(admin(b, { action: 'devices.create', id: 'dev_rp', newKey: key }).ok);
+    assert.strictEqual(admin(b, { action: 'devices.create', id: 'dev_rp', newKey: key.replace(/./, c => c === 'a' ? 'b' : 'a') }).code, 'exists');
+    assert.ok(admin(b, { action: 'devices.revoke', id: 'dev_rp' }).ok);
+    assert.strictEqual(admin(b, { action: 'devices.create', id: 'dev_rp', newKey: key }).code, 'dev_revoked');
+    assert.strictEqual(ping(b, key, 'dev_rp').code, 'revoked');
+  });
+
+  await t('newKey formatı yoxlanır: qısa/böyük hərf/obyekt/massiv rədd; boş göndərilməyibsə server özü yaradır', () => {
+    const b = fresh();
+    for (const bad of ['', 'abc', 'A'.repeat(64), 'g'.repeat(64), '0'.repeat(63), '0'.repeat(65), 123, {}, ['0'.repeat(64)], true]) {
+      const r = admin(b, { action: 'devices.create', id: 'dev_fmt', newKey: bad });
+      assert.strictEqual(r.code, 'bad', 'rədd olunmalı: ' + JSON.stringify(bad));
+    }
+    assert.ok(!b.store.props.DEV_dev_fmt, 'səhv sorğu heç nə yazmır');
+    const ok = admin(b, { action: 'devices.create', id: 'dev_fmt' });
+    assert.ok(ok.ok && /^[0-9a-f]{64}$/.test(ok.token), 'newKey olmadan köhnə davranış');
+    assert.ok(admin(b, { action: 'devices.create', id: 'dev_fmt2', newKey: null }).ok, 'null = göndərilməyib');
+  });
+
+  await t('Admin əməliyyatı kilidi müştərinin gözləməsindən (40 san) qısa gözləyir; kilid məşğulsa "busy", heç nə yazılmır', () => {
+    const b = fresh();
+    b.calls.lockWaits.length = 0;
+    assert.ok(admin(b, { action: 'devices.create', id: 'dev_lk1' }).ok);
+    assert.ok(b.calls.lockWaits.length > 0 && b.calls.lockWaits.every(ms => ms <= 15000), 'admin kilid gözləməsi ≤ 15 san: ' + b.calls.lockWaits);
+    b.lockBusy = true;
+    const props = JSON.stringify(b.store.props), audits = b.rows('Audit').length;
+    for (const a of ['devices.create', 'devices.rotate', 'devices.revoke', 'devices.restore', 'devices.rename']) {
+      const r = admin(b, { action: a, id: 'dev_lk1', newKey: HEX() });
+      assert.strictEqual(r.code, 'busy', a);
+    }
+    assert.strictEqual(admin(b, { action: 'legacy.set', mode: 'on', days: 5 }).code, 'busy');
+    b.lockBusy = false;
+    b.tick(121);
+    assert.strictEqual(JSON.stringify(b.store.props).replace(/"ls_[^}]*}"/g, ''), props.replace(/"ls_[^}]*}"/g, ''), 'busy cavab Properties-i dəyişmir (son görünmədən başqa)');
+    assert.strictEqual(b.rows('Audit').length, audits);
+  });
+
+  await t('Audit vərəqi yazılmasa belə açar yaradılır və qaytarılır (açar itmir); bir dəfəlik xəta təkrar cəhdlə sağalır', () => {
+    const b = fresh(), key = HEX(), key2 = HEX();
+    b.store.sheets.Audit.failWrites = 99;                                  // Sheets yazmır
+    const c = admin(b, { action: 'devices.create', id: 'dev_au1', newKey: key });
+    assert.ok(c.ok, 'audit xətası əməliyyatı yıxmır: ' + JSON.stringify(c)); assert.strictEqual(c.token, key);
+    assert.strictEqual(ping(b, key, 'dev_au1').kind, 'device');
+    assert.ok(b.logs.some(l => /Audit yazılmadı/.test(l)), 'xəta Logger-də qalır');
+    b.store.sheets.Audit.failWrites = 2;                                   // bir yazma + heal uğursuz, ikinci cəhd alınır
+    const c2 = admin(b, { action: 'devices.create', id: 'dev_au2', newKey: key2 });
+    assert.ok(c2.ok);
+    assert.ok(b.rows('Audit').some(r => r[1] === 'device.created' && String(r[3]).includes('dev_au2')), 'təkrar cəhd jurnala yazdı');
+  });
+
   console.log(`\nCihaz açarları: ${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

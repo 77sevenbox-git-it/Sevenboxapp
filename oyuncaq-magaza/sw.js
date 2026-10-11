@@ -1,5 +1,5 @@
 /* Service worker: tətbiq fayllarını keşdə saxlayır ki, internet olmadan açılsın (FR-100). */
-var CACHE = 'magaza-v28';
+var CACHE = 'magaza-v29';
 var FILES = ['./', 'index.html', 'manifest.json', 'css/app.css', 'js/i18n.js', 'js/lang-ru.js', 'js/lang-en.js', 'js/lang-tr.js', 'js/money.js', 'js/barcode.js', 'js/rules.js', 'js/fifo.js', 'js/db.js',
   'js/services.js', 'js/import.js', 'js/replica.js', 'js/sync.js', 'js/notify.js', 'js/ui.js', 'js/print.js', 'js/pos.js', 'js/screens.js', 'js/app.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-32.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'favicon.ico', 'icons/badge-96.png'];
 

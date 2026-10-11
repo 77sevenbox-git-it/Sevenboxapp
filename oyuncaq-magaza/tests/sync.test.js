@@ -840,6 +840,111 @@ async function t(name, fn) {
     assert.strictEqual((await M.Services.listPendingApprovals()).length, 1);   // menecer cihazında sorğu görünür
   });
 
+  /* 11.10: «Açar yarat» → «server cavab vermədi». Server açarı yaratmışdı, cavab müştərinin gözləməsindən sonra çatdı, açar itdi.
+     Sync.deviceKey: açar bu cihazda yaranır, eyni açarla təkrar sorğu təhlükəsizdir. */
+  async function adminDevice() {
+    const b = makeBackend({ token: TOKEN });
+    b.adminKey = b.sandbox.setupAdminKey();
+    const X = await boot(b), good = X.fetch, bodies = [];
+    X.Sync.timing.adminWait = 60;
+    // lost: ilk N admin sorğusunun cavabı itir (server işi görür, müştəriyə heç nə çatmır); down: şəbəkə yoxdur
+    const net = { lost: 0, down: 0 };
+    X.fetch = (url, o) => {
+      if (o && o.method === 'POST') {
+        const body = JSON.parse(o.body);
+        if (/^devices\./.test(body.action)) {
+          bodies.push(body);
+          if (net.down > 0) { net.down--; return Promise.reject(new TypeError('Failed to fetch')); }
+          if (net.lost > 0) { net.lost--; good(url, o); return new Promise(() => {}); }
+        }
+      }
+      return good(url, o);
+    };
+    return { b, X, net, bodies };
+  }
+  const created = (b, id) => b.rows('Audit').filter(r => r[1] === 'device.created' && String(r[3]).includes(id)).length;
+
+  await t('deviceKey: açar bu cihazda yaranır (64 hex), serverdə yalnız hash; açar həmin id ilə işləyir', async () => {
+    const { b, X, bodies } = await adminDevice();
+    const r = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_new', name: 'Yeni' });
+    assert.ok(r.ok && /^[0-9a-f]{64}$/.test(r.token));
+    assert.strictEqual(bodies[0].newKey, r.token, 'göndərilən açar = qaytarılan açar');
+    assert.ok(!Object.values(b.store.props).some(v => String(v).includes(r.token)), 'açar serverdə saxlanmır');
+    assert.strictEqual(b.post({ action: 'ping', token: r.token, device: 'kassa_new' }).kind, 'device');
+    assert.strictEqual(created(b, 'kassa_new'), 1);
+  });
+
+  await t('deviceKey: birinci cavab itir → özü eyni açarla təkrar edir, açar itmir, jurnalda bir sətir', async () => {
+    const { b, X, net, bodies } = await adminDevice();
+    net.lost = 1;
+    let retried = 0;
+    const r = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_lost', name: 'İtən' }, { onRetry: () => retried++ });
+    assert.ok(r.ok && r.replay === true, 'təkrar sorğu serverdə artıq yazılmış açarı tanıdı: ' + JSON.stringify(r));
+    assert.strictEqual(retried, 1);
+    assert.strictEqual(bodies.length, 2); assert.strictEqual(bodies[0].newKey, bodies[1].newKey);
+    assert.strictEqual(b.post({ action: 'ping', token: r.token, device: 'kassa_lost' }).kind, 'device', 'istifadəçiyə göstərilən açar işləyir');
+    assert.strictEqual(created(b, 'kassa_lost'), 1);
+  });
+
+  await t('deviceKey: iki cavab da itir → "nəticə məlum deyil" xətası; düyməni təkrar basmaq eyni açarı verir (açar itmir)', async () => {
+    const { b, X, net, bodies } = await adminDevice();
+    net.lost = 2;
+    const e = await rejects(X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_lost2', name: 'X' }), /cavab vermədi/);
+    assert.strictEqual(e.uncertain, true); assert.strictEqual(e.timeout, true);
+    assert.strictEqual(created(b, 'kassa_lost2'), 1, 'server açarı yaradıb');
+    assert.ok(b.store.props.DEV_kassa_lost2);
+    const r = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_lost2', name: 'X' });   // istifadəçi düyməni yenidən basdı
+    assert.ok(r.ok && r.replay);
+    assert.strictEqual(new Set(bodies.map(x => x.newKey)).size, 1, 'bütün cəhdlər eyni açarla');
+    assert.strictEqual(b.post({ action: 'ping', token: r.token, device: 'kassa_lost2' }).kind, 'device');
+    assert.strictEqual(created(b, 'kassa_lost2'), 1);
+  });
+
+  await t('deviceKey: şəbəkə xətası da "nəticə məlum deyil" sayılır; rotate eyni qaydada işləyir', async () => {
+    const { b, X, net } = await adminDevice();
+    const first = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_rot', name: 'R' });
+    net.lost = 1;                                              // rotate: server dəyişir, cavab itir
+    const r = await X.Sync.deviceKey('rotate', { adminKey: b.adminKey, id: 'kassa_rot' });
+    assert.ok(r.ok && r.token !== first.token);
+    assert.strictEqual(b.post({ action: 'ping', token: first.token, device: 'kassa_rot' }).code, 'denied', 'köhnə açar dayanıb');
+    assert.strictEqual(b.post({ action: 'ping', token: r.token, device: 'kassa_rot' }).kind, 'device');
+    assert.strictEqual(b.rows('Audit').filter(x => x[1] === 'device.rotated').length, 1);
+    net.down = 2;
+    const e = await rejects(X.Sync.deviceKey('rotate', { adminKey: b.adminKey, id: 'kassa_rot' }), /./);
+    assert.strictEqual(e.uncertain, true);
+  });
+
+  await t('deviceKey: dəqiq rədd (səhv ADMIN_KEY, artıq var) təkrar edilmir və "yaradılmış ola bilər" demir; yeni cəhd yeni açarla', async () => {
+    const { b, X, bodies } = await adminDevice();
+    const e = await rejects(X.Sync.deviceKey('create', { adminKey: 'səhv', id: 'kassa_bad', name: 'B' }), /./);
+    assert.strictEqual(e.code, 'adminkey_bad'); assert.ok(!e.uncertain);
+    assert.strictEqual(bodies.length, 1, 'rədd təkrar edilmir');
+    const ok = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_bad', name: 'B' });
+    assert.ok(ok.ok && !ok.replay);
+    assert.notStrictEqual(bodies[1].newKey, bodies[0].newKey, 'rədd olunmuş açar yenidən istifadə edilmir');
+    const ex = await rejects(X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_bad', name: 'B' }), /./);
+    assert.strictEqual(ex.code, 'exists'); assert.ok(!ex.uncertain);
+  });
+
+  await t('deviceKey: server məşğuldur (kilid alınmır) → bir təkrar cəhd, sonra "busy" (heç nə yazılmayıb); boşalanda eyni açarla uğur', async () => {
+    const { b, X, bodies } = await adminDevice();
+    b.lockBusy = true;
+    const e = await rejects(X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_busy', name: 'B' }), /./);
+    assert.strictEqual(e.code, 'busy'); assert.ok(!e.uncertain);
+    assert.strictEqual(bodies.length, 2);
+    assert.ok(!b.store.props.DEV_kassa_busy, 'heç nə yazılmayıb');
+    b.lockBusy = false;
+    const r = await X.Sync.deviceKey('create', { adminKey: b.adminKey, id: 'kassa_busy', name: 'B' });
+    assert.ok(r.ok); assert.strictEqual(r.token, bodies[0].newKey, 'məşğul olanda saxlanan açar işlənir');
+  });
+
+  await t('deviceKey: server qoşulmayıbsa sorğu getmir və "yaradılmış ola bilər" demir', async () => {
+    const b = makeBackend({ token: TOKEN });
+    const X = await boot(b, false);
+    const e = await rejects(X.Sync.deviceKey('create', { adminKey: 'x', id: 'kassa_nc' }), /qoşulmayıb/);
+    assert.ok(!e.uncertain);
+  });
+
   console.log(`\n${passed} keçdi, ${failed} uğursuz`);
   process.exit(failed ? 1 : 0);
 })();

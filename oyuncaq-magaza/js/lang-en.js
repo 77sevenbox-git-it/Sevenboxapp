@@ -558,6 +558,8 @@
     "Naməlum əməliyyat": "Unknown operation",
     "Naməlum açar": "Unknown key",
     "Server məşğuldur, sonra təkrar olunacaq": "Server is busy, will retry later",
+    "Server gec cavab verir: eyni açarla təkrar cəhd edilir": "The server is slow to respond: retrying with the same key",
+    "Server cavab vermədi, amma açar yaradılmış ola bilər. Eyni düyməni təkrar basın: eyni açar işlənəcək, itməyəcək": "The server did not respond, but the key may have been created. Press the same button again: the same key will be processed and will not be lost",
     "Bildiriş ünvanı tanınmır": "Notification endpoint not recognised",
     "Bu cihaz bildiriş üçün qeydiyyatdan keçməyib": "This device is not registered for notifications",
     "Mal qəbulu sorğusu göndərmək (menecer təsdiqləyir)": "Send a stock receipt request (manager approves)",

@@ -1772,8 +1772,14 @@
       UI.modal({ title: title, body: h('div', { class: 'field' }, h('label', { for: 'dev-name' }, _t('Cihazın adı (məs. Kassa 2, Anbar)')), inp),
         buttons: [{ text: _t('İmtina') }, { text: okText, kind: 'primary', submit: true, onClick: function (close) { return fn(inp.value.trim()).then(function () { close(); }); } }] });
     }
+    // Açar bu cihazda yaranır (Sync.deviceKey): cavab gec gəlsə/itsə də açar itmir, eyni düyməni təkrar basmaq təhlükəsizdir
     function create(id, name, rotate) {
-      return call(rotate ? 'devices.rotate' : 'devices.create', { id: id, name: name }).then(function (r) { tokenModal(r, reload); reload(); });
+      return root.Sync.deviceKey(rotate ? 'rotate' : 'create', { adminKey: adminKey, id: id, name: name }, {
+        onRetry: function () { UI.toast(_t('Server gec cavab verir: eyni açarla təkrar cəhd edilir')); }
+      }).then(function (r) { tokenModal(r, reload); reload(); }, function (e) {
+        if (e && e.uncertain) throw new Error(_t('Server cavab vermədi, amma açar yaradılmış ola bilər. Eyni düyməni təkrar basın: eyni açar işlənəcək, itməyəcək'));
+        throw nice(e);
+      });
     }
     function revokeModal(d) {
       var why = h('input', { class: 'input', id: 'dev-why', maxlength: '60' });
