@@ -336,3 +336,12 @@ tr.inactive td { color: var(--faint); }
 .imp-table table { font-size: 14px; }
 .imp-table tr[data-state="error"] td { background: var(--bad-soft); }
 .imp-table tr[data-state="skip"] td { color: var(--muted); }
+
+/* Alış qaiməsi və təchizatçıya qaytarma (FR-104/105) */
+.pf-found { display: flex; flex-wrap: wrap; gap: 8px; }
+.pf-found:empty { display: none; }
+.pf-table { max-height: 44vh; border: 1px solid var(--line); border-radius: 8px; }
+.pf-table table { font-size: 14px; }
+.pf-table input.input { padding: 6px 8px; min-height: 36px; }
+input.input.changed { border-color: var(--warn); background: var(--warn-soft); }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 20px; }

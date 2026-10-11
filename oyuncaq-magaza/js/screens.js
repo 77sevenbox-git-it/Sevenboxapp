@@ -764,6 +764,242 @@
     document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
 
+  /* ================= Alış qaimələri və təchizatçıya qaytarma (FR-104/105) ================= */
+  function preventEnter(input, then) {
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); if (then) then(); } });     // Enter pəncərənin "Yadda saxla"sını işə salmasın
+  }
+
+  // Yeni alış qaiməsi: təchizatçı, qaimə nömrəsi/tarixi, məhsul sətirləri (say + alış qiyməti). Barkod oxuyucu axtarış sahəsinə yazır.
+  function purchaseForm(onSaved) {
+    var sup = h('select', { class: 'input', id: 'pf-sup' });
+    var invNo = h('input', { class: 'input', id: 'pf-inv', maxlength: '60', autocomplete: 'off' });
+    var invDate = h('input', { class: 'input', id: 'pf-date', type: 'date', value: todayBaku() });
+    var note = h('input', { class: 'input', id: 'pf-note', maxlength: '200', autocomplete: 'off' });
+    var q = h('input', { class: 'input', id: 'pf-q', type: 'search', autocomplete: 'off', placeholder: _t('Məhsul adı və ya barkod') });
+    var found = h('div', { class: 'pf-found', id: 'pf-found' });
+    var body = h('tbody'), totalEl = h('b', { id: 'pf-total' }, '0,00');
+    var lines = [], hits = [], seq = 0;
+
+    function recalc() {
+      var total = 0;
+      lines.forEach(function (l) {
+        var qn = parseInt(l.qty.value, 10), c = M.parse(l.cost.value);
+        var sum = qn > 0 && c != null ? Math.round(qn * c) : 0; total += sum;
+        l.sum.textContent = sum ? M.format(sum) : '—';
+        var prev = l.p.lastCost || 0;
+        l.hint.textContent = prev && c != null && c !== prev ? _t('əvvəlki alış: {0}', [M.format(prev)]) : '';
+      });
+      totalEl.textContent = M.format(total);
+    }
+    function addLine(p) {
+      var ex = lines.filter(function (l) { return l.p.id === p.id; })[0];
+      if (ex) { ex.qty.value = String((parseInt(ex.qty.value, 10) || 0) + 1); recalc(); ex.qty.focus(); return; }
+      var l = { p: p };
+      l.qty = h('input', { class: 'input', type: 'number', min: '1', max: '100000', value: '1', 'aria-label': _t('Say') });
+      l.cost = h('input', { class: 'input mono', inputmode: 'decimal', autocomplete: 'off', value: p.lastCost ? M.format(p.lastCost).replace(/\s/g, '') : '', 'aria-label': _t('Alış qiyməti, ₼') });
+      l.hint = h('div', { class: 'muted', style: 'font-size:12px' });
+      l.sum = h('td', { class: 'num' }, '—');
+      [l.qty, l.cost].forEach(function (i) { i.addEventListener('input', recalc); preventEnter(i, function () { q.focus(); }); });
+      l.row = h('tr', { 'data-pid': p.id }, h('td', null, h('div', null, p.name), h('div', { class: 'muted mono', style: 'font-size:12px' }, p.storeBarcode)), h('td', null, l.qty), h('td', null, l.cost, l.hint), l.sum,
+        h('td', null, h('button', { class: 'btn small', type: 'button', 'aria-label': _t('Sil'), onclick: function () { lines = lines.filter(function (x) { return x !== l; }); l.row.remove(); recalc(); } }, '✕')));
+      lines.push(l); body.appendChild(l.row); recalc();
+      (l.p.lastCost ? l.qty : l.cost).focus(); (l.p.lastCost ? l.qty : l.cost).select();
+    }
+    function pickHit(p) { addLine(p); q.value = ''; UI.clear(found); hits = []; }
+    function search() {
+      var my = ++seq, v = q.value.trim();
+      if (!v) { UI.clear(found); hits = []; return Promise.resolve(); }
+      return S.searchProducts(v, 8).then(function (list) {
+        if (my !== seq) return;
+        hits = list; UI.clear(found);
+        if (!list.length) found.appendChild(h('div', { class: 'muted', style: 'font-size:14px' }, _t('Məhsul tapılmadı')));
+        list.forEach(function (p) {
+          found.appendChild(h('button', { class: 'btn small pf-hit', type: 'button', 'data-pid': p.id, onclick: function () { pickHit(p); } }, p.name, ' ', h('span', { class: 'muted mono' }, p.storeBarcode)));
+        });
+      });
+    }
+    q.addEventListener('input', search);
+    preventEnter(q, function () {
+      search().then(function () {
+        var v = q.value.trim(), exact = hits.filter(function (p) { return p.storeBarcode === v || p.mfrBarcode === v; });
+        if (exact.length === 1 || hits.length === 1) pickHit(exact[0] || hits[0]);
+        else if (exact.length > 1) UI.toast(_t('Bu barkodla bir neçə məhsul var: siyahıdan seçin'), 'warn');
+      });
+    });
+    [invNo, note, invDate].forEach(function (i) { preventEnter(i, function () { q.focus(); }); });
+
+    var tableBox = h('div', { class: 'table-wrap pf-table', tabindex: '0' }, h('table', { id: 'pf-lines' },
+      h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { style: 'width:110px' }, _t('Say')), h('th', { style: 'width:150px' }, _t('Alış qiyməti, ₼')), h('th', { class: 'num', style: 'width:110px' }, _t('Məbləğ ₼')), h('th', { style: 'width:48px' }, ''))),
+      body, h('tfoot', null, h('tr', null, h('th', { colspan: '3' }, _t('Cəmi')), h('th', { class: 'num' }, totalEl), h('th', null, '')))));
+    var form = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+      h('div', { class: 'grid2' },
+        h('div', { class: 'field' }, h('label', { for: 'pf-sup' }, _t('Təchizatçı *')), sup),
+        h('div', { class: 'field' }, h('label', { for: 'pf-inv' }, _t('Qaimə nömrəsi')), invNo),
+        h('div', { class: 'field' }, h('label', { for: 'pf-date' }, _t('Qaimə tarixi')), invDate),
+        h('div', { class: 'field' }, h('label', { for: 'pf-note' }, _t('Qeyd')), note)),
+      h('div', { class: 'field' }, h('label', { for: 'pf-q' }, _t('Məhsul əlavə et')), q), found,
+      tableBox,
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Qaimə yadda saxlananda qalıq artır və borc (alınan mal əsasında) hesablanır. Satış qiyməti avtomatik dəyişmir: alış qiyməti dəyişibsə sonda xatırladılacaq. Saxlanmış qaimə dəyişdirilmir: səhv olarsa ləğv edin və ya təchizatçıya qaytarın.')));
+    S.listSuppliers().then(function (list) {
+      if (!list.length) { UI.clear(form); form.appendChild(h('p', { class: 'warn-text', role: 'alert' }, _t('Əvvəl təchizatçı əlavə edin'))); return; }
+      list.forEach(function (s) { sup.appendChild(h('option', { value: s.id }, s.name)); });
+    });
+    UI.modal({
+      title: _t('Yeni alış qaiməsi'), wide: true, body: form,
+      buttons: [{ text: _t('İmtina') }, { text: _t('Qaiməni yadda saxla'), kind: 'primary', submit: true, onClick: function (close) {
+        if (!lines.length) throw new Error(_t('Qaiməyə ən azı bir məhsul əlavə edin'));
+        var items = lines.map(function (l) { return { productId: l.p.id, qty: parseInt(l.qty.value, 10), unitCost: M.parse(l.cost.value) }; });
+        return S.createPurchase({ supplierId: sup.value, invoiceNo: invNo.value, invoiceDate: invDate.value, note: note.value, lines: items }).then(function (r) {
+          close(); UI.toast(_t('Qaimə yadda saxlanıldı: {0} sətir, {1} ₼', [r.doc.lines.length, M.format(r.doc.total)]));
+          if (onSaved) onSaved();
+          if (r.suggestions.length) priceSuggestions(r.suggestions);
+        });
+      } }]
+    });
+  }
+
+  // Alış qiyməti dəyişən məhsullar: satış qiyməti avtomatik dəyişmir, menecer özü qərar verir (AS-30)
+  function priceSuggestions(list) {
+    var tb = h('tbody');
+    list.forEach(function (x) {
+      var margin = x.price > 0 ? Math.round((x.price - x.newCost) * 1000 / x.price) / 10 : 0;
+      tb.appendChild(h('tr', { 'data-pid': x.productId }, h('td', null, x.name), h('td', { class: 'num muted' }, M.format(x.oldCost)), h('td', { class: 'num' }, M.format(x.newCost)), h('td', { class: 'num' }, M.format(x.price)),
+        h('td', { class: 'num' }, margin < 0 ? h('span', { class: 'warn-text' }, margin + '%') : margin + '%'),
+        h('td', null, can('product.price.set') ? h('button', { class: 'btn small', type: 'button', 'data-act': 'reprice', onclick: function () { S.listProducts().then(function (ps) { var p = ps.filter(function (y) { return y.id === x.productId; })[0]; if (p) productForm(p, function () {}); }); } }, _t('Satış qiymətini dəyiş')) : null)));
+    });
+    UI.modal({
+      title: _t('Alış qiyməti dəyişib'), wide: true, buttons: [{ text: _t('Bağla') }],
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+        h('p', { class: 'muted', style: 'margin:0' }, _t('Bu məhsulların alış qiyməti əvvəlkindən fərqlidir. Satış qiyməti dəyişmədi: lazım bilsəniz yeniləyin.')),
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'sug-table' },
+          h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Əvvəlki alış ₼')), h('th', { class: 'num' }, _t('Yeni alış ₼')), h('th', { class: 'num' }, _t('Satış ₼')), h('th', { class: 'num' }, _t('Marja')), h('th', null, ''))), tb)))
+    });
+  }
+
+  // Qaimənin baxışı: sətirlər, hər partiyanın qalığı; ləğv və ya təchizatçıya qaytarma
+  function purchaseView(doc, canManage, onChange) {
+    var seeCost = doc.total != null;
+    var tb = h('tbody');
+    doc.lines.forEach(function (l) {
+      tb.appendChild(h('tr', { 'data-lot': l.lotId }, h('td', null, l.name), h('td', { class: 'num' }, String(l.qty)), seeCost ? h('td', { class: 'num' }, M.format(l.unitCost)) : null,
+        h('td', { class: 'num' }, l.remaining == null ? '—' : String(l.remaining)), h('td', { class: 'num' }, l.returned ? String(l.returned) : '')));
+    });
+    var info = [
+      [_t('Təchizatçı'), doc.supplierName || '—'], [_t('Qaimə nömrəsi'), doc.invoiceNo || '—'], [_t('Qaimə tarixi'), doc.invoiceDate || '—'], [_t('Daxil edildi'), UI.fmtDate(doc.at)],
+      [_t('Yaradan'), doc.createdBy ? doc.createdBy.name : '—'], [_t('Təsdiq edən'), doc.approvedBy ? doc.approvedBy.name : '—'],
+      [_t('Mənbə'), doc.source === 'request' ? _t('Kassirin «Mal gəldi» sorğusu') : _t('Alış qaiməsi')]
+    ];
+    if (doc.note) info.push([_t('Qeyd'), doc.note]);
+    var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+      doc.status === 'cancelled' ? h('div', { class: 'badge off', style: 'align-self:flex-start' }, _t('Ləğv edilib') + (doc.cancel && doc.cancel.reason ? ': ' + doc.cancel.reason : '')) : null,
+      h('div', { class: 'kv' }, info.map(function (x) { return h('div', null, h('div', { class: 'muted', style: 'font-size:13px' }, x[0]), h('div', null, x[1])); })),
+      h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'pv-lines' },
+        h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Say')), seeCost ? h('th', { class: 'num' }, _t('Alış qiyməti, ₼')) : null, h('th', { class: 'num' }, _t('Qalıq (bu partiyadan)')), h('th', { class: 'num' }, _t('Qaytarılıb')))), tb,
+        seeCost ? h('tfoot', null, h('tr', null, h('th', { colspan: '2' }, _t('Cəmi')), h('th', { class: 'num' }, M.format(doc.total)), h('th', { colspan: '2' }, ''))) : null)));
+    var btns = [{ text: _t('Bağla') }];
+    if (canManage && doc.status === 'approved') {
+      if (doc.canCancel) btns.push({ text: _t('Qaiməni ləğv et'), kind: 'danger', onClick: function (close) { close(); cancelPurchaseForm(doc, onChange); return null; } });
+      if (doc.supplierId && doc.lines.some(function (l) { return l.remaining > 0; })) btns.push({ text: _t('Təchizatçıya qaytar'), kind: 'primary', onClick: function (close) { close(); returnForm({ supplierId: doc.supplierId, docId: doc.id }, onChange); return null; } });
+    }
+    UI.modal({ title: _t('Alış qaiməsi'), wide: true, body: body, buttons: btns });
+  }
+
+  function cancelPurchaseForm(doc, onDone) {
+    var why = h('input', { class: 'input', id: 'cp-why', maxlength: '200', autocomplete: 'off' });
+    UI.modal({
+      title: _t('Qaiməni ləğv et'),
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+        h('div', null, (doc.supplierName || '—') + ' · ' + (doc.invoiceNo || UI.fmtDate(doc.at))),
+        h('div', { class: 'field' }, h('label', { for: 'cp-why' }, _t('Səbəb *')), why),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Qaimədəki mal qalıqdan çıxarılır, borc həmin məbləğdə azalır. Yalnız bu qaimədən heç nə satılmayıbsa mümkündür.'))),
+      buttons: [{ text: _t('İmtina') }, { text: _t('Ləğv et'), kind: 'danger', submit: true, onClick: function (close) {
+        return S.cancelPurchase(doc.id, why.value).then(function () { close(); UI.toast(_t('Qaimə ləğv edildi')); if (onDone) onDone(); });
+      } }]
+    });
+  }
+
+  // Təchizatçıya qaytarma: təchizatçı → qaimə (və ya qaiməsiz köhnə qəbullar) → qaytarılan say. pre: {supplierId, docId}
+  function returnForm(pre, onSaved) {
+    pre = pre || {};
+    var sup = h('select', { class: 'input', id: 'rf-sup' }), src = h('select', { class: 'input', id: 'rf-src' });
+    var note = h('input', { class: 'input', id: 'rf-note', maxlength: '200', autocomplete: 'off' });
+    var tb = h('tbody'), hint = h('p', { class: 'muted', id: 'rf-hint', style: 'margin:0;font-size:14px' }), totalEl = h('b', { id: 'rf-total' }, '0,00');
+    var sups = [], docs = [], lots = [], rows = [], seeCost = true;
+    function supplier() { return sups.filter(function (s) { return s.id === sup.value; })[0]; }
+    function recalc() {
+      var total = 0;
+      rows.forEach(function (r) {
+        var qn = parseInt(r.qty.value, 10) || 0, c = r.cost ? M.parse(r.cost.value) : r.lot.unitCost;
+        var sum = qn > 0 && c != null ? Math.round(qn * c) : 0; total += sum; r.sum.textContent = sum ? M.format(sum) : '—';
+        if (r.cost) r.cost.classList.toggle('changed', c != null && c !== r.lot.unitCost);
+      });
+      totalEl.textContent = M.format(total);
+      var s = supplier();
+      hint.textContent = !s ? '' : s.debtBasis === 'sold' ? _t('Bu təchizatçı üçün borc satılan mal əsasında hesablanır: qaytarma yalnız qalığı azaldır, borca təsir etmir.') : total ? _t('Təchizatçıya borc {0} ₼ azalacaq (alınan mal əsasında).', [M.format(total)]) : _t('Qaytarma təchizatçıya borcu azaldır (alınan mal əsasında).');
+    }
+    function draw() {
+      UI.clear(tb); rows = [];
+      var want = src.value === '' ? '' : src.value;
+      var list = lots.filter(function (l) { return (l.docId || '') === want; });
+      if (!list.length) tb.appendChild(h('tr', null, h('td', { colspan: seeCost ? '5' : '4', class: 'empty' }, _t('Bu mənbədən qaytarıla bilən mal yoxdur'))));
+      list.forEach(function (lot) {
+        var r = { lot: lot };
+        r.qty = h('input', { class: 'input', type: 'number', min: '0', max: String(lot.remaining), value: '0', 'aria-label': _t('Qaytarılan say') });
+        r.cost = seeCost && lot.unitCost != null ? h('input', { class: 'input mono', inputmode: 'decimal', autocomplete: 'off', value: M.format(lot.unitCost).replace(/\s/g, ''), 'aria-label': _t('Alış qiyməti, ₼') }) : null;
+        r.sum = h('td', { class: 'num' }, '—');
+        [r.qty, r.cost].forEach(function (i) { if (i) { i.addEventListener('input', recalc); preventEnter(i); } });
+        r.row = h('tr', { 'data-lot': lot.lotId }, h('td', null, h('div', null, lot.name), h('div', { class: 'muted', style: 'font-size:12px' }, UI.fmtDate(lot.at))), h('td', { class: 'num' }, String(lot.qty)), h('td', { class: 'num' }, h('b', null, String(lot.remaining))),
+          h('td', null, r.qty), seeCost ? h('td', null, r.cost) : null, r.sum);
+        rows.push(r); tb.appendChild(r.row);
+      });
+      recalc();
+    }
+    function fillSrc() {
+      UI.clear(src);
+      var mine = docs.filter(function (d) { return d.supplierId === sup.value && d.status === 'approved'; });
+      mine.forEach(function (d) { src.appendChild(h('option', { value: d.id }, UI.fmtDate(d.at) + ' · ' + (d.invoiceNo ? '№ ' + d.invoiceNo + ' · ' : '') + _t('{0} sətir', [d.lines.length]))); });
+      src.appendChild(h('option', { value: '' }, _t('Qaiməsiz (köhnə qəbullar)')));
+      var withLots = {}; lots.forEach(function (l) { withLots[l.docId || ''] = true; });
+      var pick = pre.docId && mine.some(function (d) { return d.id === pre.docId; }) ? pre.docId : (mine.filter(function (d) { return withLots[d.id]; })[0] || {}).id || (withLots[''] ? '' : (mine[0] ? mine[0].id : ''));
+      src.value = pick; pre.docId = null;
+    }
+    function loadSupplier() {
+      return S.returnableLots(sup.value).then(function (l) { lots = l; seeCost = !l.length || l[0].unitCost != null; fillSrc(); draw(); });
+    }
+    sup.addEventListener('change', loadSupplier); src.addEventListener('change', draw); preventEnter(note);
+    var form = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+      h('div', { class: 'grid2' }, h('div', { class: 'field' }, h('label', { for: 'rf-sup' }, _t('Təchizatçı *')), sup), h('div', { class: 'field' }, h('label', { for: 'rf-src' }, _t('Hansı qaimədən')), src)),
+      h('div', { class: 'table-wrap pf-table', tabindex: '0' }, h('table', { id: 'rf-lines' },
+        h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Alınıb')), h('th', { class: 'num' }, _t('Qaytarıla bilər')), h('th', { style: 'width:110px' }, _t('Qaytarılan say')), h('th', { style: 'width:150px', class: 'rf-cost' }, _t('Qaytarma qiyməti, ₼')), h('th', { class: 'num', style: 'width:110px' }, _t('Məbləğ ₼')))), tb,
+        h('tfoot', null, h('tr', null, h('th', { colspan: '5' }, _t('Cəmi')), h('th', { class: 'num' }, totalEl))))),
+      h('div', { class: 'field' }, h('label', { for: 'rf-note' }, _t('Qeyd')), note), hint,
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Yalnız partiyanın qalığı qədər qaytarmaq olar: satılan hissə qaytarılmır. Qiymət partiyanın alış qiymətidir; fərqli qiymət yazsanız borc həmin qiymətlə azalır və bu qeyd olunur.')));
+    Promise.all([S.listSuppliers({ all: true }), S.listPurchases()]).then(function (r) {
+      sups = r[0]; docs = r[1].docs;
+      var used = {}; docs.forEach(function (d) { if (d.supplierId) used[d.supplierId] = true; });
+      sups.forEach(function (s) { sup.appendChild(h('option', { value: s.id }, s.name + (s.active ? '' : ' (' + _t('Söndürülüb') + ')'))); });
+      if (pre.supplierId) sup.value = pre.supplierId;
+      if (!sups.length) { UI.clear(form); form.appendChild(h('p', { class: 'warn-text' }, _t('Əvvəl təchizatçı əlavə edin'))); return; }
+      return loadSupplier();
+    }).catch(function (e) { UI.toast(e.message, 'bad'); });
+    UI.modal({
+      title: _t('Təchizatçıya qaytarma'), wide: true, body: form,
+      buttons: [{ text: _t('İmtina') }, { text: _t('Qaytar'), kind: 'primary', submit: true, onClick: function (close) {
+        var items = [];
+        rows.forEach(function (r) {
+          var qn = parseInt(r.qty.value, 10) || 0; if (qn <= 0) return;
+          var it = { lotId: r.lot.lotId, qty: qn };
+          if (r.cost) { var c = M.parse(r.cost.value); if (c == null) throw new Error(_t('Alış qiyməti səhvdir')); if (c !== r.lot.unitCost) it.unitCost = c; }
+          items.push(it);
+        });
+        if (!items.length) throw new Error(_t('Qaytarılacaq mal seçin'));
+        return S.createSupplierReturn({ supplierId: sup.value, docId: src.value, note: note.value, lines: items }).then(function (ret) {
+          close(); UI.toast(_t('Qaytarma yazıldı: {0} sətir, {1} ₼', [ret.lines.length, M.format(ret.total)])); if (onSaved) onSaved();
+        });
+      } }]
+    });
+  }
+
   function suppliers(el) {
     UI.clear(el);
     var canManage = can('supplier.manage'), canDebt = can('supplier.pay') || (can('supplier.view') && can('product.cost.view'));
@@ -771,6 +1007,7 @@
     var preset = h('select', { class: 'input', id: 'rp-preset' }, [['month', _t('Bu ay')], ['today', _t('Bu gün')], ['yesterday', _t('Dünən')], ['prev', _t('Keçən ay')], ['all', _t('Bütün vaxt')], ['custom', _t('Seçilmiş tarixlər')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
     var from = h('input', { class: 'input', id: 'rp-from', type: 'date' }), to = h('input', { class: 'input', id: 'rp-to', type: 'date' });
     var last = null, warnBox = h('div', { id: 'rp-warn', class: 'warn-text', role: 'alert', hidden: true, style: 'font-size:14px' });
+    var canPurchase = can('stock.receive'), docTb = h('tbody'), retTb = h('tbody'), docHead = h('thead'), retHead = h('thead');
 
     function range() {
       var t = todayBaku(), v = preset.value, f = '', e = '';
@@ -827,7 +1064,35 @@
           cost ? [h('th', { class: 'num' }, M.format(t.cost)), h('th', { class: 'num' }, M.format(t.profit))] : null, h('th', { class: 'num' }, String(t.onHandQty)), cost ? h('th', { class: 'num' }, M.format(t.onHandValue)) : null, h('th', null, '')));
       });
     }
-    function loadAll() { return Promise.all([loadSuppliers(), loadReport()]).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    // Alış qaimələri və təchizatçıya qaytarmalar (FR-104/105)
+    function loadDocs() {
+      return Promise.all([S.listPurchases(), S.listSupplierReturns()]).then(function (r) {
+        var res = r[0], cost = res.seeCost;
+        var byDoc = {}; res.docs.forEach(function (d) { byDoc[d.id] = d; });
+        UI.clear(docHead); UI.clear(docTb); UI.clear(retHead); UI.clear(retTb);
+        retHead.appendChild(h('tr', null, h('th', null, _t('Tarix')), h('th', null, _t('Təchizatçı')), h('th', null, _t('Növ')), h('th', null, _t('Məhsullar')), cost ? h('th', { class: 'num' }, _t('Məbləğ ₼')) : null, h('th', null, _t('Qeyd'))));
+        docHead.appendChild(h('tr', null, h('th', null, _t('Daxil edildi')), h('th', null, _t('Təchizatçı')), h('th', null, _t('Qaimə nömrəsi')), h('th', null, _t('Məhsullar')), cost ? h('th', { class: 'num' }, _t('Məbləğ ₼')) : null, h('th', null, _t('Vəziyyət')), h('th', null, '')));
+        if (!res.docs.length) docTb.appendChild(h('tr', null, h('td', { colspan: cost ? '7' : '6', class: 'empty' }, _t('Hələ alış qaiməsi yoxdur'))));
+        res.docs.slice(0, 50).forEach(function (d) {
+          docTb.appendChild(h('tr', { 'data-doc': d.id, 'data-state': d.status, class: d.status === 'cancelled' ? 'inactive' : '' },
+            h('td', null, UI.fmtDate(d.at)), h('td', null, d.supplierName || '—'), h('td', null, d.invoiceNo || '—'),
+            h('td', null, d.lines.map(function (l) { return l.name + ' × ' + l.qty; }).join(', ')),
+            cost ? h('td', { class: 'num' }, M.format(d.total)) : null,
+            h('td', null, d.status === 'cancelled' ? h('span', { class: 'badge off' }, _t('Ləğv edilib')) : d.source === 'request' ? h('span', { class: 'badge' }, _t('«Mal gəldi» sorğusu')) : h('span', { class: 'badge ok' }, _t('Təsdiqlənib'))),
+            h('td', { style: 'text-align:right' }, h('button', { class: 'btn small', type: 'button', 'data-act': 'doc', onclick: function () { purchaseView(d, res.canManage, loadAll); } }, _t('Bax')))));
+        });
+        if (!r[1].length) retTb.appendChild(h('tr', null, h('td', { colspan: cost ? '6' : '5', class: 'empty' }, _t('Hələ təchizatçıya qaytarma yoxdur'))));
+        r[1].slice(0, 30).forEach(function (x) {
+          var d = byDoc[x.docId];
+          retTb.appendChild(h('tr', { 'data-ret': x.id },
+            h('td', null, UI.fmtDate(x.at)), h('td', null, x.supplierName || '—'),
+            h('td', null, x.cancel ? h('span', { class: 'badge off' }, _t('Qaimənin ləğvi')) : h('span', { class: 'badge' }, _t('Qaytarma')), d && d.invoiceNo ? h('div', { class: 'muted', style: 'font-size:12px' }, '№ ' + d.invoiceNo) : null),
+            h('td', null, x.lines.map(function (l) { return (l.productName || '') + ' × ' + l.qty + (l.priceChanged ? ' ⚠' : ''); }).join(', ')),
+            cost ? h('td', { class: 'num' }, M.format(x.total)) : null, h('td', { class: 'muted' }, x.cancel ? (x.reason || '') : (x.note || ''))));
+        });
+      });
+    }
+    function loadAll() { return Promise.all([loadSuppliers(), loadReport(), loadDocs()]).catch(function (e) { UI.toast(e.message, 'bad'); }); }
 
     function detail(x) {
       var cost = last && last.seeCost;
@@ -856,8 +1121,19 @@
 
     el.appendChild(h('div', { class: 'page' },
       h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:16px' }, h('h1', { style: 'margin:0' }, _t('Təchizatçılar')),
-        canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, _t('+ Yeni təchizatçı')) : null),
+        h('div', { class: 'row' },
+          canPurchase ? h('button', { class: 'btn', id: 'pur-add', type: 'button', onclick: function () { purchaseForm(loadAll); } }, _t('Yeni alış qaiməsi')) : null,
+          canPurchase ? h('button', { class: 'btn', id: 'ret-add', type: 'button', onclick: function () { returnForm({}, loadAll); } }, _t('Təchizatçıya qaytarma')) : null,
+          canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, _t('+ Yeni təchizatçı')) : null)),
       h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table', class: 'cards' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), canDebt ? h('th', { class: 'num' }, _t('Borc ₼')) : null, h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
+      h('div', { class: 'card', style: 'margin-top:24px' },
+        h('div', { style: 'padding:16px 20px 8px' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Alış qaimələri')),
+          h('p', { class: 'muted', style: 'margin:4px 0 0;font-size:13px' }, _t('Təchizatçıdan mal qəbulu. Satış olmayıbsa qaimə ləğv edilir, olubsa təchizatçıya qaytarma yazılır.'))),
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'doc-table', class: 'cards' }, docHead, docTb))),
+      h('div', { class: 'card', style: 'margin-top:24px' },
+        h('div', { style: 'padding:16px 20px 8px' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Təchizatçıya qaytarmalar'))),
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'sret-table', class: 'cards' },
+          retHead, retTb))),
       h('div', { class: 'card', style: 'margin-top:24px' },
         h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
           h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Hansı təchizatçının malından nə qədər satılıb')),

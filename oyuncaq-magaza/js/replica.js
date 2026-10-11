@@ -6,7 +6,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var DB = root.DB, Rules = root.Rules;
   var EPOCH = '1970-01-01T00:00:00.000Z';
-  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'supplierPays', 'meta', 'audit'];
+  var STORES = ['users', 'products', 'sales', 'returns', 'shifts', 'cashMoves', 'stockMoves', 'approvals', 'suppliers', 'lots', 'supplierPays', 'purchases', 'supplierReturns', 'meta', 'audit'];
   var MASTER_FIELDS = ['name', 'category', 'brand', 'ageGroup', 'mfrBarcode', 'price', 'minStock', 'active', 'image', 'maxDiscount'];
 
   // Outbox id-sindən audit id-sini çıxarır: yeni "vaxt_000123_a_uuid" və köhnə "vaxt_a_uuid" formatı
@@ -116,6 +116,7 @@
       sum.touched.lots = true;
       var lot = { id: d.lotId, productId: d.productId, supplierId: d.supplierId || null, qty: d.qty, unitCost: d.unitCost, at: d.at || ev.at, userId: ev.userId, note: d.note || '' };
       if (d.approvalId) lot.approvalId = d.approvalId;            // təsdiq sorğusundan gələn partiya bütün cihazlarda eyni görünsün
+      if (d.docId) lot.docId = d.docId;                          // alış qaiməsinin sətri (FR-104)
       return t.put('lots', lot);
     });
   }
@@ -157,6 +158,39 @@
     });
   };
 
+  /* Alış qaiməsi (FR-104) və təchizatçıya qaytarma (FR-105).
+     Qaimənin mal hərəkəti hər sətir üçün ayrıca "stock.received" hadisəsidir (docId ilə); "purchase.created" yalnız sənədin özünü saxlayır.
+     Qaytarma qalığı bu hadisə ilə azaldır. Hər ikisi eyni id ilə təkrar tətbiq olunmur (idempotent): köhnə versiyadan yenilənən cihazın "doldurması" da eyni kodu işlədir. */
+  H['purchase.created'] = function (t, ev, d, sum) {
+    var doc = d.doc; if (!doc || !doc.id) return;
+    return t.get('purchases', doc.id).then(function (cur) {
+      if (cur) {
+        // Eyni təsdiq sorğusunu iki menecer iki cihazda təsdiqləyibsə: yalnız qalib qərar qalır (stock.received ilə eyni qayda)
+        if (!doc.requestId) return;
+        var inKey = (doc.at || '') + '|' + ((doc.approvedBy && doc.approvedBy.id) || ''), curKey = (cur.at || '') + '|' + ((cur.approvedBy && cur.approvedBy.id) || '');
+        if (inKey >= curKey) return;
+      }
+      sum.touched.purchases = true;
+      return t.put('purchases', doc);
+    });
+  };
+
+  H['supplier.returned'] = function (t, ev, d, sum) {
+    var ret = d.ret; if (!ret || !ret.id) return;
+    return t.get('supplierReturns', ret.id).then(function (cur) {
+      if (cur) return;                       // təkrar və ya iki cihazda eyni ləğv (sabit id): qalıq bir dəfə azalır
+      return each(ret.lines, function (l, i) {
+        return t.get('products', l.productId).then(function (p) {
+          if (!p) return;
+          var before = p.stock; p.stock -= l.qty; sum.touched.products = true;
+          return t.put('products', p).then(function () {
+            return t.put('stockMoves', { id: 'sm_' + ev.id + '_' + i, productId: p.id, type: 'supplier_return', qty: -l.qty, before: before, after: p.stock, unitCost: l.unitCost, ref: ret.id, at: ret.at, userId: ret.by && ret.by.id });
+          });
+        });
+      }).then(function () { sum.touched.purchases = true; sum.touched.lots = true; return t.put('supplierReturns', ret); });
+    });
+  };
+
   function putSupplier(t, d, sum) {
     var ns = d.supplier; if (!ns || !ns.id) return Promise.resolve();
     return t.get('suppliers', ns.id).then(function (cur) {
@@ -173,11 +207,13 @@
     'supplier.upserted': function (t, ev, d, sum) { return putSupplier(t, d, sum); },
     'supplier.paid': function (t, ev, d, sum) { return putPay(t, ev, d, sum); },
     'supplier.pay_voided': function (t, ev, d, sum) { return voidPay(t, ev, d, sum); },
-    'stock.received': function (t, ev, d, sum) { return putLot(t, ev, d, sum); }
+    'stock.received': function (t, ev, d, sum) { return putLot(t, ev, d, sum); },
+    'purchase.created': function (t, ev, d, sum) { return H['purchase.created'](t, ev, d, sum); },
+    'supplier.returned': function (t, ev, d, sum) { return H['supplier.returned'](t, ev, d, sum); }
   };
   function backfill(events) {
     var sum = { applied: 0, touched: {} };
-    return DB.atomic(['suppliers', 'lots', 'supplierPays'], function (t) {
+    return DB.atomic(['suppliers', 'lots', 'supplierPays', 'purchases', 'supplierReturns', 'products', 'stockMoves'], function (t) {
       return each(events, function (ev) {
         var fn = BACKFILL[ev.type]; if (!fn) return;
         sum.applied++;
@@ -334,7 +370,18 @@
     },
     'product.updated': function (d) { var a = d.after; return isObj(a) && idOk(d.id || a.id) && masterOk(a); },
     'stock.received': function (d) {
-      return idOk(d.productId) && iOk(d.qty, 1, QTY_MAX) && nOk(d.unitCost, 0, MONEY_MAX) && oId(d, 'lotId') && oId(d, 'approvalId') && oId(d, 'supplierId') && oS(d, 'note', 500) && oS(d, 'at', 40);
+      return idOk(d.productId) && iOk(d.qty, 1, QTY_MAX) && nOk(d.unitCost, 0, MONEY_MAX) && oId(d, 'lotId') && oId(d, 'approvalId') && oId(d, 'docId') && oId(d, 'supplierId') && oS(d, 'note', 500) && oS(d, 'at', 40);
+    },
+    'purchase.created': function (d) {
+      var x = d.doc; if (!isObj(x) || !idOk(x.id) || !sOk(x.at, 40) || !oId(x, 'supplierId') || !oS(x, 'supplierName', 200) || !oS(x, 'invoiceNo', 60) || !oS(x, 'invoiceDate', 10) || !oS(x, 'note', 500) || !oId(x, 'requestId') || !nOk(x.total, 0, MONEY_MAX)) return false;
+      if (x.createdBy != null && !(isObj(x.createdBy) && oId(x.createdBy, 'id') && oS(x.createdBy, 'name', 80))) return false;
+      if (x.approvedBy != null && !(isObj(x.approvedBy) && oId(x.approvedBy, 'id') && oS(x.approvedBy, 'name', 80))) return false;
+      return arr(x.lines, 1, 100, function (l) { return isObj(l) && idOk(l.productId) && oS(l, 'productName', 200) && iOk(l.qty, 1, QTY_MAX) && nOk(l.unitCost, 0, MONEY_MAX) && idOk(l.lotId); });
+    },
+    'supplier.returned': function (d) {
+      var x = d.ret; if (!isObj(x) || !idOk(x.id) || !sOk(x.at, 40) || !oId(x, 'supplierId') || !oS(x, 'supplierName', 200) || !oId(x, 'docId') || !oS(x, 'note', 500) || !oS(x, 'reason', 500) || !oB(x, 'cancel') || !nOk(x.total, 0, MONEY_MAX)) return false;
+      if (x.by != null && !(isObj(x.by) && oId(x.by, 'id') && oS(x.by, 'name', 80))) return false;
+      return arr(x.lines, 1, 100, function (l) { return isObj(l) && idOk(l.productId) && oS(l, 'productName', 200) && idOk(l.lotId) && iOk(l.qty, 1, QTY_MAX) && nOk(l.unitCost, 0, MONEY_MAX) && oB(l, 'priceChanged'); });
     },
     'supplier.upserted': function (d) {
       var s = d.supplier; return isObj(s) && idOk(s.id) && nameOk(s.name, 200) && oS(s, 'phone', 500) && oS(s, 'note', 500) && oB(s, 'active') && oS(s, 'updatedAt', 40) &&

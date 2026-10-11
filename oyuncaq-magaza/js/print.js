@@ -155,6 +155,12 @@
       stm.accruedItems.forEach(function (it) { out += '<tr><td>' + esc(U().fmtDate(it.at, lang)) + '</td><td>' + esc(it.name) + '</td><td class="n">' + it.qty + '</td><td class="n">' + money(it.unitCost) + '</td><td class="n">' + money(it.amount) + '</td></tr>'; });
       out += '</tbody></table>';
     }
+    // Təchizatçıya qaytarılan mal: 'received' əsasında yuxarıdakı "Alınan mal" cədvəlində mənfi sətir kimi var; 'sold' əsasında borca təsir etmir, məlumat üçün ayrıca göstərilir
+    if (sold && stm.supReturns && stm.supReturns.length) {
+      out += '<h3>' + _t('4. Təchizatçıya qaytarılan mal (borca təsir etmir)') + '</h3><table class="sd-tab"><thead><tr><th>' + _t('Tarix') + '</th><th>' + _t('Məhsul') + '</th><th class="n">' + _t('Say') + '</th></tr></thead><tbody>';
+      stm.supReturns.forEach(function (x) { x.lines.forEach(function (l) { out += '<tr><td>' + esc(U().fmtDate(x.at, lang)) + '</td><td>' + esc(l.name || '') + '</td><td class="n">' + l.qty + '</td></tr>'; }); });
+      out += '</tbody></table>';
+    }
     out += '<div class="sd-sign"><div>' + _t('Təhvil verdi') + ': ____________________</div><div>' + _t('Qəbul etdi') + ': ____________________</div></div></div>';
     return out;
   }
@@ -172,6 +178,10 @@
     o.push('', _t('Əvvəlki borc') + ': ' + M.format(stm.opening), '+ ' + L.accrued + ': ' + M.format(stm.accrued), '− ' + _t('Ödənişlər') + ': ' + M.format(stm.paidTotal));
     if (stm.reversedTotal) o.push('+ ' + _t('Ləğv edilmiş ödənişlər') + ': ' + M.format(stm.reversedTotal));
     o.push((stm.closing < 0 ? _t('Qalıq (avans: təchizatçı mağazaya borcludur)') : _t('QALIQ BORC')) + ': ' + M.format(stm.closing) + ' AZN');
+    if (sold && stm.supReturns && stm.supReturns.length) {
+      o.push('', _t('Təchizatçıya qaytarılan mal (borca təsir etmir)') + ':');
+      stm.supReturns.forEach(function (x) { x.lines.forEach(function (l) { o.push('  ' + U().fmtDate(x.at, lang) + ' ' + (l.name || '') + ' × ' + l.qty); }); });
+    }
     stm.payments.forEach(function (p) { o.push('  ' + U().fmtDate(p.at, lang) + ' ' + methodText(p.method, _t) + ' ' + M.format(p.amount) + (p.note ? ' (' + p.note + ')' : '')); });
     return o.join('\n');
   }

@@ -145,7 +145,24 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6);
+    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6).then(migrateV7);
+  }
+
+  // v6 → v7: alış qaimələri və təchizatçıya qaytarmalar ("purchases", "supplierReturns" anbarları). Köhnə versiyalı cihaz bu hadisələri tanımayıb ötürmüş ola bilər:
+  // bir dəfəlik "doldurma" onları serverdən alır (replica.js: hadisələr eyni id ilə təkrar tətbiq olunmur, qalıq iki dəfə azalmır).
+  function migrateV7() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 7) return;
+      return DB.get('meta', 'syncCursor').then(function (c) {
+        var cur = c ? c.value : 0;
+        return DB.atomic(['meta'], function (t) {
+          return t.get('meta', 'backfill').then(function (b) {
+            // Davam edən köhnə doldurma varsa başdan başlayır (yeni hadisə növləri də keçsin)
+            return t.put('meta', { key: 'backfill', value: { upTo: Math.max(cur, b && b.value ? b.value.upTo || 0 : 0), next: 0, done: cur === 0 } });
+          }).then(function () { return t.put('meta', { key: 'schema', value: 7 }); });
+        });
+      });
+    });
   }
 
   // v5 → v6: təchizatçı ödənişləri ("supplier.pay" icazəsi, "supplierPays" anbarı). Köhnə versiyalı cihaz yeni hadisələri tanımayıb ötürmüş ola bilər:
@@ -253,7 +270,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 6 }),
+              t.put('meta', { key: 'schema', value: 7 }),
               t.put('meta', { key: 'initialized', value: now() })
             ]);
           });
@@ -789,7 +806,7 @@
   // Mal qəbulu. Hər qəbul bir PARTİYADIR (FIFO): məhsul, təchizatçı, say, alış qiyməti, vaxt — bütün cihazlarda eyni.
   // Orta çəkili maya (FR-24) saxlanılır. Yalnız "stock.receive" icazəsi olan rol (defolt: Menecer, Admin).
   // unitCost verilməyibsə (alış qiymətini görməyən rol) son qiymət götürülür. supplierId verilməyibsə partiya "təchizatçısız"dır.
-  var RECEIPT_STORES = ['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'audit', 'outbox'];
+  var RECEIPT_STORES = ['products', 'stockMoves', 'priceHistory', 'suppliers', 'lots', 'purchases', 'audit', 'outbox'];
   var MAX_RECEIPT_QTY = 100000;
   function validateReceiptQty(qty) {
     if (!Number.isInteger(qty) || qty <= 0) return _t('Say müsbət tam ədəd olmalıdır');
@@ -806,18 +823,20 @@
       if (!p) throw err(_t('Məhsul tapılmadı'));
       if (o.supplierId && (!sup || !sup.active)) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
       if (unitCost == null) unitCost = p.lastCost || 0;
-      var before = p.stock, lotId = o.approval ? 'lot_' + o.approval.id : DB.uid('lot');
+      var before = p.stock, lotId = o.lotId || (o.approval ? 'lot_' + o.approval.id : DB.uid('lot'));
       Object.assign(p, Rules.applyReceipt(p, o.qty, unitCost));
       var lot = { id: lotId, productId: p.id, supplierId: o.supplierId || null, qty: o.qty, unitCost: unitCost, at: at, userId: user.id, note: o.note || '' };
       if (o.approval) lot.approvalId = o.approval.id;
+      if (o.docId) lot.docId = o.docId;                      // alış qaiməsinin sətri (FR-104)
       var ev = { productId: p.id, qty: o.qty, unitCost: unitCost, supplierId: lot.supplierId, lotId: lotId, at: at, note: lot.note };
       if (o.approval) { ev.approvalId = o.approval.id; ev.requestedBy = o.approval.requestedBy; }
+      if (o.docId) ev.docId = o.docId;
       return t.put('products', p)
         .then(function () { return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'receipt', qty: o.qty, before: before, after: p.stock, unitCost: unitCost, note: o.note || '', at: at, userId: user.id }); })
         .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'cost', old: null, new: unitCost, userId: user.id, at: at }); })
         .then(function () { return t.put('lots', lot); })
         .then(function () { return log(t, 'stock.received', ev, user, at); })
-        .then(function () { return { product: p, lotId: lotId, qty: o.qty, unitCost: unitCost, supplierId: lot.supplierId }; });
+        .then(function () { return { product: p, lotId: lotId, qty: o.qty, unitCost: unitCost, supplierId: lot.supplierId, supplierName: sup ? sup.name : '' }; });
     });
   }
 
@@ -863,15 +882,203 @@
     });
   }
 
+  /* ---------- Alış qaiməsi (FR-104) və təchizatçıya qaytarma (FR-105) ----------
+     Qaimə = bir təchizatçıdan bir neçə məhsulun qəbulu: hər sətir ayrıca partiyadır (lot_<qaimə>_<sıra>), qalıq və borc (alınan mal əsasında) əvvəlki kimi partiyalardan hesablanır.
+     Menecer və Admin qaiməni yaradır və dərhal qüvvəyə minir (AS-27). Təsdiqlənmiş qaimə dəyişdirilmir (AS-29): satış olmayıbsa ləğv edilir, olubsa təchizatçıya qaytarma yazılır.
+     Qaytarma konkret partiyadan edilir, sayı partiyanın qalığından çox ola bilməz (satılan hissə qaytarılmır). 'received' əsasında borcu azaldır, 'sold' əsasında yalnız qalığı (K-19, AS-32). */
+  var MAX_PURCHASE_LINES = 100, MAX_UNIT_COST = 1e8;      // 1e8 qəpik = 1 mln ₼ (bir ədədin qiyməti)
+  function bakuDay(iso) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Baku', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso)); }
+  function cancelledDocs(rets) { var m = {}; (rets || []).forEach(function (r) { if (r.cancel && r.docId) m[r.docId] = r; }); return m; }
+  function inSeries(list, fn) { return list.reduce(function (chain, x, i) { return chain.then(function () { return fn(x, i); }); }, Promise.resolve()); }
+  function lineErr(i, msg) { return err(_t('{0}-ci sətir: {1}', [i + 1, msg])); }
+
+  // d: {supplierId, invoiceNo, invoiceDate (YYYY-MM-DD), note, lines:[{productId, qty, unitCost (qəpik)}]}
+  // Qaytarır: {doc, suggestions:[{productId, name, oldCost, newCost, price}]} — alış qiyməti dəyişən məhsullar (satış qiyməti avtomatik dəyişmir, AS-30)
+  function createPurchase(d) {
+    return requirePerm('stock.receive').then(function (user) {
+      d = d || {};
+      var lines = Array.isArray(d.lines) ? d.lines : [];
+      if (!d.supplierId) throw err(_t('Təchizatçını seçin'));
+      if (!lines.length) throw err(_t('Qaiməyə ən azı bir məhsul əlavə edin'));
+      if (lines.length > MAX_PURCHASE_LINES) throw err(_t('Qaimədə ən çox {0} sətir ola bilər', [MAX_PURCHASE_LINES]));
+      var invoiceNo = cleanName(d.invoiceNo); if (invoiceNo.length > 60) throw err(_t('Qaimə nömrəsi 60 simvoldan uzun ola bilməz'));
+      var note = String(d.note || '').trim(); if (note.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+      var today = bakuDay(now()), day = d.invoiceDate || today;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || isNaN(Date.parse(day + 'T00:00:00Z')) || day < '2000-01-01') throw err(_t('Qaimə tarixi səhvdir'));
+      if (day > bakuDay(new Date(nowMs() + 86400000).toISOString())) throw err(_t('Qaimə tarixi gələcəkdə ola bilməz'));
+      var seen = {};
+      lines.forEach(function (l, i) {
+        if (!l || !l.productId) throw lineErr(i, _t('Məhsul tapılmadı'));
+        if (seen[l.productId]) throw lineErr(i, _t('Bu məhsul qaimədə artıq var'));
+        seen[l.productId] = 1;
+        var bad = validateReceiptQty(l.qty); if (bad) throw lineErr(i, bad);
+        if (!Number.isInteger(l.unitCost) || l.unitCost <= 0 || l.unitCost > MAX_UNIT_COST) throw lineErr(i, _t('Alış qiyməti 0-dan böyük olmalıdır'));
+      });
+      return Promise.all([DB.get('suppliers', d.supplierId), DB.getAll('purchases'), DB.getAll('supplierReturns')]).then(function (r) {
+        var sup = r[0];
+        if (!sup || !sup.active) throw err(_t('Təchizatçı tapılmadı və ya söndürülüb'));
+        if (invoiceNo) {
+          var gone = cancelledDocs(r[2]), key = nameKey(invoiceNo);
+          if (r[1].some(function (x) { return x.supplierId === sup.id && nameKey(x.invoiceNo || '') === key && !gone[x.id]; })) throw err(_t('Bu təchizatçıdan «{0}» nömrəli qaimə artıq daxil edilib', [invoiceNo]));
+        }
+        var docId = DB.uid('pd'), at = now(), out = [], sug = [], total = 0;
+        var lotNote = [invoiceNo, note].filter(Boolean).join(' · ');
+        return DB.atomic(RECEIPT_STORES, function (t) {
+          return inSeries(lines, function (l, i) {
+            return t.get('products', l.productId).then(function (p0) {
+              if (!p0) throw lineErr(i, _t('Məhsul tapılmadı'));
+              var prev = p0.lastCost || 0;
+              return receiveInTx(t, user, { productId: l.productId, qty: l.qty, unitCost: l.unitCost, note: lotNote, supplierId: sup.id, lotId: 'lot_' + docId + '_' + i, docId: docId }, at).then(function (rr) {
+                out.push({ productId: l.productId, productName: rr.product.name, qty: l.qty, unitCost: l.unitCost, lotId: rr.lotId });
+                total += Math.round(l.qty * l.unitCost);
+                if (prev && prev !== l.unitCost) sug.push({ productId: l.productId, name: rr.product.name, oldCost: prev, newCost: l.unitCost, price: rr.product.price });
+              });
+            });
+          }).then(function () {
+            var doc = { id: docId, supplierId: sup.id, supplierName: sup.name, invoiceNo: invoiceNo, invoiceDate: day, note: note, at: at, source: 'doc',
+              createdBy: { id: user.id, name: user.name }, approvedBy: { id: user.id, name: user.name }, lines: out, total: total };
+            return t.put('purchases', doc).then(function () { return log(t, 'purchase.created', { doc: doc }, user, at); }).then(function () { return { doc: doc, suggestions: sug }; });
+          });
+        });
+      });
+    });
+  }
+
+  // Qaimələr (yeniləri əvvəl). Hər sətirdə partiyanın hazırkı qalığı (FIFO) və qaytarılan say; qaimə ləğv ediləbilərmi (heç nə satılmayıb/qaytarılmayıb).
+  // Alış qiyməti yalnız "product.cost.view" icazəsi olana göstərilir.
+  function listPurchases() {
+    return requirePerm(['stock.receive', 'supplier.view']).then(function () {
+      return Promise.all([DB.getAll('purchases'), fifoState(), matrix()]).then(function (r) {
+        var st = r[1], role = session.user.role, seeCost = Rules.can(r[2], role, 'product.cost.view'), canManage = Rules.can(r[2], role, 'stock.receive');
+        var gone = cancelledDocs(st.sreturns);
+        var docs = r[0].slice().sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; }).map(function (x) {
+          var c = gone[x.id], sellable = true;
+          var lines = x.lines.map(function (l) {
+            var L = st.res.lots[l.lotId];
+            if (!L || L.remaining !== l.qty) sellable = false;
+            return { productId: l.productId, name: st.pnames[l.productId] || l.productName || '', qty: l.qty, unitCost: seeCost ? l.unitCost : null, lotId: l.lotId, remaining: L ? L.remaining : null, returned: L ? (L.returned || 0) : 0 };
+          });
+          return { id: x.id, at: x.at, supplierId: x.supplierId || null, supplierName: x.supplierName || (x.supplierId ? (st.names[x.supplierId] || '') : ''), invoiceNo: x.invoiceNo || '', invoiceDate: x.invoiceDate || '', note: x.note || '',
+            source: x.source || 'doc', createdBy: x.createdBy || null, approvedBy: x.approvedBy || null, total: seeCost ? x.total : null, lines: lines,
+            status: c ? 'cancelled' : 'approved', cancel: c ? { at: c.at, reason: c.reason || '', by: c.by || null } : null, canCancel: !c && sellable };
+        });
+        return { docs: docs, seeCost: seeCost, canManage: canManage };
+      });
+    });
+  }
+
+  // Qaytarıla bilən partiyalar (təchizatçı üzrə): qalığı olan, açılış olmayan. Qaimədən (docId) və ya qaiməsiz köhnə qəbullardan (docId yoxdur).
+  function returnableLots(supplierId) {
+    return requirePerm(['stock.receive', 'supplier.view']).then(function () {
+      return Promise.all([fifoState(), DB.getAll('purchases'), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[2], session.user.role, 'product.cost.view'), docOf = {};
+        r[1].forEach(function (x) { x.lines.forEach(function (l) { docOf[l.lotId] = x; }); });
+        var list = [];
+        Object.keys(st.res.lots).forEach(function (id) {
+          var L = st.res.lots[id];
+          if (L.opening || L.remaining <= 0 || (L.supplierId || '') !== (supplierId || '') || !L.supplierId) return;
+          var x = docOf[id];
+          list.push({ lotId: id, productId: L.productId, name: st.pnames[L.productId] || '', at: L.at, qty: L.qty, remaining: L.remaining, unitCost: seeCost ? L.unitCost : null, docId: x ? x.id : '', invoiceNo: x ? (x.invoiceNo || '') : '' });
+        });
+        return list.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+      });
+    });
+  }
+
+  // Qaytarmanın özü. extra: {id, cancelDocId, reason}. d.lines[].unitCost verilmirsə partiyanın alış qiyməti götürülür; fərqli qiymət "priceChanged" ilə qeyd olunur (AS-32).
+  function makeSupplierReturn(user, d, extra) {
+    extra = extra || {};
+    var lines = Array.isArray(d.lines) ? d.lines : [];
+    if (!lines.length) throw err(_t('Qaytarılacaq mal seçin'));
+    if (lines.length > MAX_PURCHASE_LINES) throw err(_t('Qaimədə ən çox {0} sətir ola bilər', [MAX_PURCHASE_LINES]));
+    var note = String(d.note || '').trim(); if (note.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+    return Promise.all([fifoState(), d.supplierId ? DB.get('suppliers', d.supplierId) : Promise.resolve(null)]).then(function (r) {
+      var st = r[0], sup = r[1];
+      if (d.supplierId && !sup) throw err(_t('Təchizatçı tapılmadı'));
+      var seen = {}, out = [], total = 0;
+      lines.forEach(function (l, i) {
+        var L = l && st.res.lots[l.lotId];
+        if (!L || L.opening || (L.supplierId || '') !== (d.supplierId || '')) throw lineErr(i, _t('Partiya tapılmadı'));
+        if (seen[l.lotId]) throw lineErr(i, _t('Bu partiya iki dəfə seçilib'));
+        seen[l.lotId] = 1;
+        if (!Number.isInteger(l.qty) || l.qty <= 0) throw lineErr(i, _t('Say müsbət tam ədəd olmalıdır'));
+        if (l.qty > L.remaining) throw lineErr(i, _t('qaytarıla bilən say {0}-dir (qalan hissə satılıb və ya artıq qaytarılıb)', [L.remaining]));
+        var uc = l.unitCost == null ? L.unitCost : l.unitCost;
+        if (!Number.isInteger(uc) || uc < 0 || uc > MAX_UNIT_COST) throw lineErr(i, _t('Alış qiyməti səhvdir'));
+        out.push({ productId: L.productId, productName: st.pnames[L.productId] || '', lotId: L.id, qty: l.qty, unitCost: uc, priceChanged: uc !== L.unitCost });
+        total += Math.round(l.qty * uc);
+      });
+      var at = now();
+      var ret = { id: extra.id || DB.uid('sr'), supplierId: d.supplierId || '', supplierName: sup ? sup.name : '', at: at, docId: extra.cancelDocId || d.docId || '', cancel: !!extra.cancelDocId,
+        note: note, reason: extra.reason || '', total: total, by: { id: user.id, name: user.name }, lines: out };
+      return DB.atomic(['products', 'stockMoves', 'supplierReturns', 'audit', 'outbox'], function (t) {
+        return t.get('supplierReturns', ret.id).then(function (ex) {
+          if (ex) throw err(extra.cancelDocId ? _t('Qaimə artıq ləğv edilib') : _t('Bu qaytarma artıq yazılıb'));
+          return inSeries(out, function (l, i) {
+            return t.get('products', l.productId).then(function (p) {
+              if (!p) throw lineErr(i, _t('Məhsul tapılmadı'));
+              if (p.stock < l.qty) throw lineErr(i, _t('«{0}»: qalıq ({1}) qaytarılan saydan azdır', [p.name, p.stock]));
+              var before = p.stock; p.stock -= l.qty;
+              return t.put('products', p).then(function () {
+                return t.put('stockMoves', { id: DB.uid('sm'), productId: p.id, type: 'supplier_return', qty: -l.qty, before: before, after: p.stock, unitCost: l.unitCost, ref: ret.id, at: at, userId: user.id });
+              });
+            });
+          });
+        }).then(function () { return t.put('supplierReturns', ret); })
+          .then(function () { return log(t, 'supplier.returned', { ret: ret }, user, at); })
+          .then(function () { return ret; });
+      });
+    });
+  }
+
+  function createSupplierReturn(d) {
+    return requirePerm('stock.receive').then(function (user) {
+      d = d || {};
+      if (!d.supplierId) throw err(_t('Təchizatçını seçin'));
+      return makeSupplierReturn(user, d, {});
+    });
+  }
+
+  // Qaiməni ləğv: yalnız heç bir sətirdən satış/qaytarma olmayıbsa. Mexanizm tam qaytarmadır (borc eyni məbləğdə azalır), qaimə "ləğv edilib" görünür.
+  function cancelPurchase(docId, reason) {
+    return requirePerm('stock.receive').then(function (user) {
+      reason = String(reason || '').trim();
+      if (reason.length < 3) throw err(_t('Səbəbi yazın'));
+      if (reason.length > 200) throw err(_t('Qeyd 200 simvoldan uzun ola bilməz'));
+      return Promise.all([DB.get('purchases', docId), fifoState()]).then(function (r) {
+        var doc = r[0], st = r[1];
+        if (!doc) throw err(_t('Qaimə tapılmadı'));
+        if (cancelledDocs(st.sreturns)[doc.id]) throw err(_t('Qaimə artıq ləğv edilib'));
+        doc.lines.forEach(function (l) {
+          var L = st.res.lots[l.lotId];
+          if (!L || L.remaining !== l.qty) throw err(_t('Bu qaimədən mal artıq satılıb və ya qaytarılıb: ləğv etmək olmaz. Təchizatçıya qaytarma yazın'), 'sold');
+        });
+        return makeSupplierReturn(user, { supplierId: doc.supplierId || '', docId: doc.id, lines: doc.lines.map(function (l) { return { lotId: l.lotId, qty: l.qty, unitCost: l.unitCost }; }) },
+          { id: 'sr_cancel_' + doc.id, cancelDocId: doc.id, reason: reason });
+      });
+    });
+  }
+
+  // Təchizatçıya edilmiş qaytarmalar (yeniləri əvvəl)
+  function listSupplierReturns(supplierId) {
+    return requirePerm(['stock.receive', 'supplier.view']).then(function () {
+      return Promise.all([DB.getAll('supplierReturns'), matrix()]).then(function (r) {
+        var seeCost = Rules.can(r[1], session.user.role, 'product.cost.view');
+        return r[0].filter(function (x) { return !supplierId || x.supplierId === supplierId; }).sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; })
+          .map(function (x) { return Object.assign({}, x, { total: seeCost ? x.total : null, lines: x.lines.map(function (l) { return Object.assign({}, l, { unitCost: seeCost ? l.unitCost : null }); }) }); });
+      });
+    });
+  }
+
   /* ---------- FIFO hesabatı ---------- */
   function fifoState() {
-    return Promise.all([DB.getAll('lots'), DB.getAll('sales'), DB.getAll('returns'), DB.getAll('products'), DB.getAll('suppliers')]).then(function (r) {
+    return Promise.all([DB.getAll('lots'), DB.getAll('sales'), DB.getAll('returns'), DB.getAll('products'), DB.getAll('suppliers'), DB.getAll('supplierReturns')]).then(function (r) {
       var stock = {}, avg = {};
       r[3].forEach(function (p) { stock[p.id] = p.stock; avg[p.id] = p.avgCost || 0; });
-      var res = root.Fifo.replay({ lots: r[0], sales: r[1], returns: r[2], stock: stock, avgCost: avg });
+      var res = root.Fifo.replay({ lots: r[0], sales: r[1], returns: r[2], stock: stock, avgCost: avg, sreturns: r[5] });
       var names = {}; r[4].forEach(function (s) { names[s.id] = s.name; });
       var pnames = {}; r[3].forEach(function (p) { pnames[p.id] = p.name; });
-      return { res: res, lots: r[0], sales: r[1], returns: r[2], suppliers: r[4], names: names, pnames: pnames };
+      return { res: res, lots: r[0], sales: r[1], returns: r[2], suppliers: r[4], sreturns: r[5], names: names, pnames: pnames };
     });
   }
 
@@ -952,7 +1159,7 @@
     return debtAccess().then(function (a) {
       return Promise.all([fifoState(), DB.getAll('supplierPays')]).then(function (r) {
         var st = r[0], out = {};
-        st.suppliers.forEach(function (s) { out[s.id] = { debt: root.Fifo.debtAt(s, st.lots, r[1].filter(function (p) { return p.supplierId === s.id; }), st.res, st.sales, st.returns, ''), basis: s.debtBasis || 'received' }; });
+        st.suppliers.forEach(function (s) { out[s.id] = { debt: root.Fifo.debtAt(s, st.lots, r[1].filter(function (p) { return p.supplierId === s.id; }), st.res, st.sales, st.returns, '', st.sreturns), basis: s.debtBasis || 'received' }; });
         return { balances: out, canPay: a.canPay };
       });
     });
@@ -971,8 +1178,9 @@
       return Promise.all([fifoState(), DB.byIndex('supplierPays', 'supplierId', supplierId), storeInfo()]).then(function (r) {
         var st = r[0], sup = st.suppliers.filter(function (x) { return x.id === supplierId; })[0];
         if (!sup) throw err(_t('Təchizatçı tapılmadı'));
-        var stm = root.Fifo.supplierStatement({ sup: sup, lots: st.lots, pays: r[1], res: st.res, sales: st.sales, returns: st.returns, from: range.from || '', to: range.to || '' });
-        stm.accruedItems.forEach(function (it) { it.name = st.pnames[it.productId] || it.productId; });
+        var stm = root.Fifo.supplierStatement({ sup: sup, lots: st.lots, pays: r[1], res: st.res, sales: st.sales, returns: st.returns, sreturns: st.sreturns, from: range.from || '', to: range.to || '' });
+        stm.accruedItems.forEach(function (it) { it.name = (it.ret ? _t('Qaytarma') + ': ' : '') + (st.pnames[it.productId] || it.productId); });
+        stm.supReturns.forEach(function (x) { x.lines.forEach(function (l) { l.name = st.pnames[l.productId] || l.productName || l.productId; }); });
         stm.supplier = { id: sup.id, name: sup.name, phone: sup.phone || '', note: sup.note || '' };
         stm.range = { from: range.from || '', to: range.to || '', fromDay: range.fromDay || '', toDay: range.toDay || '' };
         stm.store = r[2]; stm.by = a.user.name; stm.at = now();
@@ -996,7 +1204,7 @@
         return (shift ? shiftReport(shift) : Promise.resolve(null)).then(function (rep) {
         // Kassada olmayan pul çıxmasın (məbləğdə səhv, və ya başqa kassanın satışı hələ gəlməyib): bank ödənişi və ya əvvəl kassaya mədaxil seçilə bilər
         if (rep && amount > rep.expectedCash) throw err(_t('Kassada kifayət qədər nağd yoxdur: olmalı nağd {0} ₼. Bank ödənişi seçin və ya əvvəl kassaya mədaxil yazın', [Money.format(Math.max(rep.expectedCash, 0))]), 'no_cash');
-        var debt = root.Fifo.debtAt(sup, st.lots, r[1], st.res, st.sales, st.returns, '');
+        var debt = root.Fifo.debtAt(sup, st.lots, r[1], st.res, st.sales, st.returns, '', st.sreturns);
         if (amount > debt && !(opts && opts.confirmOver)) throw err(_t('Ödəniş borcdan ({0} ₼) çoxdur. Avans kimi yazmaq üçün təsdiqləyin', [Money.format(Math.max(debt, 0))]), 'overpay');
         var at = now(), id = DB.uid('sp');
         var pay = { id: id, supplierId: sup.id, supplierName: sup.name, amount: amount, method: method, at: at, userId: user.id, userName: user.name, note: note, updatedAt: at };
@@ -1458,7 +1666,14 @@
             a.status = decision; a.decidedBy = { id: me.id, name: me.name, role: me.role }; a.decidedAt = at;
             var work = stock
               ? receiveInTx(t, me, { productId: a.payload.productId, qty: qty, unitCost: unitCost, note: a.payload.note, supplierId: supplierId, approval: { id: a.id, requestedBy: a.requestedBy } }, at)
-                .then(function (r) { a.result = { qty: r.qty, unitCost: r.unitCost, supplierId: r.supplierId, lotId: r.lotId }; })
+                .then(function (r) {
+                  a.result = { qty: r.qty, unitCost: r.unitCost, supplierId: r.supplierId, lotId: r.lotId };
+                  // K-18: təsdiqlənmiş "Mal gəldi" bir sətirli alış qaiməsi yaradır (sabit id: iki menecer eyni sorğunu təsdiqləsə də bir qaimə)
+                  var doc = { id: 'pd_' + a.id, supplierId: r.supplierId || '', supplierName: r.supplierName || '', invoiceNo: '', invoiceDate: bakuDay(at), note: String(a.payload.note || ''), at: at, requestId: a.id, source: 'request',
+                    createdBy: { id: a.requestedBy.id, name: a.requestedBy.name }, approvedBy: { id: me.id, name: me.name },
+                    lines: [{ productId: r.product.id, productName: r.product.name, qty: r.qty, unitCost: r.unitCost, lotId: r.lotId }], total: Math.round(r.qty * r.unitCost) };
+                  return t.put('purchases', doc).then(function () { return log(t, 'purchase.created', { doc: doc }, me, at); });
+                })
               : Promise.resolve();
             return work.then(function () { return t.put('approvals', a); })
               .then(function () { return log(t, 'approval.decided', { id: a.id, decision: decision, by: a.decidedBy, decidedAt: at, result: a.result || null }, me, at); })
@@ -1568,7 +1783,7 @@
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct, importProducts: importProducts, validateProductInput: validateProductInput, IMPORT_MAX_ROWS: IMPORT_MAX_ROWS,
-    receiveStock: receiveStock, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
+    receiveStock: receiveStock, createPurchase: createPurchase, listPurchases: listPurchases, returnableLots: returnableLots, createSupplierReturn: createSupplierReturn, cancelPurchase: cancelPurchase, listSupplierReturns: listSupplierReturns, MAX_PURCHASE_LINES: MAX_PURCHASE_LINES, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
     recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,

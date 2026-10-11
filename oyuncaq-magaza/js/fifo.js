@@ -5,6 +5,7 @@
    • Hər partiya = bir mal qəbulu (məhsul, təchizatçı, say, alış qiyməti, vaxt). Qəbul sistemə köçməzdən əvvəlki qalıq "açılış partiyası"dır (təchizatçısı məlum deyil).
    • Satış sətri ən köhnə partiyadan başlayaraq çıxır. Partiyalar çatmırsa, çatmayan hissə "borc"dur: sonrakı qəbul əvvəl bu borcu bağlayır (qalıq mənfi satılmış mal).
    • Qaytarma əvvəl həmin sətrin borcunu ləğv edir, sonra malı həmin sətrin çıxdığı partiyalara (sonuncudan əvvələ) qaytarır.
+   • Təchizatçıya qaytarma (inp.sreturns) konkret partiyanın qalığını azaldır (satılmış hissə qaytarıla bilməz); sonrakı satışlar həmin hissəni görmür.
    • Satılandan artıq qaytarma (iki cihaz eyni sətri oflayn qaytarıb) gizlədilmir: artıq hissə "naməlum mənşəli" partiya olur, hesabatda təchizatçısız qaytarma kimi görünür. */
 (function (root) {
   'use strict';
@@ -13,12 +14,13 @@
   function evCmp(x, y) { return cmp(x.at, y.at) || (x.rank - y.rank) || cmp(x.id, y.id); }
 
   // inp: { lots: [{id, productId, supplierId, qty, unitCost, at}], sales: [{id, at, lines:[{productId, qty}]}],
-  //        returns: [{id, saleId, at, lines:[{lineIndex, productId, qty}]}], stock: {productId: cari qalıq}, avgCost: {productId: qəpik} }
+  //        returns: [{id, saleId, at, lines:[{lineIndex, productId, qty}]}], stock: {productId: cari qalıq}, avgCost: {productId: qəpik},
+  //        sreturns: [{id, at, lines:[{productId, lotId, qty}]}] (təchizatçıya qaytarmalar) }
   function replay(inp) {
     var lotsByP = {}, evByP = {}, openQty = {};
     function ev(pid) { return evByP[pid] || (evByP[pid] = []); }
     function sumP(map, pid, n) { map[pid] = (map[pid] || 0) + n; }
-    var newQty = {}, soldQty = {}, retQty = {};
+    var newQty = {}, soldQty = {}, retQty = {}, sretQty = {};
 
     (inp.lots || []).forEach(function (l) {
       ev(l.productId).push({ at: l.at, rank: 0, id: l.id, kind: 'lot', lot: l });
@@ -37,19 +39,26 @@
       });
     });
 
-    var out = { lines: {}, returns: {}, lots: {}, deficits: {} };
+    (inp.sreturns || []).forEach(function (r) {
+      (r.lines || []).forEach(function (l, i) {
+        ev(l.productId).push({ at: r.at, rank: 1, id: r.id + ':' + i, kind: 'sret', line: l });
+        sumP(sretQty, l.productId, l.qty);
+      });
+    });
+
+    var out = { lines: {}, returns: {}, lots: {}, deficits: {}, sretShort: 0 };
     var pids = {};
     Object.keys(evByP).forEach(function (p) { pids[p] = 1; });
     Object.keys(inp.stock || {}).forEach(function (p) { pids[p] = 1; });
 
     Object.keys(pids).forEach(function (pid) {
       // Açılış partiyası: indiki qalıq − yeni qəbullar + satışlar − qaytarmalar (sistemə köçməzdən əvvəl mövcud olan mal)
-      var open = Math.max(0, ((inp.stock || {})[pid] || 0) - (newQty[pid] || 0) + (soldQty[pid] || 0) - (retQty[pid] || 0));
+      var open = Math.max(0, ((inp.stock || {})[pid] || 0) - (newQty[pid] || 0) + (soldQty[pid] || 0) - (retQty[pid] || 0) + (sretQty[pid] || 0));
       var events = (evByP[pid] || []).slice();
       if (open > 0) events.push({ at: '', rank: 0, id: '~open:' + pid, kind: 'lot', lot: { id: 'open:' + pid, productId: pid, supplierId: null, qty: open, unitCost: (inp.avgCost || {})[pid] || 0, at: '', opening: true } });
       events.sort(evCmp);
 
-      var queue = [], deficits = [], pendingRet = {};
+      var queue = [], deficits = [], pendingRet = {}, pendingS = {};
 
       function settleDeficits(L) {
         while (deficits.length && L.remaining > 0) {
@@ -89,12 +98,23 @@
         out.returns[e.id] = rr;
       }
 
+      function applySret(e) {
+        var SL = out.lots[e.line.lotId];
+        if (!SL) { (pendingS[e.line.lotId] = pendingS[e.line.lotId] || []).push(e); return; }     // saat fərqi: qaytarma partiyadan əvvəl görünür
+        var tk = Math.min(SL.remaining, e.line.qty);
+        SL.remaining -= tk; SL.returned = (SL.returned || 0) + tk;
+        if (tk < e.line.qty) out.sretShort += e.line.qty - tk;     // iki cihazın eyni anda satıb/qaytarması: qalıq cəmi düzdür, bölgü yaxınlaşmadır
+      }
+
       events.forEach(function (e) {
         if (e.kind === 'lot') {
           var L = { id: e.lot.id, productId: pid, supplierId: e.lot.supplierId || null, unitCost: e.lot.unitCost || 0, qty: e.lot.qty, remaining: e.lot.qty, at: e.lot.at, opening: !!e.lot.opening };
           out.lots[L.id] = L;
           settleDeficits(L);
           queue.push(L);
+          (pendingS[L.id] || []).forEach(applySret); delete pendingS[L.id];
+        } else if (e.kind === 'sret') {
+          applySret(e);
         } else if (e.kind === 'sale') {
           var rec = { saleId: e.saleId, li: e.li, productId: pid, qty: e.line.qty, parts: [], deficit: 0, cancelled: 0, fallbackCost: e.line.unitCost || 0 };
           var need = e.line.qty;
@@ -225,7 +245,9 @@
      Ödəniş T vaxtında "qüvvədədir": at < T və T-dən əvvəl ləğv edilməyib. T boşdursa — indiyə qədər hamısı. */
   function payActive(p, T) { return (!T || p.at < T) && !(p.voidedAt && (!T || p.voidedAt < T)); }
   function sumPays(pays, T) { return (pays || []).reduce(function (a, p) { return a + (payActive(p, T) ? p.amount : 0); }, 0); }
-  function accrued(sup, lots, res, sales, returns, from, to) {
+  // sreturns: təchizatçıya qaytarmalar [{id, supplierId, at, lines:[{productId, qty, unitCost}]}]. 'received' əsasında borcu azaldır (qaytarılan say × qaytarma qiyməti);
+  // 'sold' əsasında borca təsir etmir (satılmamış mal borca daxil deyil, qaytarılan hissə FIFO-dan çıxır).
+  function accrued(sup, lots, res, sales, returns, from, to, sreturns) {
     // [from, to) aralığında hesablanan məbləğ (qəpik) və tərkibi
     var items = [], total = 0;
     if ((sup.debtBasis || 'received') === 'sold') {
@@ -241,30 +263,40 @@
         items.push({ lotId: l.id, at: l.at, productId: l.productId, qty: l.qty, unitCost: l.unitCost, amount: amount });
         total += amount;
       });
+      (sreturns || []).forEach(function (r) {
+        if (r.supplierId !== sup.id || (from && r.at < from) || (to && r.at >= to)) return;
+        (r.lines || []).forEach(function (l, i) {
+          var amount = Math.round(l.qty * l.unitCost);
+          items.push({ lotId: r.id + ':' + i, at: r.at, productId: l.productId, qty: -l.qty, unitCost: l.unitCost, amount: -amount, ret: true });
+          total -= amount;
+        });
+      });
       items.sort(function (a, b) { return cmp(a.at, b.at) || cmp(a.lotId, b.lotId); });
     }
     return { total: total, items: items };
   }
-  function debtAt(sup, lots, pays, res, sales, returns, T) {
-    return (sup.openingDebt || 0) + accrued(sup, lots, res, sales, returns, '', T).total - sumPays(pays, T);
+  function debtAt(sup, lots, pays, res, sales, returns, T, sreturns) {
+    return (sup.openingDebt || 0) + accrued(sup, lots, res, sales, returns, '', T, sreturns).total - sumPays(pays, T);
   }
 
   // Dövr üzrə hesab çıxarışı. inp: {sup, lots, pays, res, sales, returns, from, to}
   // opening: dövrün əvvəlinə borc; accrued: dövrdə hesablanan; payments: dövrdə ödənənlər (dövrdə ləğv edilməyənlər); reversed: əvvəl ödənmiş, dövrdə ləğv edilmiş ödənişlər (borcu artırır); closing: dövrün sonuna borc.
   function supplierStatement(inp) {
     var sup = inp.sup, from = inp.from || '', to = inp.to || '', pays = inp.pays || [];
-    var opening = debtAt(sup, inp.lots, pays, inp.res, inp.sales, inp.returns, from);      // from boşdursa "ən əvvəl": açılış borcu
+    var opening = debtAt(sup, inp.lots, pays, inp.res, inp.sales, inp.returns, from, inp.sreturns);      // from boşdursa "ən əvvəl": açılış borcu
     if (!from) opening = sup.openingDebt || 0;
-    var acc = accrued(sup, inp.lots, inp.res, inp.sales, inp.returns, from, to);
+    var acc = accrued(sup, inp.lots, inp.res, inp.sales, inp.returns, from, to, inp.sreturns);
     var paid = pays.filter(function (p) { return (!from || p.at >= from) && payActive(p, to); }).sort(function (a, b) { return cmp(a.at, b.at) || cmp(a.id, b.id); });
     var reversed = pays.filter(function (p) { return from && p.at < from && p.voidedAt && p.voidedAt >= from && (!to || p.voidedAt < to); });
     var paidTotal = paid.reduce(function (a, p) { return a + p.amount; }, 0), revTotal = reversed.reduce(function (a, p) { return a + p.amount; }, 0);
-    var closing = debtAt(sup, inp.lots, pays, inp.res, inp.sales, inp.returns, to);
+    var closing = debtAt(sup, inp.lots, pays, inp.res, inp.sales, inp.returns, to, inp.sreturns);
     var receipts = supplierReceipts(inp.res, inp.sales, inp.returns, sup.id, from, to);
     var tot = receipts.reduce(function (a, r) { a.qty += r.qty; a.revenue += r.revenue; a.cost += r.cost; return a; }, { qty: 0, revenue: 0, cost: 0 });
+    // Dövrdə təchizatçıya qaytarılan mal (sənəd üçün; 'sold' əsasında borca təsir etmir)
+    var supReturns = (inp.sreturns || []).filter(function (r) { return r.supplierId === sup.id && (!from || r.at >= from) && (!to || r.at < to); }).sort(function (a, b) { return cmp(a.at, b.at) || cmp(a.id, b.id); });
     var unpriced = (inp.lots || []).filter(function (l) { return l.supplierId === sup.id && !l.unitCost && (!to || l.at < to); }).length;
     return { basis: sup.debtBasis || 'received', openingDebt: sup.openingDebt || 0, opening: opening, accrued: acc.total, accruedItems: acc.items, payments: paid, paidTotal: paidTotal,
-      reversed: reversed, reversedTotal: revTotal, closing: closing, receipts: receipts, sales: tot, unpricedLots: unpriced };
+      reversed: reversed, reversedTotal: revTotal, closing: closing, receipts: receipts, sales: tot, unpricedLots: unpriced, supReturns: supReturns };
   }
 
   var Fifo = { replay: replay, onHand: onHand, productLots: productLots, supplierReport: supplierReport, supplierReceipts: supplierReceipts, supplierStatement: supplierStatement, debtAt: debtAt, payActive: payActive };
