@@ -185,7 +185,7 @@
     var showCost = can('product.cost.view');
     var canAsk = can('stock.request') && !can('stock.receive');         // kassir: qalığı özü artıra bilmir, menecerə sorğu göndərir
     var myBox = h('div', { class: 'card', id: 'my-requests', style: 'margin-top:16px;display:none' });
-    var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: _t('Ad, mağaza və ya istehsalçı barkodu'), style: 'min-width:280px' });
+    var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: _t('Ad, mağaza və ya istehsalçı barkodu'), style: 'min-width:min(280px, 100%)' });
     var body = h('tbody');
     var all = [], bySup = {};
     // Nümunə məhsullar yalnız siyahı boş olanda təklif olunur (təkrar basanda dublikat yaranırdı)
@@ -197,9 +197,13 @@
 
     function draw() {
       seedBox.style.display = all.length ? 'none' : '';
-      var s = q.value.trim().toLowerCase();
+      var toks = R.foldAz(q.value).split(/\s+/).filter(Boolean);       // hərf fərqi və Azərbaycan hərfləri nəzərə alınmır; hər söz tapılmalıdır
       UI.clear(body);
-      var list = all.filter(function (p) { return !s || p.name.toLowerCase().indexOf(s) !== -1 || p.storeBarcode.indexOf(s) !== -1 || (p.mfrBarcode || '').indexOf(s) !== -1; });
+      var list = all.filter(function (p) {
+        if (!toks.length) return true;
+        var hay = R.foldAz([p.name, p.brand, p.category, p.ageGroup, p.storeBarcode, p.mfrBarcode].join(' '));
+        return toks.every(function (t) { return hay.indexOf(t) !== -1; });
+      });
       if (!list.length) body.appendChild(h('tr', null, h('td', { colspan: showCost ? '9' : '8', class: 'empty' }, all.length ? _t('Uyğun məhsul yoxdur') : _t('Hələ məhsul yoxdur'))));
       list.forEach(function (p) {
         var low = p.stock <= (p.minStock || 0);
@@ -255,7 +259,7 @@
         h('div', { class: 'row' },
           h('label', { class: 'sr-only', for: 'pq' }, _t('Axtarış')), q,
           can('product.edit') ? h('button', { class: 'btn primary', onclick: function () { productForm(null, load); } }, _t('Yeni məhsul')) : null)),
-      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
+      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { class: 'cards' },
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Satış ₼')),
           showCost ? h('th', { class: 'num' }, _t('Orta maya ₼')) : null, h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Təchizatçı (qalıq)')), h('th', null, _t('Status')), h('th', null, ''))),
         body)),
@@ -733,7 +737,7 @@
     el.appendChild(h('div', { class: 'page' },
       h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:16px' }, h('h1', { style: 'margin:0' }, _t('Təchizatçılar')),
         canManage ? h('button', { class: 'btn primary', id: 'sup-add', type: 'button', onclick: function () { supplierForm(null, loadAll); } }, _t('+ Yeni təchizatçı')) : null),
-      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), canDebt ? h('th', { class: 'num' }, _t('Borc ₼')) : null, h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
+      h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'sup-table', class: 'cards' }, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Telefon')), h('th', null, _t('Qeyd')), h('th', { class: 'num' }, _t('Qalıq (ədəd)')), canDebt ? h('th', { class: 'num' }, _t('Borc ₼')) : null, h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb)),
       h('div', { class: 'card', style: 'margin-top:24px' },
         h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
           h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Hansı təchizatçının malından nə qədər satılıb')),
@@ -944,7 +948,7 @@
       h('div', { class: 'row', style: 'justify-content:space-between;margin-bottom:12px' }, h('h1', { style: 'margin:0' }, _t('Çeklər')),
         h('div', { class: 'row' }, h('label', { class: 'sr-only', for: 'sq' }, _t('Axtarış')), q)),
       info,
-      h('div', { class: 'card table-wrap', tabindex: '0', style: 'margin-top:8px' }, h('table', null,
+      h('div', { class: 'card table-wrap', tabindex: '0', style: 'margin-top:8px' }, h('table', { class: 'cards' },
         h('thead', null, h('tr', null, h('th', null, '№'), h('th', null, _t('Tarix')), h('th', null, _t('Kassir')), h('th', null, _t('Məhsullar')), h('th', null, _t('Ödəniş')), h('th', { class: 'num' }, _t('Yekun ₼')), h('th', null, ''), h('th', null, ''))), tb)),
       h('div', { style: 'margin-top:12px' }, more)));
 

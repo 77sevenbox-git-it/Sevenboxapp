@@ -8,6 +8,12 @@
   "theme_color": "#1F5FAD",
   "icons": [
     {
+      "src": "icons/icon-32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
       "src": "icons/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
@@ -33,5 +39,17 @@
     }
   ],
   "id": "./index.html",
-  "scope": "./"
+  "scope": "./",
+  "description": "Oyuncaq-suvenir mağazası üçün kassa, məhsul, təchizatçı və alış idarəetməsi",
+  "categories": [
+    "business",
+    "productivity"
+  ],
+  "orientation": "any",
+  "launch_handler": {
+    "client_mode": [
+      "focus-existing",
+      "auto"
+    ]
+  }
 }

@@ -71,7 +71,6 @@
     "\"{0}\" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).": "\"{0}\" is out of stock and the limit ({1} negative-stock receipts) is used up. It cannot be sold — goods must be received first (the manager does the receiving).",
     "Diqqət: \"{0}\" qalığı {1}. Mənfi qalıqla satış {2}/{3} çek.": "Warning: \"{0}\" stock is {1}. Negative-stock sale {2}/{3} receipts.",
     "{0} əlavə olundu": "{0} added",
-    "Bu istehsalçı barkodudur. Məhsulun üzərindəki mağaza barkodunu oxudun ({0}).": "This is a manufacturer barcode. Scan the store barcode on the item ({0}).",
     "Bu çek barkodudur. Qaytarma üçün \"Qaytarma\" bölməsinə keçin.": "This is a receipt barcode. Go to the \"Returns\" section to make a return.",
     "\"{0}\" satışdan çıxarılıb.": "\"{0}\" has been withdrawn from sale.",
     "Barkod tapılmadı: {0}": "Barcode not found: {0}",
@@ -812,6 +811,20 @@
     "Kateqoriya, marka və yaş qrupu 200 simvoldan uzun ola bilməz": "Category, brand and age group cannot be longer than 200 characters",
     "İstehsalçı barkodu 500 simvoldan uzun ola bilməz": "The manufacturer barcode cannot be longer than 500 characters",
     "Şəkil faylı seçin": "Choose an image file",
-    "Şəkil oxunmadı": "The image could not be read"
+    "Şəkil oxunmadı": "The image could not be read",
+    "Çekdə: {0}": "In receipt: {0}",
+    "Hansı məhsul? İstehsalçı barkodu: {0}": "Which product? Manufacturer barcode: {0}",
+    "Məhsul seçimi": "Product selection",
+    "Bu barkod {0} məhsula bağlıdır. Əlavə etmək istədiyinizi seçin.": "This barcode is linked to {0} products. Choose the one to add.",
+    "Məhsulun adı, markası və ya barkodu": "Product name, brand or barcode",
+    "Ad, marka və ya barkod yazın": "Type a name, brand or barcode",
+    "Yazmağa başlayın: məhsulun adı, markası və ya barkodu": "Start typing: product name, brand or barcode",
+    "İlk 30 nəticə. Dəqiqləşdirmək üçün daha çox söz yazın": "First 30 results. Type more words to narrow down",
+    "Heç nə tapılmadı": "Nothing found",
+    "Məhsulu adla axtar": "Search product by name",
+    "Məhsulu adla axtar (F8)": "Search product by name (F8)",
+    "Barkod": "Barcode",
+    "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "There are unsaved changes. Press \"Cancel\" to close",
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(manufacturer barcode {0} → store barcode {1})"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

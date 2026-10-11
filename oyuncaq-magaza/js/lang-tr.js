@@ -71,7 +71,6 @@
     "\"{0}\" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).": "\"{0}\" stokta yok ve sınır ({1} eksi stoklu fiş) doldu. Satılamaz — mal kabulü gerekli (kabulü yönetici yapar).",
     "Diqqət: \"{0}\" qalığı {1}. Mənfi qalıqla satış {2}/{3} çek.": "Dikkat: \"{0}\" stoğu {1}. Eksi stoklu satış {2}/{3} fiş.",
     "{0} əlavə olundu": "{0} eklendi",
-    "Bu istehsalçı barkodudur. Məhsulun üzərindəki mağaza barkodunu oxudun ({0}).": "Bu üretici barkodu. Ürünün üzerindeki mağaza barkodunu okutun ({0}).",
     "Bu çek barkodudur. Qaytarma üçün \"Qaytarma\" bölməsinə keçin.": "Bu fiş barkodu. İade için \"İade\" bölümüne geçin.",
     "\"{0}\" satışdan çıxarılıb.": "\"{0}\" satıştan kaldırılmış.",
     "Barkod tapılmadı: {0}": "Barkod bulunamadı: {0}",
@@ -812,6 +811,20 @@
     "Kateqoriya, marka və yaş qrupu 200 simvoldan uzun ola bilməz": "Kategori, marka ve yaş grubu 200 karakterden uzun olamaz",
     "İstehsalçı barkodu 500 simvoldan uzun ola bilməz": "Üretici barkodu 500 karakterden uzun olamaz",
     "Şəkil faylı seçin": "Bir görsel dosyası seçin",
-    "Şəkil oxunmadı": "Görsel okunamadı"
+    "Şəkil oxunmadı": "Görsel okunamadı",
+    "Çekdə: {0}": "Fişte: {0}",
+    "Hansı məhsul? İstehsalçı barkodu: {0}": "Hangi ürün? Üretici barkodu: {0}",
+    "Məhsul seçimi": "Ürün seçimi",
+    "Bu barkod {0} məhsula bağlıdır. Əlavə etmək istədiyinizi seçin.": "Bu barkod {0} ürüne bağlı. Eklemek istediğinizi seçin.",
+    "Məhsulun adı, markası və ya barkodu": "Ürün adı, markası veya barkodu",
+    "Ad, marka və ya barkod yazın": "Ad, marka veya barkod yazın",
+    "Yazmağa başlayın: məhsulun adı, markası və ya barkodu": "Yazmaya başlayın: ürün adı, markası veya barkodu",
+    "İlk 30 nəticə. Dəqiqləşdirmək üçün daha çox söz yazın": "İlk 30 sonuç. Daraltmak için daha fazla kelime yazın",
+    "Heç nə tapılmadı": "Hiçbir şey bulunamadı",
+    "Məhsulu adla axtar": "Ürünü adla ara",
+    "Məhsulu adla axtar (F8)": "Ürünü adla ara (F8)",
+    "Barkod": "Barkod",
+    "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "Kaydedilmemiş değişiklik var. Kapatmak için \"Vazgeç\" düğmesine basın",
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(üretici barkodu {0} → mağaza barkodu {1})"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

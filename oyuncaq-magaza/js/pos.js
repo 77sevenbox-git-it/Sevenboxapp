@@ -68,20 +68,128 @@
   }
 
   /* ---------- Səbət əməliyyatları ---------- */
-  function addProduct(p) {
+  function addProduct(p, mfrCode) {
     var i = st.cart.findIndex(function (c) { return c.product.id === p.id; });
     if (i === -1 && st.cart.length >= S.MAX_CART_LINES) { setMsg(_t('Bir çekdə ən çox {0} sətir ola bilər. Çeki iki hissəyə bölün', [S.MAX_CART_LINES]), 'bad'); UI.beep(false); return; }
     if (i === -1) { st.cart.push({ product: p, qty: 1 }); i = st.cart.length - 1; } else st.cart[i].qty++;
     st.sel = i;
     var chk = R.negativeStockCheck(p, st.cart[i].qty);
+    // İstehsalçı barkodu ilə əlavə olunubsa, ekranda həmin məhsulun mağaza barkodu göstərilir (FR-103)
+    var via = mfrCode ? ' ' + _t('(istehsalçı barkodu {0} → mağaza barkodu {1})', [mfrCode, p.storeBarcode]) : '';
     if (chk.blocked) {
-      setMsg(_t('"{0}" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).', [p.name, R.NEGATIVE_SALE_LIMIT]), 'bad');
+      setMsg(_t('"{0}" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).', [p.name, R.NEGATIVE_SALE_LIMIT]) + via, 'bad');
       UI.beep(false);
     } else if (chk.needsNegative) {
-      setMsg(_t('Diqqət: "{0}" qalığı {1}. Mənfi qalıqla satış {2}/{3} çek.', [p.name, p.stock, (chk.used + 1), R.NEGATIVE_SALE_LIMIT]), 'warn');
+      setMsg(_t('Diqqət: "{0}" qalığı {1}. Mənfi qalıqla satış {2}/{3} çek.', [p.name, p.stock, (chk.used + 1), R.NEGATIVE_SALE_LIMIT]) + via, 'warn');
       UI.beep(true);
-    } else { setMsg(_t('{0} əlavə olundu', [p.name]), ''); UI.beep(true); }
+    } else { setMsg(_t('{0} əlavə olundu', [p.name]) + via, ''); UI.beep(true); }
     render();
+  }
+
+  // Ad axtarışından və ya seçim pəncərəsindən əlavə (AS-23): mənfi çek limiti dolubsa məhsul səbətə düşmür (barkodla oxutmaqdan fərqli olaraq, qəsdən seçilir)
+  function addChosen(p, mfrCode) {
+    if (!st) return;
+    var i = st.cart.findIndex(function (c) { return c.product.id === p.id; });
+    var chk = R.negativeStockCheck(p, (i === -1 ? 0 : st.cart[i].qty) + 1);
+    if (chk.blocked) {
+      setMsg(_t('"{0}" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).', [p.name, R.NEGATIVE_SALE_LIMIT]), 'bad');
+      UI.beep(false); render(); return;
+    }
+    addProduct(p, mfrCode);
+  }
+
+  // Məhsul sətri (axtarış və seçim pəncərələri üçün): şəkil, ad, mağaza barkodu, qiymət, qalıq
+  function productRow(p, onPick) {
+    var inCart = st && st.cart.find(function (c) { return c.product.id === p.id; });
+    var chk = R.negativeStockCheck(p, (inCart ? inCart.qty : 0) + 1);
+    var b = h('button', { type: 'button', class: 'pitem' + (p.stock <= 0 ? ' out' : ''), disabled: chk.blocked, role: 'option', 'data-pid': p.id, onclick: function () { onPick(p); } },
+      UI.thumb(p, 48),
+      h('span', { class: 'pi-main' },
+        h('span', { class: 'pi-name' }, p.name),
+        h('span', { class: 'pi-sub mono' }, p.storeBarcode),
+        chk.blocked ? h('span', { class: 'pi-warn' }, _t('Qalıq yoxdur, limit dolub — satılmaz'))
+          : p.stock <= 0 ? h('span', { class: 'pi-warn' }, _t('Qalıq {0} · mənfi qalıqla satış {1}/{2}', [p.stock, (chk.used + 1), R.NEGATIVE_SALE_LIMIT])) : null),
+      h('span', { class: 'pi-side' },
+        h('b', { class: 'mono' }, M.format(p.price) + ' ₼'),
+        h('span', { class: 'muted' }, _t('Qalıq: {0}', [p.stock])),
+        inCart ? h('span', { class: 'muted' }, _t('Çekdə: {0}', [inCart.qty])) : null));
+    return b;
+  }
+
+  // Skanerin rəqəm axını pəncərədə fokuslanmış düyməni Enter ilə basmasın (seçim pəncərəsi açıq ikən oxudulan barkod)
+  function guardBurstEnter(box) {
+    var last = 0;
+    box.addEventListener('keydown', function (e) {
+      var t = performance.now();
+      if (e.key && e.key.length === 1) last = t;
+      else if (e.key === 'Enter' && t - last < 80) { e.preventDefault(); e.stopPropagation(); }
+    }, true);
+  }
+
+  // Bir istehsalçı barkodu bir neçə məhsula bağlıdır: seçim pəncərəsi (FR-103, AS-26). Seçim yadda saxlanmır.
+  function chooseProduct(products, code) {
+    var m = UI.modal({
+      title: _t('Hansı məhsul? İstehsalçı barkodu: {0}', [code]), noGuard: true,
+      body: h('div', { class: 'plist', role: 'listbox', 'aria-label': _t('Məhsul seçimi') },
+        h('p', { class: 'muted', style: 'margin:0 0 4px' }, _t('Bu barkod {0} məhsula bağlıdır. Əlavə etmək istədiyinizi seçin.', [products.length])),
+        products.map(function (p) { return productRow(p, function (x) { m.close(); addChosen(x, code); focusScan(); }); })),
+      buttons: [{ text: _t('İmtina') }]
+    });
+    guardBurstEnter(m.el);
+  }
+
+  // "+" düyməsi: məhsulu adla axtarıb çeke əlavə et (FR-102). Tam barkod yazılıb/oxudulubsa birbaşa əlavə olunur.
+  function openSearch() {
+    if (!st || UI.modalOpen()) return;
+    var input = h('input', { class: 'input', id: 'psearch', type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'psearch-list', 'aria-label': _t('Məhsulun adı, markası və ya barkodu'), placeholder: _t('Ad, marka və ya barkod yazın') });
+    var list = h('div', { class: 'plist', id: 'psearch-list', role: 'listbox' });
+    var note = h('p', { class: 'muted', style: 'margin:0;font-size:14px', 'aria-live': 'polite' });
+    var shown = [], act = 0, seq = 0, timer = null;
+
+    function mark() {
+      Array.prototype.forEach.call(list.children, function (el, i) { el.classList.toggle('active', i === act); });
+      var cur = list.children[act]; if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
+    }
+    function draw() {
+      UI.clear(list);
+      shown.forEach(function (p) { list.appendChild(productRow(p, choose)); });
+      act = Math.min(act, Math.max(shown.length - 1, 0)); mark();
+    }
+    function run() {
+      var q = input.value, my = ++seq;
+      if (!q.trim()) { shown = []; draw(); note.textContent = _t('Yazmağa başlayın: məhsulun adı, markası və ya barkodu'); return; }
+      S.searchProducts(q, 30).then(function (rows) {
+        if (my !== seq) return;               // daha yeni sorğu gedir
+        shown = rows; act = 0; draw();
+        note.textContent = rows.length ? (rows.length >= 30 ? _t('İlk 30 nəticə. Dəqiqləşdirmək üçün daha çox söz yazın') : '') : _t('Heç nə tapılmadı');
+      });
+    }
+    function choose(p) { m.close(); addChosen(p, null); focusScan(); }
+
+    input.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(run, 90); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); if (shown.length) { act = Math.min(act + 1, shown.length - 1); mark(); } }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); if (shown.length) { act = Math.max(act - 1, 0); mark(); } }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        var v = input.value.trim(); if (!v) return;
+        // Əvvəl dəqiq barkod (skaner pəncərə açıqkən oxudub): tapılırsa birbaşa əlavə, sonra siyahıdan seçilmiş sətir
+        S.lookupForPos(v).then(function (r) {
+          if (!st) return;
+          if (r.kind === 'product') { m.close(); addChosen(r.product, r.via === 'mfr' ? v : null); focusScan(); }
+          else if (r.kind === 'choose') { m.close(); chooseProduct(r.products, v); }
+          else if (r.kind === 'receipt') note.textContent = _t('Bu çek barkodudur. Qaytarma üçün "Qaytarma" bölməsinə keçin.');
+          else if (shown[act] && !list.children[act].disabled) choose(shown[act]);
+        });
+      }
+    });
+    var m = UI.modal({
+      title: _t('Məhsulu adla axtar'), wide: true, noGuard: true,
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' }, h('div', { class: 'field' }, h('label', { for: 'psearch' }, _t('Məhsul')), input), note, list),
+      buttons: [{ text: _t('Bağla') }]
+    });
+    guardBurstEnter(m.el);
+    run();
   }
 
   function onScan(code) {
@@ -89,10 +197,10 @@
     if (!code) return;
     S.lookupForPos(code).then(function (r) {
       if (!st) return;                      // axtarış gedəndə çıxış / sıfırlama olub: yeni istifadəçinin səbətinə yazmırıq
-      if (r.kind === 'product') return addProduct(r.product);
+      if (r.kind === 'product') return addProduct(r.product, r.via === 'mfr' ? code : null);
+      if (r.kind === 'choose') { UI.beep(true); return chooseProduct(r.products, code); }
       UI.beep(false);
-      if (r.kind === 'mfr') setMsg(_t('Bu istehsalçı barkodudur. Məhsulun üzərindəki mağaza barkodunu oxudun ({0}).', [r.products.map(function (p) { return p.name; }).join(', ')]), 'bad');
-      else if (r.kind === 'receipt') setMsg(_t('Bu çek barkodudur. Qaytarma üçün "Qaytarma" bölməsinə keçin.'), 'warn');
+      if (r.kind === 'receipt') setMsg(_t('Bu çek barkodudur. Qaytarma üçün "Qaytarma" bölməsinə keçin.'), 'warn');
       else if (r.kind === 'inactive') setMsg(_t('"{0}" satışdan çıxarılıb.', [r.product.name]), 'bad');
       else setMsg(_t('Barkod tapılmadı: {0}', [code]), 'bad');
       render();
@@ -246,7 +354,7 @@
     drawTargets(); setDefault(); refresh();
 
     var m = UI.modal({
-      title: _t('Endirim'),
+      title: _t('Endirim'), noGuard: true,
       body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
         h('div', { class: 'dtarget', role: 'group', 'aria-label': _t('Endirim nəyə tətbiq olunsun') }, tLine, tAll),
         h('div', { class: 'dtype', role: 'group', 'aria-label': _t('Endirim növü') }, yPct, yAmt),
@@ -326,7 +434,7 @@
   }
 
   function setMsg(text, kind) { if (!st) return; st.msg = text ? { text: text, kind: kind } : null; }
-  function focusScan() { if (refs.scan && !document.querySelector('.modal-back')) refs.scan.focus(); }
+  function focusScan() { if (refs.scan && !UI.modalOpen()) refs.scan.focus(); }
 
   /* ---------- Növbə ---------- */
   function renderNoShift(el) {
@@ -501,6 +609,7 @@
         else if (st.method) confirmSale();
       }
     });
+    refs.searchBtn = h('button', { type: 'button', class: 'scan-plus', id: 'scan-plus', title: _t('Məhsulu adla axtar (F8)'), 'aria-label': _t('Məhsulu adla axtar'), onclick: openSearch }, '+');
     refs.msg = h('div', { class: 'scan-msg', id: 'scan-msg', role: 'status' });
     refs.tbody = h('tbody');
     refs.table = h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
@@ -515,7 +624,7 @@
 
     el.appendChild(h('div', { class: 'pos' },
       h('section', { class: 'pos-main', 'aria-label': _t('Çek') },
-        h('div', { class: 'field' }, h('label', { for: 'scan' }, _t('Mağaza barkodu')), refs.scan),
+        h('div', { class: 'field' }, h('label', { for: 'scan' }, _t('Barkod')), h('div', { class: 'scan-row' }, refs.scan, refs.searchBtn)),
         refs.msg, refs.table,
         h('div', { class: 'muted', style: 'font-size:14px' }, _t('↑/↓ sətir seçimi · + / − say · Del və ya zibil ikonu: sətri silmək (menecer təsdiqi: PIN və ya sorğu).'))),
       h('aside', { class: 'pos-side', 'aria-label': _t('Ödəniş') },
@@ -532,7 +641,7 @@
   /* ---------- Klaviatura ---------- */
   var burst = { buf: '', last: 0 };
   function onKey(e) {
-    if (!st || !mountEl || !document.body.contains(mountEl) || document.querySelector('.modal-back')) return;
+    if (!st || !mountEl || !document.body.contains(mountEl) || UI.modalOpen()) return;
     var tgt = e.target;
     var inOther = tgt && tgt !== refs.scan && /INPUT|TEXTAREA/.test(tgt.tagName);
 
@@ -557,6 +666,7 @@
     else if (e.key === 'F2') { e.preventDefault(); setMethod('bank'); }
     else if (e.key === 'F3') { e.preventDefault(); setMethod('mixed'); }
     else if (e.key === 'F4') { e.preventDefault(); requestDiscount(); }
+    else if (e.key === 'F8') { e.preventDefault(); openSearch(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancelSale(); }
     else if (e.key === 'Enter' && inOther && st.method) { e.preventDefault(); confirmSale(); }
     else if (!inOther) {

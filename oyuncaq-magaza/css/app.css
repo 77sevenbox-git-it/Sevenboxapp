@@ -15,6 +15,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
 :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+/* Skrol çubuqları gizlədilir (FR-109): sürüşmə (əl, təkər, toxunuş) işləyir, kənarlarda çubuq yoxdur.
+   Üfüqi sürüşən cədvəllərdə davamı olduğunu kənar solması göstərir (.fade-l/.fade-r, js/ui.js) */
+* { scrollbar-width: none; -ms-overflow-style: none; }
+*::-webkit-scrollbar { width: 0; height: 0; display: none; }
+html.modal-open, html.modal-open body { overflow: hidden; }          /* pəncərə açıqkən arxa səhifə sürüşmür (FR-110) */
+.modal-back, .modal { overscroll-behavior: contain; }
 .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
 .warn-text { color: var(--warn); font-weight: 600; }
@@ -49,13 +55,33 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 
 /* Cədvəl */
-.table-wrap { overflow-x: auto; position: relative; }
+.table-wrap { overflow-x: auto; position: relative; --fl: 0px; --fr: 0px; }
+.table-wrap.fade-l { --fl: 32px; } .table-wrap.fade-r { --fr: 32px; }
+.table-wrap.fade-l, .table-wrap.fade-r { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%); mask-image: linear-gradient(to right, transparent 0, #000 var(--fl), #000 calc(100% - var(--fr)), transparent 100%); }
+.table-wrap:focus-visible { outline-offset: -3px; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-size: 13px; font-weight: 600; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
 td { padding: 12px 14px; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 tr.selected td { background: var(--accent-soft); }
 tr.neg td { background: var(--warn-soft); }
+
+/* Dar ekranda əsas cədvəllər (Məhsullar, Təchizatçılar, Çeklər) kart olur: hər sətir ayrıca kart, sütun adı xananın solunda (FR-109).
+   Sütun adları js/ui.js-də data-label-ə yazılır. Çox sütunlu kassa səbəti cədvəl kimi qalır (yana sürüşür, kənar solması ilə). */
+@media (max-width: 720px) {
+  table.cards, table.cards tbody { display: block; }
+  table.cards thead { display: none; }
+  table.cards tbody { padding: 8px; }
+  table.cards tr { display: flex; flex-direction: column; margin-bottom: 10px; padding: 4px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  table.cards td { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px dashed var(--line-2); text-align: right; min-width: 0; overflow-wrap: anywhere; }
+  table.cards td:last-child { border-bottom: none; }
+  table.cards td::before { content: attr(data-label); flex: none; font-size: 12px; font-weight: 600; color: var(--muted); text-align: left; }
+  table.cards td:first-child { text-align: left; justify-content: flex-start; }
+  table.cards td:first-child::before, table.cards td:not([data-label])::before { display: none; }
+  table.cards td.empty { display: block; text-align: center; }
+  table.cards td:last-child:not([data-label]) { justify-content: flex-start; flex-wrap: wrap; white-space: normal !important; }
+  table.cards td:last-child:not([data-label]) .btn { flex: 1 1 auto; }
+}
 
 /* Kassa */
 .pos { display: flex; flex-wrap: wrap; gap: 24px; padding: 24px; }
@@ -64,6 +90,22 @@ tr.neg td { background: var(--warn-soft); }
 @media (max-width: 480px) { .pos { padding: 12px; gap: 14px; } .pos-side { flex-basis: 100%; } }   /* telefon: yan panel altına düşür, səhifə yana sürüşmür */
 .scan { font-family: var(--mono); font-size: 22px; padding: 14px 16px; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--surface); width: 100%; }
 .scan:focus { outline: none; box-shadow: 0 0 0 4px rgba(31, 95, 173, .2); }
+.scan-row { display: flex; gap: 10px; align-items: stretch; }
+.scan-row .scan { flex: 1 1 auto; min-width: 0; width: auto; }
+.scan-plus { flex: none; width: 64px; border: 2px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); color: var(--accent); font-size: 32px; font-weight: 500; line-height: 1; }
+.scan-plus:hover { background: var(--accent); color: var(--accent-ink); }
+/* Məhsul seçimi (ad axtarışı və istehsalçı barkodu seçimi) */
+.plist { display: flex; flex-direction: column; gap: 8px; max-height: min(52vh, 460px); overflow: auto; }
+.pitem { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.pitem:hover:not(:disabled), .pitem.active { border-color: var(--accent); background: var(--accent-soft); }
+.pitem.out:not(:disabled) { opacity: .62; }
+.pitem:disabled { opacity: .5; }
+.pi-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pi-name { font-weight: 600; overflow-wrap: anywhere; }
+.pi-sub { font-size: 13px; color: var(--muted); }
+.pi-warn { font-size: 13px; color: var(--warn); font-weight: 600; }
+.pi-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 14px; }
+.pi-side b { font-size: 16px; }
 .scan-msg { min-height: 24px; font-size: 15px; }
 .scan-msg.bad { color: var(--bad); font-weight: 600; }
 .scan-msg.warn { color: var(--warn); font-weight: 600; }
@@ -222,6 +264,8 @@ tr.inactive td { color: var(--faint); }
 @keyframes boot-dot { 0%, 80%, 100% { opacity: .3; transform: none; } 40% { opacity: 1; transform: translateY(-4px); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes screen-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes shake { 0%, 100% { transform: none; } 20%, 60% { transform: translateX(-6px); } 40%, 80% { transform: translateX(6px); } }
+.modal.shake { animation: shake .3s ease; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
 .screen-in { animation: screen-in .32s cubic-bezier(.2, .7, .2, 1) backwards; }
 .fade-in { animation: fade-in .3s ease backwards; }
@@ -229,7 +273,7 @@ tr.inactive td { color: var(--faint); }
 .modal-back { animation: fade-in .18s ease backwards; }
 .modal { animation: modal-in .22s cubic-bezier(.2, .7, .2, 1) backwards; }
 @media (prefers-reduced-motion: reduce) {
-  .boot, .screen-in, .fade-in, .login .card, .modal-back, .modal { animation: none; }
+  .boot, .screen-in, .fade-in, .login .card, .modal-back, .modal, .modal.shake { animation: none; }
   .boot-blocks i, .boot-name b, .boot-dots i { animation: none; }
   .boot-dots i { opacity: .6; }
 }

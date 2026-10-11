@@ -71,7 +71,6 @@
     "\"{0}\" qalığı yoxdur və limit ({1} mənfi çek) dolub. Satmaq olmaz — mal qəbulu lazımdır (qəbulu menecer edir).": "Остатка «{0}» нет, и лимит ({1} чека с отрицательным остатком) исчерпан. Продать нельзя — нужно оприходовать товар (приход делает менеджер).",
     "Diqqət: \"{0}\" qalığı {1}. Mənfi qalıqla satış {2}/{3} çek.": "Внимание: остаток «{0}» — {1}. Продажа с отрицательным остатком {2}/{3} чеков.",
     "{0} əlavə olundu": "{0} добавлен",
-    "Bu istehsalçı barkodudur. Məhsulun üzərindəki mağaza barkodunu oxudun ({0}).": "Это штрихкод производителя. Отсканируйте штрихкод магазина на товаре ({0}).",
     "Bu çek barkodudur. Qaytarma üçün \"Qaytarma\" bölməsinə keçin.": "Это штрихкод чека. Для возврата перейдите в раздел «Возврат».",
     "\"{0}\" satışdan çıxarılıb.": "«{0}» снят с продажи.",
     "Barkod tapılmadı: {0}": "Штрихкод не найден: {0}",
@@ -812,6 +811,20 @@
     "Kateqoriya, marka və yaş qrupu 200 simvoldan uzun ola bilməz": "Категория, бренд и возрастная группа не могут быть длиннее 200 символов",
     "İstehsalçı barkodu 500 simvoldan uzun ola bilməz": "Штрихкод производителя не может быть длиннее 500 символов",
     "Şəkil faylı seçin": "Выберите файл изображения",
-    "Şəkil oxunmadı": "Не удалось прочитать изображение"
+    "Şəkil oxunmadı": "Не удалось прочитать изображение",
+    "Çekdə: {0}": "В чеке: {0}",
+    "Hansı məhsul? İstehsalçı barkodu: {0}": "Какой товар? Штрихкод производителя: {0}",
+    "Məhsul seçimi": "Выбор товара",
+    "Bu barkod {0} məhsula bağlıdır. Əlavə etmək istədiyinizi seçin.": "Этот штрихкод привязан к товарам: {0}. Выберите нужный.",
+    "Məhsulun adı, markası və ya barkodu": "Название, бренд или штрихкод товара",
+    "Ad, marka və ya barkod yazın": "Введите название, бренд или штрихкод",
+    "Yazmağa başlayın: məhsulun adı, markası və ya barkodu": "Начните вводить: название, бренд или штрихкод товара",
+    "İlk 30 nəticə. Dəqiqləşdirmək üçün daha çox söz yazın": "Первые 30 результатов. Введите больше слов, чтобы уточнить",
+    "Heç nə tapılmadı": "Ничего не найдено",
+    "Məhsulu adla axtar": "Найти товар по названию",
+    "Məhsulu adla axtar (F8)": "Найти товар по названию (F8)",
+    "Barkod": "Штрихкод",
+    "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "Есть несохранённые изменения. Чтобы закрыть, нажмите «Отмена»",
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(штрихкод производителя {0} → штрихкод магазина {1})"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

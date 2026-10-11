@@ -49,10 +49,11 @@ async function loginAs(role) {
     await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: lego.storeBarcode }), /mağaza və ya çek barkodudur/);
   });
 
-  await t('kassada istehsalçı barkodu məhsul əlavə etmir (AC-03)', async () => {
+  await t('kassada istehsalçı barkodu qəbul olunur: tək məhsul birbaşa, mağaza barkodu qalib (FR-103)', async () => {
     const r = await S.lookupForPos('4006381333931');
-    assert.strictEqual(r.kind, 'mfr');
-    assert.strictEqual((await S.lookupForPos(lego.storeBarcode)).kind, 'product');
+    assert.strictEqual(r.kind, 'product'); assert.strictEqual(r.via, 'mfr'); assert.strictEqual(r.product.id, lego.id);
+    const own = await S.lookupForPos(lego.storeBarcode);
+    assert.strictEqual(own.kind, 'product'); assert.ok(!own.via);
   });
 
   await t('mal qəbulu: qalıq və orta maya', async () => {
@@ -313,7 +314,7 @@ async function loginAs(role) {
     await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: own }), /mağaza və ya çek barkodudur/);
     const p = (await S.listProducts()).find(x => x.mfrBarcode === 'ABC-123_xyz');
     const found = await S.lookupForPos('ABC-123_xyz');
-    assert.strictEqual(found.kind, 'mfr'); assert.strictEqual(found.products[0].id, p.id);
+    assert.strictEqual(found.kind, 'product'); assert.strictEqual(found.via, 'mfr'); assert.strictEqual(found.product.id, p.id);
   });
 
   await t('qaytarma sayı menecer təsdiqindən ƏVVƏL yoxlanılır (satılandan çox olmaz)', async () => {

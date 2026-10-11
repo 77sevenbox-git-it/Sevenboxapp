@@ -204,6 +204,13 @@
     };
   }
 
+  // Axtarış üçün mətn sadələşdirilir (FR-102): böyük/kiçik hərf fərqsiz, Azərbaycan hərfləri latın qarşılığı ilə eyni sayılır
+  // (kassir "oyuncaq" yazanda "Oyuncaq", "kuklə" yazanda "kukla" da tapılsın; klaviaturada ə/ö/ü/ç/ş/ğ/ı olmaya bilər)
+  var FOLD = { 'ə': 'e', 'ı': 'i', 'ö': 'o', 'ü': 'u', 'ç': 'c', 'ş': 's', 'ğ': 'g', 'ё': 'е', 'й': 'и' };
+  function foldAz(s) {
+    return String(s == null ? '' : s).replace(/İ/g, 'i').replace(/I/g, 'i').toLowerCase().replace(/\u0307/g, '').replace(/[əıöüçşğёй]/g, function (c) { return FOLD[c]; });
+  }
+
   /* ---------- Mal qəbulu (FR-24): orta çəkili maya ---------- */
   // Mənfi qalıq orta mayaya təsir etmir (yalnız mövcud mal çəkilir). Qaytarır: yeni sahələr.
   function applyReceipt(product, qty, unitCost) {
@@ -325,7 +332,7 @@
     TZ: TZ, MAX_DISCOUNT_PERCENT: MAX_DISCOUNT_PERCENT, NEGATIVE_SALE_LIMIT: NEGATIVE_SALE_LIMIT, RETURN_DAYS: RETURN_DAYS,
     PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
     AUTH_FORMS: AUTH_FORMS, DEFAULT_AUTH: DEFAULT_AUTH, PASSWORD_MIN: PASSWORD_MIN, passwordProblem: passwordProblem, normalizeAuth: normalizeAuth,
-    cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
+    foldAz: foldAz, cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
     DEFAULT_DISCOUNT_CAPS: DEFAULT_DISCOUNT_CAPS, IMAGE_MAX_CHARS: IMAGE_MAX_CHARS, discountKind: discountKind, discountValue: discountValue, validateLineDiscount: validateLineDiscount,
     validateReceiptDiscount: validateReceiptDiscount, discountCaps: discountCaps, imageProblem: imageProblem, safeImage: safeImage, maxDiscountProblem: maxDiscountProblem,
     validatePayment: validatePayment, localDate: localDate, returnWindow: returnWindow, returnableQty: returnableQty,

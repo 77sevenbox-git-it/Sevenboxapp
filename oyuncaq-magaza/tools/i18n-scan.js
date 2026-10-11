@@ -70,6 +70,7 @@ function unwrapped() {
 // Bilərəkdən tərcümə olunmayan sətirlər: proqramçı xətaları, bazada saxlanan nümunə/ilkin məlumat, test çapı üçün sınaq mətni
 const ALLOW = [
   /^barcode\.js:/, /^db\.js:/,
+  /^rules\.js:\d+:[əıöüçşğ]$/,        // foldAz(): axtarışda Azərbaycan hərflərinin latın qarşılığı cədvəli
   /^services\.js:.*(Mühasib [12]|\[Mağaza adı\]|\[VÖEN\]|\[Ünvan\]|Konstruktor dəsti|Yumşaq ayı|Maqnit|Qız qalası|Puzzl|Nümunə qalıq)/,
   /^replica\.js:.*(başqa cihaz|təsdiq düzəlişi)/,
   /^print\.js:.*(Konstruktor dəsti|ƏÖÜĞŞİÇ|Sınaq məhsulu|Azərbaycanca)/,   // "Azərbaycanca" — dil seçimində hər dilin öz adı ilə yazılır

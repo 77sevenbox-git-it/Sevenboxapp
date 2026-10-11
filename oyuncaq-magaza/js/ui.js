@@ -70,13 +70,59 @@
     } catch (_) { /* səs olmasa da davam */ }
   }
 
-  // modal({title, body: Node, buttons: [{text, kind, onClick(close) -> Promise|any}], wide})
+  // Açıq pəncərələrin yığını (FR-110). Pəncərə açıq olanda arxa ekran (#app və altındakı pəncərələr) "inert" olur: klik, klaviatura və
+  // ekran oxuyucu ora çatmır; yalnız üstdəki pəncərə işləyir. Fon sürüşmür (scroll kilidi), fokus pəncərədən çıxmır (Tab dövrü).
+  var modalStack = [];
+  function setInert(el, on) {
+    if (!el) return;
+    if (on) { el.setAttribute('inert', ''); el.setAttribute('aria-hidden', 'true'); } else { el.removeAttribute('inert'); el.removeAttribute('aria-hidden'); }
+  }
+  function syncModals() {
+    var any = modalStack.length > 0;
+    document.documentElement.classList.toggle('modal-open', any);
+    setInert(document.getElementById('app'), any);
+    modalStack.forEach(function (m, i) { setInert(m.back, i < modalStack.length - 1); });
+  }
+  function modalOpen() { return modalStack.length > 0; }
+  var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+  // modal({title, body: Node, buttons: [{text, kind, onClick(close) -> Promise|any}], wide, sticky, noGuard, onClose})
+  // Esc və arxa fona klik pəncərəni bağlayır, AMMA istifadəçi sahəyə nəsə yazıbsa (saxlanmamış dəyişiklik) bağlamır: "İmtina" düyməsi lazımdır.
+  // noGuard: axtarış/seçim kimi məlumat girişi olmayan pəncərələr həmişə Esc ilə bağlanır. sticky: arxa fona klik bağlamır (təsdiq pəncərəsi).
   function modal(opts) {
     var prevFocus = document.activeElement;
     var back = h('div', { class: 'modal-back' });
     var box = h('div', { class: 'modal' + (opts.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title });
-    function close() { back.remove(); document.removeEventListener('keydown', onKey, true); if (prevFocus && prevFocus.focus) prevFocus.focus(); if (opts.onClose) opts.onClose(); }
-    function onKey(e) { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } }
+    var entry = { back: back }, dirty = false, closed = false;
+    function close() {
+      if (closed) return; closed = true;
+      back.remove(); document.removeEventListener('keydown', onKey, true);
+      var at = modalStack.indexOf(entry); if (at !== -1) modalStack.splice(at, 1);
+      syncModals();
+      if (prevFocus && prevFocus.focus && document.body.contains(prevFocus)) prevFocus.focus();
+      if (opts.onClose) opts.onClose();
+    }
+    function top() { return modalStack[modalStack.length - 1] === entry; }
+    // Bağlama cəhdi (Esc / arxa fona klik): dəyişiklik varsa bağlanmır, istifadəçiyə deyilir
+    function tryClose() {
+      if (dirty && !opts.noGuard && !opts.sticky) {
+        toast(_t('Saxlanmamış dəyişiklik var. Bağlamaq üçün "İmtina" düyməsinə basın'), 'warn');
+        box.classList.remove('shake'); void box.offsetWidth; box.classList.add('shake');
+        return;
+      }
+      close();
+    }
+    function onKey(e) {
+      if (!top()) return;                     // yalnız üstdəki pəncərə klaviaturaya cavab verir
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); tryClose(); return; }
+      if (e.key === 'Tab') {
+        var list = Array.prototype.filter.call(box.querySelectorAll(FOCUSABLE), function (n) { return n.offsetParent !== null; });
+        if (!list.length) { e.preventDefault(); return; }
+        var first = list[0], last = list[list.length - 1], cur = document.activeElement;
+        if (e.shiftKey && (cur === first || !box.contains(cur))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (cur === last || !box.contains(cur))) { e.preventDefault(); first.focus(); }
+      }
+    }
     var foot = h('div', { class: 'foot' });
     var errBox = h('div', { class: 'modal-err', role: 'alert', hidden: true });
     (opts.buttons || [{ text: _t('Bağla') }]).forEach(function (b) {
@@ -101,14 +147,47 @@
       var primary = foot.querySelector('button[type=submit]') || foot.lastChild;
       primary.click();
     });
+    // İstifadəçi yazanda/seçəndə (proqramın özünün dəyişdirməsi yox) pəncərə "dəyişdirilmiş" sayılır
+    box.addEventListener('input', function (e) { if (e.isTrusted) dirty = true; });
+    box.addEventListener('change', function (e) { if (e.isTrusted) dirty = true; });
     box.appendChild(form);
     back.appendChild(box);
-    back.addEventListener('mousedown', function (e) { if (e.target === back && !opts.sticky) close(); });
+    back.addEventListener('mousedown', function (e) { if (e.target === back && top() && !opts.sticky) tryClose(); });
     document.addEventListener('keydown', onKey, true);
+    modalStack.push(entry);
     document.body.appendChild(back);
-    setTimeout(function () { var f = box.querySelector('input,select,textarea,button'); if (f) f.focus(); }, 0);
+    syncModals();
+    setTimeout(function () { if (closed) return; var f = box.querySelector('input:not([type=hidden]),select,textarea,button'); if (f) f.focus(); }, 0);
     return { close: close, el: box };
   }
+
+  // Üfüqi sürüşən cədvəllər (.table-wrap): skrol çubuğu gizlidir, davamı kənar solması göstərir (FR-109). Eyni zamanda dar ekranda
+  // "kart" görünüşünə keçən cədvəllərin (.cards) xana başlıqları data-label-ə yazılır.
+  var fadeQueued = false;
+  function updateFade(el) {
+    var max = el.scrollWidth - el.clientWidth;
+    el.classList.toggle('fade-r', max > 2 && el.scrollLeft < max - 2);
+    el.classList.toggle('fade-l', max > 2 && el.scrollLeft > 2);
+  }
+  function labelCards(tbl) {
+    var heads = Array.prototype.map.call(tbl.querySelectorAll('thead th'), function (th) { return th.textContent.trim(); });
+    Array.prototype.forEach.call(tbl.querySelectorAll('tbody tr'), function (tr) {
+      Array.prototype.forEach.call(tr.children, function (td, i) { if (td.tagName === 'TD' && !td.hasAttribute('colspan') && !td.hasAttribute('data-label') && heads[i]) td.setAttribute('data-label', heads[i]); });
+    });
+  }
+  function scanFades() {
+    fadeQueued = false;
+    Array.prototype.forEach.call(document.querySelectorAll('.table-wrap'), updateFade);
+    Array.prototype.forEach.call(document.querySelectorAll('table.cards'), labelCards);
+  }
+  function queueFades() { if (fadeQueued) return; fadeQueued = true; (root.requestAnimationFrame || setTimeout)(scanFades); }
+  function initScrollFade() {
+    document.addEventListener('scroll', function (e) { var t = e.target; if (t && t.classList && t.classList.contains('table-wrap')) updateFade(t); }, true);
+    root.addEventListener('resize', queueFades);
+    if (root.MutationObserver) new root.MutationObserver(queueFades).observe(document.body, { childList: true, subtree: true });
+    queueFades();
+  }
+  initScrollFade();
 
   // Gözləyən sorğular: çıxışda (istifadəçi dəyişəndə) hamısı ləğv olunur ki, başqasının ekranında əməliyyat tətbiq olunmasın
   var pendingHandles = [];
@@ -255,6 +334,6 @@
   function labelsHtml(items, opts) { return root.Print.labelsHtml(items, opts); }
   function receiptWrap(inner) { return root.Print.wrap(inner); }
 
-  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
+  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, modalOpen: modalOpen, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
     thumb: thumb, shrinkImage: shrinkImage, receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);

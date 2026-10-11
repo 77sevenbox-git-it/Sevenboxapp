@@ -965,7 +965,8 @@
     });
   }
 
-  // Kassa yalnız mağaza barkodu ilə işləyir (FR-16). İstehsalçı barkodu → xəbərdarlıq.
+  // Kassada barkod axtarışı (FR-103). Mağaza barkodu unikaldır və həmişə qalib gəlir (AS-25). İstehsalçı barkodu da qəbul olunur:
+  // bir aktiv məhsula bağlıdırsa o əlavə olunur ({kind:'product', via:'mfr'}), ikiyə və daha çoxuna bağlıdırsa seçim pəncərəsi üçün {kind:'choose', products}.
   function lookupForPos(code) {
     code = String(code || '').trim();
     if (!code) return Promise.resolve({ kind: 'empty' });
@@ -973,8 +974,31 @@
       if (r.length) return r[0].active ? { kind: 'product', product: r[0] } : { kind: 'inactive', product: r[0] };
       if (Barcode.isReceiptBarcode(code)) return { kind: 'receipt' };
       return DB.byIndex('products', 'mfrBarcode', code).then(function (m) {
-        return m.length ? { kind: 'mfr', products: m } : { kind: 'notfound' };
+        if (!m.length) return { kind: 'notfound' };
+        var act = m.filter(function (p) { return p.active; }).sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
+        if (!act.length) return { kind: 'inactive', product: m[0] };
+        return act.length === 1 ? { kind: 'product', product: act[0], via: 'mfr' } : { kind: 'choose', products: act };
       });
+    });
+  }
+
+  // Ada görə axtarış (FR-102): bütün sözlər ad, marka, kateqoriya və ya barkodda tapılmalıdır; hərf fərqi və Azərbaycan hərfləri nəzərə alınmır.
+  // Yalnız satışda olan məhsullar. Qalığı sıfır olan da qaytarılır (kassir görür, BR-09 limiti əlavə edəndə yoxlanır).
+  function searchProducts(query, limit) {
+    var toks = Rules.foldAz(query).split(/\s+/).filter(Boolean);
+    if (!toks.length) return Promise.resolve([]);
+    return listProducts().then(function (ps) {
+      var hits = [];
+      ps.forEach(function (p) {
+        if (!p.active) return;
+        var name = Rules.foldAz(p.name);
+        var hay = name + ' ' + Rules.foldAz([p.brand, p.category, p.storeBarcode, p.mfrBarcode].join(' '));
+        if (!toks.every(function (t) { return hay.indexOf(t) !== -1; })) return;
+        var rank = name.indexOf(toks[0]) === 0 ? 0 : (' ' + name).indexOf(' ' + toks[0]) !== -1 ? 1 : 2;
+        hits.push({ p: p, rank: rank });
+      });
+      hits.sort(function (a, b) { return a.rank - b.rank || a.p.name.localeCompare(b.p.name, 'az'); });
+      return hits.slice(0, limit || 30).map(function (x) { return x.p; });
     });
   }
 
@@ -1460,7 +1484,7 @@
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct,
-    receiveStock: receiveStock, lookupForPos: lookupForPos, seedDemoProducts: seedDemoProducts,
+    receiveStock: receiveStock, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
     recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
