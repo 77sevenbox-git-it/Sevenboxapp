@@ -167,6 +167,26 @@
     });
   }
 
+  // Böyük əməliyyat (toplu məhsul yükləmə) üçün n ədəd nömrə ehtiyatı: yetərli deyilsə serverdən dərhal alınır ("allocate" bütün server versiyalarında var).
+  // Server qoşulmayıbsa (yalnız lokal iş) lokal sayğac işləyir, ehtiyat lazım deyil. Server qoşulub, amma əlçatmazdırsa xəta: nömrələr toqquşmamalıdır.
+  function reserve(key, n) {
+    if (!BLOCKS[key]) return Promise.reject(new Error(_t('Naməlum açar')));
+    return config().then(function (c) {
+      if (!c.url || !c.token) return { local: true };
+      return DB.get('meta', 'block:' + key).then(function (b) {
+        var have = remaining(b), need = n - have;
+        if (need <= 0) return { have: have };
+        return DB.get('meta', key).then(function (local) {
+          return post(c.url, { action: 'allocate', token: c.token, device: c.device, key: key, count: need, min: local ? local.value : 0 }, { timeout: 25000 });
+        }).then(function (res) {
+          return storeBlocks([{ key: key, from: res.from, to: res.to }]).then(function () { return { have: have + (res.to - res.from + 1) }; });
+        }, function (e) {
+          throw new Error(_t('Toplu əməliyyat üçün serverə qoşulmaq lazımdır: {0}', [explain(e)]));
+        });
+      });
+    });
+  }
+
   // Köhnə server (v3): aralıq ayrıca "allocate" sorğusu ilə alınır
   function ensureBlocksLegacy(c) {
     return Object.keys(BLOCKS).reduce(function (chain, key) {
@@ -334,6 +354,6 @@
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, api: api, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, reserve: reserve, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -329,3 +329,10 @@ tr.inactive td { color: var(--faint); }
 .sdoc table { page-break-inside: auto; } .sdoc tr { page-break-inside: avoid; }
 .sdoc-preview { border: 1px solid var(--line-2); border-radius: 8px; padding: 14px; background: #fff; max-height: 52vh; overflow: auto; }
 @media print { .sdoc { font-size: 11pt; } .sdoc h1 { font-size: 16pt; } }
+
+/* Excel-dən toplu yükləmə (FR-113) */
+.imp-sum { display: flex; gap: 8px; flex-wrap: wrap; }
+.imp-table { max-height: 42vh; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.imp-table table { font-size: 14px; }
+.imp-table tr[data-state="error"] td { background: var(--bad-soft); }
+.imp-table tr[data-state="skip"] td { color: var(--muted); }

@@ -214,6 +214,7 @@
     UI.clear(el);
     var showCost = can('product.cost.view');
     var canAsk = can('stock.request') && !can('stock.receive');         // kassir: qalığı özü artıra bilmir, menecerə sorğu göndərir
+    var canImport = can('product.edit') && can('product.price.set') && can('stock.receive');          // toplu yükləmə: Menecer və Admin (AS-43)
     var myBox = h('div', { class: 'card', id: 'my-requests', style: 'margin-top:16px;display:none' });
     var q = h('input', { class: 'input', id: 'pq', type: 'search', placeholder: _t('Ad, mağaza və ya istehsalçı barkodu'), style: 'min-width:min(280px, 100%)' });
     var body = h('tbody');
@@ -288,6 +289,7 @@
         h('h1', { style: 'margin:0' }, _t('Məhsullar')),
         h('div', { class: 'row' },
           h('label', { class: 'sr-only', for: 'pq' }, _t('Axtarış')), q,
+          canImport ? h('button', { class: 'btn', id: 'imp-open', type: 'button', onclick: function () { importModal(load); } }, _t('Excel-dən yüklə')) : null,
           can('product.edit') ? h('button', { class: 'btn primary', onclick: function () { productForm(null, load); } }, _t('Yeni məhsul')) : null)),
       h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { class: 'cards' },
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Satış ₼')),
@@ -381,6 +383,94 @@
         });
       } }]
     });
+  }
+
+  /* ---------- Excel / CSV-dən toplu yükləmə (FR-113) ---------- */
+  function blobDownload(name, blob) {
+    var a = h('a', { href: URL.createObjectURL(blob), download: name });
+    document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  function importModal(onDone) {
+    var Imp = root.Import, showCost = can('product.cost.view');
+    var file = h('input', { type: 'file', id: 'imp-file', accept: '.xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    var dup = h('input', { type: 'checkbox', id: 'imp-dup' });
+    var dupRow = h('label', { class: 'check-row', hidden: true }, dup, h('span', null, _t('Təkrar sətirləri də yüklə (eyni ad və istehsalçı barkodu ilə məhsul artıq var)')));
+    var out = h('div', { id: 'imp-out', 'aria-live': 'polite' });
+    var existing = [], res = null, goBtn = null;
+    function fieldLabel(k) { return { name: _t('Ad *'), price: _t('Satış qiyməti *') }[k] || k; }
+    function say(text, cls) { UI.clear(out); out.appendChild(h('p', { class: cls || 'muted', role: cls ? 'alert' : null, style: 'margin:0' }, text)); }
+
+    function setGo() {
+      var n = res && !res.empty && !res.tooMany && !res.missing.length ? Imp.summary(res.rows).new : 0;
+      if (!goBtn) return;
+      goBtn.disabled = !n; goBtn.textContent = n ? _t('{0} məhsulu yüklə', [n]) : _t('Yüklə');
+    }
+
+    function draw() {
+      if (!res) return;
+      UI.clear(out); dupRow.hidden = true;
+      if (res.empty) return say(_t('Faylda məlumat tapılmadı'), 'warn-text');
+      if (res.missing.length) return say(_t('Məcburi sütun tapılmadı: {0}. Şablonu yükləyib başlıqları yoxlayın', [res.missing.map(fieldLabel).join(', ')]), 'warn-text');
+      if (res.tooMany) return say(_t('Faylda {0}-dən çox məhsul sətri var. Faylı hissələrə bölüb ayrı-ayrı yükləyin', [Imp.MAX_ROWS]), 'warn-text');
+      Imp.classify(res.rows, existing, dup.checked);
+      var sm = Imp.summary(res.rows);
+      dupRow.hidden = !res.rows.some(function (d) { return d.dup; });
+      out.appendChild(h('div', { class: 'imp-sum' },
+        h('span', { class: 'badge ok' }, _t('Yüklənəcək: {0}', [sm.new])),
+        sm.skip ? h('span', { class: 'badge off' }, _t('Atlanacaq: {0}', [sm.skip])) : null,
+        sm.error ? h('span', { class: 'badge bad' }, _t('Səhvli: {0}', [sm.error])) : null,
+        sm.opening ? h('span', { class: 'badge' }, _t('Açılış qalığı ilə: {0}', [sm.opening])) : null));
+      if (res.unknown.length) out.appendChild(h('p', { class: 'muted', style: 'margin:8px 0 0;font-size:13px' }, _t('Tanınmayan sütunlar (yüklənmir): {0}', [res.unknown.join(', ')])));
+      var STATUS = { new: [_t('Yüklənəcək'), 'ok'], skip: [_t('Atlanacaq'), 'off'], error: [_t('Səhv'), 'bad'] };
+      out.appendChild(h('div', { class: 'table-wrap imp-table', tabindex: '0' }, h('table', null,
+        h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Satış ₼')), showCost ? h('th', { class: 'num' }, _t('Alış ₼')) : null,
+          h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Nəticə')))),
+        h('tbody', null, res.rows.map(function (d) {
+          var st = STATUS[d.status], msgs = d.errors.concat(d.notes || [], d.warnings);
+          return h('tr', { 'data-line': String(d.line), 'data-state': d.status },
+            h('td', { class: 'muted' }, String(d.line)), h('td', null, d.name),
+            h('td', { class: 'num' }, d.price != null ? M.format(d.price) : ''), showCost ? h('td', { class: 'num muted' }, d.cost ? M.format(d.cost) : '') : null,
+            h('td', { class: 'mono' }, d.mfrBarcode), h('td', { class: 'num' }, d.opening ? String(d.opening) : ''),
+            h('td', null, h('span', { class: 'badge ' + st[1] }, st[0]), msgs.map(function (m) { return h('div', { class: 'muted', style: 'font-size:12px' }, m); })));
+        })))));
+    }
+
+    function pick() {
+      var f = file.files && file.files[0]; if (!f) return;
+      dup.checked = false; res = null; setGo(); say(_t('Fayl oxunur…'));
+      Promise.all([Imp.readFile(f), S.listProducts()]).then(function (r) {
+        existing = r[1];
+        res = Imp.mapRows(r[0], { validate: S.validateProductInput, canCost: showCost });
+        draw(); setGo();
+      }).catch(function (e) { res = null; setGo(); say(e.message || String(e), 'warn-text'); });
+    }
+    file.addEventListener('change', pick);
+    dup.addEventListener('change', function () { draw(); setGo(); });
+
+    var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+      h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('Fayl .xlsx və ya .csv olmalıdır, ilk sətir başlıqdır, ən çox {0} sətir. Ad və satış qiyməti məcburidir. Mağaza barkodları avtomatik verilir.', [Imp.MAX_ROWS])),
+      h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('"Açılış qalığı" sütunu doldurulubsa qalıq təchizatçısız yazılır: təchizatçı borcu yaranmır. İstehsalçı barkodunu Excel-də "Mətn" formatında yazın (uzun rəqəmlər elmi yazıya keçməsin).')),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', id: 'imp-tpl', onclick: function () {
+          blobDownload('mehsullar-sablon.xlsx', new Blob([Imp.templateXlsx()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+        } }, _t('Şablonu yüklə (.xlsx)')),
+        h('label', { class: 'sr-only', for: 'imp-file' }, _t('Fayl seçin')), file),
+      dupRow, out);
+
+    var m = UI.modal({
+      title: _t('Məhsulları Excel-dən yüklə'), wide: true, noGuard: true, body: body,
+      buttons: [{ text: _t('İmtina') }, { text: _t('Yüklə'), kind: 'primary', submit: true, onClick: function (close) {
+        if (!res) throw new Error(_t('Fayl seçin'));
+        var sm = Imp.summary(res.rows);
+        return S.importProducts(res.rows).then(function (r) {
+          UI.toast(_t('{0} məhsul yükləndi, {1}-də açılış qalığı yazıldı', [r.created, r.opening]));
+          if (sm.skip || sm.error) UI.toast(_t('Atlandı: {0}, səhvli: {1}', [sm.skip, sm.error]), 'warn');
+          close(); onDone();
+        });
+      } }]
+    });
+    goBtn = m.el.querySelector('.foot button[type=submit]'); if (goBtn) goBtn.disabled = true;
   }
 
   function receiveForm(p, onSaved) {

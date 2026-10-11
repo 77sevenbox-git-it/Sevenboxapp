@@ -381,7 +381,7 @@ async function risk(name, fn) {
     const d = await boot(be); d.Services.logout();
     const ALLOWED = new Set(['init', 'storeInfo', 'listUsers', 'login', 'logout', 'currentUser', 'deviceId', 'requirePerm', 'getMatrix', 'sanitizeForRole', 'validateNewPin', 'restoreSession', 'EPOCH', '_session', 'outboxCount',
       'listConflicts', 'refreshSession', 'validateReturn', 'lastClosedShift', 'currentShift', 'checkApproval', 'findSaleByCode', 'returnedQtyBySale', 'recentSales', 'lookupForPos', 'listProducts', 'listPendingApprovals', 'productLots', 'stockBySupplier', 'supplierReport', 'listMyStockRequests', 'listSuppliers', 'shiftReport', 'listAllUsers', 'auditEvent',
-      'setClockOffset', 'MAX_CART_LINES', 'touchSession', 'sessionExpired']);       // setClockOffset: yalnız yerli saat düzəlişi (sync çağırır, giriş yoxdur); sərhədlənib (±30 gün)
+      'setClockOffset', 'MAX_CART_LINES', 'touchSession', 'sessionExpired', 'validateProductInput']);       // setClockOffset: yalnız yerli saat düzəlişi (sync çağırır, giriş yoxdur); sərhədlənib (±30 gün)
     const S = d.Services, open = [];
     for (const name of Object.keys(S)) {
       if (typeof S[name] !== 'function' || ALLOWED.has(name)) continue;

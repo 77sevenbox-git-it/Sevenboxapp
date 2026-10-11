@@ -616,18 +616,66 @@
             if (dups.length) warnings.push(_t('Bu istehsalçı barkodu artıq var: {0}', [dups.map(function (x) { return x.name; }).join(', ')]));
             return nextSeq(t, 'productSeq');
           }).then(function (seq) {
-            var p = {
-              id: DB.uid('p'), name: String(d.name).trim(), category: d.category || '', brand: d.brand || '', ageGroup: d.ageGroup || '',
-              storeBarcode: Barcode.storeBarcode(seq), mfrBarcode: d.mfrBarcode || '',
-              price: d.price, lastCost: d.cost || 0, avgCost: d.cost || 0, stock: 0, negSalesSinceReceipt: 0,
-              minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id,
-              image: d.image || '', maxDiscount: d.maxDiscount || 0         // maxDiscount: bu məhsula kassada verilə bilən ən çox endirim, % (0 = endirim yoxdur)
-            };
-            p.updatedAt = EPOCH; p.updatedDev = '';       // yaradılma "son yazan qalib" müqayisəsində iştirak etmir: istənilən dəyişiklik ondan sonra gəlir (cihaz saatları fərqli olsa da)
-            return t.put('products', p)
-              .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'sale', old: null, new: p.price, userId: user.id, at: now() }); })
-              .then(function () { return log(t, 'product.created', { product: p }, user); })
-              .then(function () { return { product: p, warnings: warnings }; });
+            return putNewProduct(t, user, d, seq).then(function (p) { return { product: p, warnings: warnings }; });
+          });
+        });
+      });
+    });
+  }
+
+  // Yeni məhsulun yazılması (tranzaksiya daxilində): tək yaratma və toplu yükləmə eyni kodu işlədir
+  function putNewProduct(t, user, d, seq) {
+    var p = {
+      id: DB.uid('p'), name: String(d.name).trim(), category: d.category || '', brand: d.brand || '', ageGroup: d.ageGroup || '',
+      storeBarcode: Barcode.storeBarcode(seq), mfrBarcode: d.mfrBarcode || '',
+      price: d.price, lastCost: d.cost || 0, avgCost: d.cost || 0, stock: 0, negSalesSinceReceipt: 0,
+      minStock: d.minStock || 0, active: true, createdAt: now(), createdBy: user.id,
+      image: d.image || '', maxDiscount: d.maxDiscount || 0         // maxDiscount: bu məhsula kassada verilə bilən ən çox endirim, % (0 = endirim yoxdur)
+    };
+    p.updatedAt = EPOCH; p.updatedDev = '';       // yaradılma "son yazan qalib" müqayisəsində iştirak etmir: istənilən dəyişiklik ondan sonra gəlir (cihaz saatları fərqli olsa da)
+    return t.put('products', p)
+      .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'sale', old: null, new: p.price, userId: user.id, at: now() }); })
+      .then(function () { return log(t, 'product.created', { product: p }, user); })
+      .then(function () { return p; });
+  }
+
+  /* Toplu yükləmə (FR-113, Excel/CSV). rows: Import.mapRows + classify nəticəsi; yalnız status === 'new' olanlar yazılır.
+     Hər sətir yenidən yoxlanır (ekrandan gələn məlumata güvənilmir). Açılış qalığı təchizatçısız partiya kimi yazılır: borc yaranmır (K-20).
+     Hamısı BİR tranzaksiyadadır: ya hamısı yazılır, ya heç biri. Server qoşulubsa nömrə aralığı əvvəlcədən alınır (oflayn yükləmə yoxdur). */
+  var IMPORT_MAX_ROWS = 500;
+  function importProducts(rows, opts) {
+    opts = opts || {};
+    return requirePerm('product.edit').then(function (user) {
+      return matrix().then(function (m) {
+        if (!Rules.can(m, user.role, 'product.price.set') || !Rules.can(m, user.role, 'stock.receive')) throw err(_t('Toplu yükləməni yalnız Menecer və Admin edə bilər'));
+        var canCost = Rules.can(m, user.role, 'product.cost.view');
+        var list = (rows || []).filter(function (d) { return d && d.status === 'new'; });
+        if (!list.length) throw err(_t('Yüklənəcək sətir yoxdur'));
+        if (list.length > IMPORT_MAX_ROWS) throw err(_t('Bir yükləmədə ən çox {0} məhsul ola bilər', [IMPORT_MAX_ROWS]));
+        list.forEach(function (d) {
+          var bad = validateProductInput(d);
+          if (!bad && d.opening != null && (!Number.isInteger(d.opening) || d.opening < 0)) bad = _t('Say müsbət tam ədəd olmalıdır');
+          if (!bad && d.opening > 0) bad = validateReceiptQty(d.opening);
+          if (!bad && d.cost != null && !(d.cost >= 0)) bad = _t('Alış qiyməti səhvdir');
+          if (bad) throw err(_t('{0}-ci sətir: {1}', [d.line, bad]));
+        });
+        var reserve = root.Sync && root.Sync.reserve ? root.Sync.reserve('productSeq', list.length) : Promise.resolve();
+        return reserve.then(function () {
+          var created = 0, opened = 0, at = now();
+          return DB.atomic(['products', 'meta', 'priceHistory', 'stockMoves', 'lots', 'suppliers', 'audit', 'outbox'], function (t) {
+            return list.reduce(function (chain, d) {
+              return chain.then(function () {
+                return nextSeq(t, 'productSeq').then(function (seq) {
+                  var row = Object.assign({}, d, { cost: canCost ? (d.cost || 0) : 0 });
+                  return putNewProduct(t, user, row, seq);
+                }).then(function (p) {
+                  created++;
+                  if (!(d.opening > 0)) return null;
+                  opened++;
+                  return receiveInTx(t, user, { productId: p.id, qty: d.opening, unitCost: canCost ? (d.cost || 0) : 0, note: _t('Açılış qalığı (Excel)'), supplierId: null }, at);
+                });
+              });
+            }, Promise.resolve()).then(function () { return { created: created, opening: opened }; });
           });
         });
       });
@@ -1519,7 +1567,7 @@
     init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin, changeCredential: changeCredential,
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
-    listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct,
+    listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct, importProducts: importProducts, validateProductInput: validateProductInput, IMPORT_MAX_ROWS: IMPORT_MAX_ROWS,
     receiveStock: receiveStock, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
