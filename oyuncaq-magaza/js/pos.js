@@ -480,6 +480,10 @@
     // Mesaj
     refs.msg.className = 'scan-msg ' + (st.msg ? st.msg.kind : '');
     refs.msg.textContent = st.msg ? st.msg.text : '';
+    // Cihazın saatı serverdən çox fərqlənirsə kassirə kontekstual xəbərdarlıq (K-21); çek tarixləri yenə də server saatına görə düzəldilir
+    var skewMin = Math.round(Math.abs(root.Sync && root.Sync.status ? (root.Sync.status().skewMs || 0) : 0) / 60000);
+    refs.skew.hidden = skewMin < 2;
+    if (!refs.skew.hidden) refs.skew.textContent = _t('Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını "avtomatik" rejimə keçirin', [skewMin]);
 
     // Cədvəl
     var tbody = UI.clear(refs.tbody);
@@ -611,6 +615,7 @@
     });
     refs.searchBtn = h('button', { type: 'button', class: 'scan-plus', id: 'scan-plus', title: _t('Məhsulu adla axtar (F8)'), 'aria-label': _t('Məhsulu adla axtar'), onclick: openSearch }, '+');
     refs.msg = h('div', { class: 'scan-msg', id: 'scan-msg', role: 'status' });
+    refs.skew = h('div', { class: 'scan-msg warn', id: 'skew-msg', hidden: true, style: 'font-size:13px' });
     refs.tbody = h('tbody');
     refs.table = h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
       h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', { class: 'num' }, _t('Say')), h('th', { class: 'num' }, _t('Qiymət')), h('th', { class: 'num' }, _t('Cəm')), h('th', { class: 'del' }, h('span', { class: 'sr-only' }, _t('Sil'))))),
@@ -625,7 +630,7 @@
     el.appendChild(h('div', { class: 'pos' },
       h('section', { class: 'pos-main', 'aria-label': _t('Çek') },
         h('div', { class: 'field' }, h('label', { for: 'scan' }, _t('Barkod')), h('div', { class: 'scan-row' }, refs.scan, refs.searchBtn)),
-        refs.msg, refs.table,
+        refs.msg, refs.skew, refs.table,
         h('div', { class: 'muted', style: 'font-size:14px' }, _t('↑/↓ sətir seçimi · + / − say · Del və ya zibil ikonu: sətri silmək (menecer təsdiqi: PIN və ya sorğu).'))),
       h('aside', { class: 'pos-side', 'aria-label': _t('Ödəniş') },
         h('div', { class: 'card totals' },

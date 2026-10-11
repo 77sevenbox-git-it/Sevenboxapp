@@ -825,6 +825,13 @@
     "Məhsulu adla axtar (F8)": "Найти товар по названию (F8)",
     "Barkod": "Штрихкод",
     "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "Есть несохранённые изменения. Чтобы закрыть, нажмите «Отмена»",
-    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(штрихкод производителя {0} → штрихкод магазина {1})"
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(штрихкод производителя {0} → штрихкод магазина {1})",
+    "Kompüterə quraşdır": "Установить на компьютер",
+    "Tətbiq ayrıca pəncərədə, öz ikonu ilə açılır": "Приложение открывается в отдельном окне со своим значком",
+    "Menyu": "Меню",
+    "Dil": "Язык",
+    "Sistem vəziyyəti": "Состояние системы",
+    "Bu zolağı yalnız Admin görür": "Эту полосу видит только Админ",
+    "Sistem": "Система"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

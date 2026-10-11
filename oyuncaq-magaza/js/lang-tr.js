@@ -825,6 +825,13 @@
     "Məhsulu adla axtar (F8)": "Ürünü adla ara (F8)",
     "Barkod": "Barkod",
     "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "Kaydedilmemiş değişiklik var. Kapatmak için \"Vazgeç\" düğmesine basın",
-    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(üretici barkodu {0} → mağaza barkodu {1})"
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(üretici barkodu {0} → mağaza barkodu {1})",
+    "Kompüterə quraşdır": "Bilgisayara yükle",
+    "Tətbiq ayrıca pəncərədə, öz ikonu ilə açılır": "Uygulama kendi penceresinde ve kendi simgesiyle açılır",
+    "Menyu": "Menü",
+    "Dil": "Dil",
+    "Sistem vəziyyəti": "Sistem durumu",
+    "Bu zolağı yalnız Admin görür": "Bu şeridi yalnızca Admin görür",
+    "Sistem": "Sistem"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

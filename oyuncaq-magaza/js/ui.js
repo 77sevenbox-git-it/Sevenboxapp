@@ -177,12 +177,12 @@
   }
   function scanFades() {
     fadeQueued = false;
-    Array.prototype.forEach.call(document.querySelectorAll('.table-wrap'), updateFade);
+    Array.prototype.forEach.call(document.querySelectorAll('.table-wrap, .hscroll'), updateFade);
     Array.prototype.forEach.call(document.querySelectorAll('table.cards'), labelCards);
   }
   function queueFades() { if (fadeQueued) return; fadeQueued = true; (root.requestAnimationFrame || setTimeout)(scanFades); }
   function initScrollFade() {
-    document.addEventListener('scroll', function (e) { var t = e.target; if (t && t.classList && t.classList.contains('table-wrap')) updateFade(t); }, true);
+    document.addEventListener('scroll', function (e) { var t = e.target; if (t && t.classList && (t.classList.contains('table-wrap') || t.classList.contains('hscroll'))) updateFade(t); }, true);
     root.addEventListener('resize', queueFades);
     if (root.MutationObserver) new root.MutationObserver(queueFades).observe(document.body, { childList: true, subtree: true });
     queueFades();

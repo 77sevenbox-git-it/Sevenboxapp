@@ -825,6 +825,13 @@
     "Məhsulu adla axtar (F8)": "Search product by name (F8)",
     "Barkod": "Barcode",
     "Saxlanmamış dəyişiklik var. Bağlamaq üçün \"İmtina\" düyməsinə basın": "There are unsaved changes. Press \"Cancel\" to close",
-    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(manufacturer barcode {0} → store barcode {1})"
+    "(istehsalçı barkodu {0} → mağaza barkodu {1})": "(manufacturer barcode {0} → store barcode {1})",
+    "Kompüterə quraşdır": "Install on this computer",
+    "Tətbiq ayrıca pəncərədə, öz ikonu ilə açılır": "The app opens in its own window with its own icon",
+    "Menyu": "Menu",
+    "Dil": "Language",
+    "Sistem vəziyyəti": "System status",
+    "Bu zolağı yalnız Admin görür": "Only the Admin sees this bar",
+    "Sistem": "System"
   });
 })(typeof window !== 'undefined' ? window : globalThis);
