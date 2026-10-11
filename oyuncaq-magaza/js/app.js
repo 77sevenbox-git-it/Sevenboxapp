@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.11-2';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.11-3';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -132,7 +132,23 @@
     });
   }
 
-  function logout() { closeMenu(); UI.abortPending(); S.logout(); root.POS.reset(); root.Notify.sync(); start(); }
+  function logout() { closeMenu(); UI.abortPending(); UI.closeAllModals(); S.logout(); root.POS.reset(); root.Notify.sync(); start(); }
+
+  // Hərəkətsizlik (kassir 3 s, digərləri 5 s) və ya 12 saat: çıxış, amma yarımçıq çek yaddaşda qalır (FR-106)
+  function lockOut(msg) {
+    if (!S.currentUser()) return;
+    // Notify.sync() çağırılmır: cihaz push-dan çıxarılmasın, menecer hərəkətsizlikdən sonra da bildiriş alsın (açıq çıxışda isə söndürülür)
+    closeMenu(); UI.abortPending(); UI.closeAllModals(); S.logout(); root.POS.lock(); start();
+    UI.toast(msg, 'warn');
+  }
+  function checkIdle() { if (S.currentUser() && S.sessionExpired()) lockOut(_t('Uzun müddət fəaliyyət olmadığı üçün çıxış edildi. Yenidən daxil olun')); }
+  var lastTouch = 0;
+  function activity() { var t = Date.now(); if (t - lastTouch < 30000) return; lastTouch = t; S.touchSession(); }
+  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) { addEventListener(ev, activity, { capture: true, passive: true }); });
+  setInterval(checkIdle, 60000);
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) checkIdle(); });     // telefon/kompüter oyanandan sonra dərhal yoxlanılır
+  // Başqa tabda çıxış edilib və ya başqa istifadəçi girib: bu tab da çıxır
+  addEventListener('storage', function (e) { if (e.key === 'mag.session' && S.currentUser() && S.sessionExpired()) lockOut(_t('Başqa pəncərədə çıxış edildi. Yenidən daxil olun')); });
 
   // Başqa cihazdan gələn dəyişikliklər: icazələr, istifadəçilər, qalıq, çeklər, sorğular
   function onApplied(t) {
@@ -194,15 +210,18 @@
     if (wantApprovals) openApprovals();
   }
 
+  // Bildirişə klik: sessiya açıqdırsa sorğular pəncərəsi dərhal açılır (təsdiq/rədd bir toxunuşla). Sessiya yoxdursa kod soruşulmadan
+  // giriş səhifəsində sorğular siyahısı (yalnız oxumaq) görünür; təsdiq/rədd üçün PIN ilə daxil olmaq lazımdır (FR-106, AS-34).
   function openApprovals() {
-    if (!S.currentUser() || document.querySelector('.modal-back')) return;
+    if (!S.currentUser()) { if (location.hash !== '#approvals') history.replaceState(null, '', '#approvals'); return start(); }
+    if (UI.modalOpen()) return;
     root.Screens.pendingForMe().then(function (list) { if (list.length) root.Screens.approvalsModal(refreshStatus); });
   }
 
   function start() {
     var el = document.getElementById('app');
     reqSlot = null; sysEl = null; shell = null; closeMenu();
-    root.Screens.login(el, function (user) {
+    root.Screens.login(el, { approvals: location.hash === '#approvals' }, function (user) {
       S.getMatrix().then(function (m) {
         app.matrix = m;
         // İlk giriş: yalnız yeni PIN səhifəsi görünür, kassa ekranı PIN dəyişənə qədər qurulmur

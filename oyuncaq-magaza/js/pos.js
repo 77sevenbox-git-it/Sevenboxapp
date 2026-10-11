@@ -14,9 +14,9 @@
   var refs = {};
   var mountEl = null;
 
-  // Yarımçıq çek brauzer tabında saxlanılır: səhifəni yeniləmək səbəti silməsin (çıxışda və başqa istifadəçi girəndə silinir)
+  // Yarımçıq çek cihazda saxlanılır: səhifəni yeniləmək və ya tətbiqi bağlayıb açmaq səbəti silməsin (çıxışda və başqa istifadəçi girəndə silinir)
   var CART_KEY = 'mag.cart';
-  function ses() { try { return root.sessionStorage || null; } catch (e) { return null; } }
+  function ses() { try { return root.localStorage || root.sessionStorage || null; } catch (e) { return null; } }       // cihazda saxlanılır: tətbiqi bağlayıb açmaq yarımçıq çeki silmir
   function saveCart() {
     var ss = ses(); if (!ss || !st) return;
     try {
@@ -36,7 +36,9 @@
       if (st.cart.length) { st.sel = 0; st.discount = raw.discount || null; setMsg(_t('Yarımçıq çek bərpa olundu ({0} sətir)', [st.cart.length]), 'warn'); }
     });
   }
-  function reset() { st = null; pendingDel = {}; pendingCancel = false; var ss = ses(); if (ss) { try { ss.removeItem(CART_KEY); } catch (e) { /* */ } } }
+  function reset() { lock(); var ss = ses(); if (ss) { try { ss.removeItem(CART_KEY); } catch (e) { /* */ } } }
+  // Hərəkətsizlikdən bloklananda yaddaşdakı çek qalır (eyni istifadəçi yenidən girəndə bərpa olunur), yalnız ekrandakı vəziyyət silinir
+  function lock() { st = null; pendingDel = {}; pendingCancel = false; }
 
   // Sətir endirimi (qəpik): faiz sətrin cəmindən hesablanır, məbləğ sətrin cəmindən çıxılır
   function lineGross(c) { return c.product.price * c.qty; }
@@ -698,5 +700,5 @@
   // Başqa cihazdan qalıq dəyişəndə açıq çekdəki məhsulları yeniləyir (səbət toxunulmaz qalır)
   function refresh() { return st && mountEl && refs.table ? refreshProducts() : Promise.resolve(); }
 
-  root.POS = { mount: mount, refresh: refresh, reset: reset, _state: function () { return st; } };
+  root.POS = { mount: mount, refresh: refresh, reset: reset, lock: lock, _state: function () { return st; } };
 })(window);

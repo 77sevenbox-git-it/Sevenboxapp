@@ -832,6 +832,19 @@
     "Dil": "Language",
     "Sistem vəziyyəti": "System status",
     "Bu zolağı yalnız Admin görür": "Only the Admin sees this bar",
-    "Sistem": "System"
+    "Sistem": "System",
+    "Uzun müddət fəaliyyət olmadığı üçün çıxış edildi. Yenidən daxil olun": "You were signed out after a long period of inactivity. Sign in again",
+    "Başqa pəncərədə çıxış edildi. Yenidən daxil olun": "You were signed out in another window. Sign in again",
+    "Bu kompüter birbaşa çek çapı rejimindədir: etiket və A4 sənəd burada çap olunmur. Onları başqa kompüterdən çap edin (və ya Çap ayarlarında birbaşa çapı söndürün)": "This computer is in direct receipt-printing mode: labels and A4 documents are not printed here. Print them from another computer (or turn direct printing off in Print settings)",
+    "Birbaşa çap (çap pəncərəsiz)": "Direct printing (no print dialog)",
+    "Bu kompüterdə Chrome birbaşa çap rejimindədir: çek çap pəncərəsi açılmadan çıxır. Etiket və A4 sənəd bu kompüterdə bağlanır.": "Chrome on this computer is in direct-printing mode: receipts print without a print dialog. Labels and A4 documents are disabled on this computer.",
+    "Windows-da çek printerini \"defolt printer\" edin (Parametrlər → Printerlər).": "In Windows, set the receipt printer as the default printer (Settings → Printers).",
+    "Chrome-un bütün pəncərələrini bağlayın. Masaüstündə Chrome qısayoluna sağ klik → Xassələr → \"Obyekt\" sahəsinin sonuna boşluq qoyub bunu əlavə edin:": "Close all Chrome windows. Right-click the Chrome shortcut on the desktop → Properties → at the end of the \"Target\" field add a space and this:",
+    "Qısayolla Chrome-u açın, tətbiqi bu qısayoldan işlədin. \"Test çeki çap et\" pəncərəsiz çıxmalıdır. Pəncərə çıxırsa, Chrome başqa yolla açılıb: bütün Chrome pəncərələrini bağlayıb yenidən cəhd edin.": "Open Chrome with that shortcut and use the app from it. \"Print test receipt\" should print without a dialog. If a dialog appears, Chrome was opened another way: close all Chrome windows and try again.",
+    "Əmr kopyalandı": "Command copied",
+    "Tam əmri kopyala (tətbiqi ayrıca pəncərədə açır)": "Copy the full command (opens the app in its own window)",
+    "Bu mənim cihazımdır: tətbiqi bağlayıb açanda çıxış olmasın": "This is my device: stay signed in when I close and reopen the app",
+    "Təsdiq sorğusu gözləyir": "Approval request waiting",
+    "Təsdiq etmək və ya rədd etmək üçün aşağıda daxil olun.": "Sign in below to approve or reject."
   });
 })(typeof window !== 'undefined' ? window : globalThis);

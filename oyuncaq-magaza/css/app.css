@@ -184,6 +184,11 @@ tr.neg td { background: var(--warn-soft); }
 /* Giriş */
 .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
 .login .card { width: min(420px, 100%); padding: 28px; display: flex; flex-direction: column; gap: 16px; }
+.login-col { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
+.login .card.gate { padding: 18px 22px; gap: 10px; border-color: var(--warn); background: var(--warn-soft); }
+.gate-item { padding: 8px 0; border-top: 1px solid rgba(154, 74, 6, .2); }
+.check-row { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; color: var(--ink-2); cursor: pointer; }
+.check-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
 .users { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .users button { padding: 12px; border: 1px solid var(--control); border-radius: 8px; background: var(--surface); text-align: left; }
 .users button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }

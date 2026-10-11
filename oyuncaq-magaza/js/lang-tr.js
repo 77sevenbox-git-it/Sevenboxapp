@@ -832,6 +832,19 @@
     "Dil": "Dil",
     "Sistem vəziyyəti": "Sistem durumu",
     "Bu zolağı yalnız Admin görür": "Bu şeridi yalnızca Admin görür",
-    "Sistem": "Sistem"
+    "Sistem": "Sistem",
+    "Uzun müddət fəaliyyət olmadığı üçün çıxış edildi. Yenidən daxil olun": "Uzun süre işlem yapılmadığı için çıkış yapıldı. Yeniden giriş yapın",
+    "Başqa pəncərədə çıxış edildi. Yenidən daxil olun": "Başka bir pencerede çıkış yapıldı. Yeniden giriş yapın",
+    "Bu kompüter birbaşa çek çapı rejimindədir: etiket və A4 sənəd burada çap olunmur. Onları başqa kompüterdən çap edin (və ya Çap ayarlarında birbaşa çapı söndürün)": "Bu bilgisayar doğrudan fiş yazdırma modunda: etiket ve A4 belge burada yazdırılmaz. Bunları başka bir bilgisayardan yazdırın (veya Yazdırma ayarlarında doğrudan yazdırmayı kapatın)",
+    "Birbaşa çap (çap pəncərəsiz)": "Doğrudan yazdırma (yazdırma penceresi olmadan)",
+    "Bu kompüterdə Chrome birbaşa çap rejimindədir: çek çap pəncərəsi açılmadan çıxır. Etiket və A4 sənəd bu kompüterdə bağlanır.": "Bu bilgisayarda Chrome doğrudan yazdırma modunda: fişler yazdırma penceresi açılmadan çıkar. Etiket ve A4 belge bu bilgisayarda kapatılır.",
+    "Windows-da çek printerini \"defolt printer\" edin (Parametrlər → Printerlər).": "Windows'ta fiş yazıcısını varsayılan yazıcı yapın (Ayarlar → Yazıcılar).",
+    "Chrome-un bütün pəncərələrini bağlayın. Masaüstündə Chrome qısayoluna sağ klik → Xassələr → \"Obyekt\" sahəsinin sonuna boşluq qoyub bunu əlavə edin:": "Tüm Chrome pencerelerini kapatın. Masaüstündeki Chrome kısayoluna sağ tıklayın → Özellikler → \"Hedef\" alanının sonuna bir boşluk bırakıp şunu ekleyin:",
+    "Qısayolla Chrome-u açın, tətbiqi bu qısayoldan işlədin. \"Test çeki çap et\" pəncərəsiz çıxmalıdır. Pəncərə çıxırsa, Chrome başqa yolla açılıb: bütün Chrome pəncərələrini bağlayıb yenidən cəhd edin.": "Chrome'u bu kısayolla açın ve uygulamayı ondan kullanın. \"Test fişi yazdır\" pencere olmadan çıkmalıdır. Pencere çıkarsa Chrome başka yoldan açılmıştır: tüm Chrome pencerelerini kapatıp yeniden deneyin.",
+    "Əmr kopyalandı": "Komut kopyalandı",
+    "Tam əmri kopyala (tətbiqi ayrıca pəncərədə açır)": "Tam komutu kopyala (uygulamayı ayrı pencerede açar)",
+    "Bu mənim cihazımdır: tətbiqi bağlayıb açanda çıxış olmasın": "Bu benim cihazım: uygulamayı kapatıp açınca çıkış yapılmasın",
+    "Təsdiq sorğusu gözləyir": "Onay isteği bekliyor",
+    "Təsdiq etmək və ya rədd etmək üçün aşağıda daxil olun.": "Onaylamak veya reddetmek için aşağıdan giriş yapın."
   });
 })(typeof window !== 'undefined' ? window : globalThis);

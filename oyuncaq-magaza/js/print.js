@@ -9,10 +9,13 @@
   var LABEL_PRESETS = [[30, 20], [40, 30], [50, 30], [58, 40], [60, 40], [70, 50], [100, 50], [100, 100]];
   var DEFAULTS = { receipt: { paper: 80, mode: 'exact', dpi: 203, feedMm: 8, lang: 'az' }, label: { w: 58, h: 40, dpi: 203, mode: 'exact' } };
 
+  // kiosk: bu kompüterdə Chrome "--kiosk-printing" ilə açılır, çap pəncərəsi çıxmır və hər çap defolt printerə gedir (FR-112).
+  // Bu rejimdə YALNIZ çek (satış, qaytarma, Z, təkrar çap) çap olunur; etiket və A4 sənəd bağlıdır ki, çek printerinə səhvən getməsin.
   function clamp(n, lo, hi, d) { n = Number(n); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; }
   function sanitize(s) {
     s = s || {}; var r = s.receipt || {}, l = s.label || {};
     return {
+      kiosk: s.kiosk === true,
       receipt: { paper: Number(r.paper) === 58 ? 58 : 80, mode: r.mode === 'driver' ? 'driver' : 'exact', dpi: Number(r.dpi) === 300 ? 300 : 203, feedMm: Math.round(clamp(r.feedMm, 0, 40, DEFAULTS.receipt.feedMm)), lang: ['az', 'ru', 'en', 'tr'].indexOf(r.lang) !== -1 ? r.lang : 'az' },
       label: { w: Math.round(clamp(l.w, 20, 120, DEFAULTS.label.w) * 10) / 10, h: Math.round(clamp(l.h, 12, 200, DEFAULTS.label.h) * 10) / 10, dpi: Number(l.dpi) === 300 ? 300 : 203, mode: l.mode === 'driver' ? 'driver' : 'exact' }
     };
@@ -225,6 +228,7 @@
   // kind: 'receipt' | 'label'
   function print(html, kind) {
     var cfg = settings(), css;
+    if (cfg.kiosk && kind !== 'receipt' && kind !== undefined) throw new Error(_t('Bu kompüter birbaşa çek çapı rejimindədir: etiket və A4 sənəd burada çap olunmur. Onları başqa kompüterdən çap edin (və ya Çap ayarlarında birbaşa çapı söndürün)'));
     var area = document.getElementById('print-area');
     if (!area) { area = document.createElement('div'); area.id = 'print-area'; document.body.appendChild(area); }
     area.innerHTML = html;
@@ -285,8 +289,10 @@
       customRow.hidden = !isCustom;
       if (!isCustom) { var p = preset.value.split('x'); lw.value = p[0]; lh.value = p[1]; }
     }
+    var kiosk = h('input', { type: 'checkbox', id: 'pr-kiosk', checked: cur.kiosk });
+    var cmd = 'chrome.exe --kiosk-printing --app=' + (root.location ? root.location.origin + root.location.pathname : '');
     function collect() {
-      return { receipt: { paper: Number(paper.value), dpi: Number(rdpi.value), mode: rmode.value, feedMm: Number(feed.value), lang: rlang.value },
+      return { kiosk: kiosk.checked, receipt: { paper: Number(paper.value), dpi: Number(rdpi.value), mode: rmode.value, feedMm: Number(feed.value), lang: rlang.value },
         label: { w: Number(lw.value), h: Number(lh.value), dpi: Number(ldpi.value), mode: lmode.value } };
     }
     function refreshInfo() {
@@ -307,7 +313,19 @@
           h('div', null, h('button', { class: 'btn small', type: 'button', id: 'pr-test', onclick: function () { persist(); print(testReceiptHtml(), 'receipt'); } }, _t('Test çeki çap et')))),
         h('div', { class: 'card', style: 'padding:14px;display:flex;flex-direction:column;gap:12px' }, h('b', null, _t('Etiket printeri')),
           h('div', { class: 'grid2' }, fld(_t('Etiket ölçüsü'), preset, 'pl-preset'), fld(_t('Çap sıxlığı'), ldpi, 'pl-dpi'), fld(_t('Kağız ölçüsü'), lmode, 'pl-mode')), customRow, info,
-          h('div', null, h('button', { class: 'btn small', type: 'button', id: 'pl-test', onclick: function () { persist(); print(testLabelHtml(), 'label'); } }, _t('Test etiketi çap et')))),
+          h('div', null, h('button', { class: 'btn small', type: 'button', id: 'pl-test', onclick: function () { persist(); try { print(testLabelHtml(), 'label'); } catch (e) { U().toast(e.message, 'bad'); } } }, _t('Test etiketi çap et')))),
+        h('div', { class: 'card', style: 'padding:14px;display:flex;flex-direction:column;gap:10px' }, h('b', null, _t('Birbaşa çap (çap pəncərəsiz)')),
+          h('label', { class: 'check-row' }, kiosk, h('span', null, _t('Bu kompüterdə Chrome birbaşa çap rejimindədir: çek çap pəncərəsi açılmadan çıxır. Etiket və A4 sənəd bu kompüterdə bağlanır.'))),
+          h('ol', { class: 'muted', style: 'margin:0;padding-left:20px;font-size:13px;display:flex;flex-direction:column;gap:4px' },
+            h('li', null, _t('Windows-da çek printerini "defolt printer" edin (Parametrlər → Printerlər).')),
+            h('li', null, _t('Chrome-un bütün pəncərələrini bağlayın. Masaüstündə Chrome qısayoluna sağ klik → Xassələr → "Obyekt" sahəsinin sonuna boşluq qoyub bunu əlavə edin:')),
+            h('li', null, h('code', { class: 'mono', style: 'user-select:all;word-break:break-all', id: 'pr-cmd' }, ' --kiosk-printing')),
+            h('li', null, _t('Qısayolla Chrome-u açın, tətbiqi bu qısayoldan işlədin. "Test çeki çap et" pəncərəsiz çıxmalıdır. Pəncərə çıxırsa, Chrome başqa yolla açılıb: bütün Chrome pəncərələrini bağlayıb yenidən cəhd edin.'))),
+          h('div', null, h('button', { class: 'btn small', type: 'button', id: 'pr-cmd-copy', onclick: function () {
+            var full = cmd;
+            var done = function () { U().toast(_t('Əmr kopyalandı')); };
+            if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(full).then(done, function () { U().toast(full); }); else U().toast(full);
+          } }, _t('Tam əmri kopyala (tətbiqi ayrıca pəncərədə açır)')))),
         h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Çap pəncərəsində: Printer — Xprinter, Miqyas — 100%, Kənar boşluqlar — Yoxdur, Başlıq və sonluq — söndürülü. Test çapında çərçivə tam görünmürsə, kənar boşluğu və ya "Kağız ölçüsü" seçimini dəyişin.'))),
       buttons: [{ text: _t('Bağla') }, { text: _t('Yadda saxla'), kind: 'primary', submit: true, onClick: function (close) { persist(); close(); U().toast(_t('Çap ayarları yadda saxlanıldı')); } }]
     });

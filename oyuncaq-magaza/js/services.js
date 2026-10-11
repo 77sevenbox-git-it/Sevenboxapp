@@ -325,7 +325,7 @@
       return v ? { n: v.n | 0, until: Number(v.until) || 0 } : { n: 0, until: 0 };
     });
   }
-  function login(userId, pin) {
+  function login(userId, pin, opts) {
     return loadFail(userId).then(function (f) {
       if (Date.now() < f.until) throw err(_t('Çox səhv cəhd. {0} dəqiqə gözləyin', [Math.ceil((f.until - Date.now()) / 60000)]), 'locked');
       return verifyPin(userId, pin).then(function (r) {
@@ -352,6 +352,7 @@
       return getAuthPolicy().then(function (policy) {
         var must = needsChange(u, policy);
         session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: must };
+        session.remember = !!(opts && opts.remember);
         if (!must) persistSession(u);
         return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
           return t.get('meta', 'authFail').then(function (m) {
@@ -364,28 +365,63 @@
     });
   }
 
-  // Sessiya brauzer tabında saxlanılır (yeniləmə / SW yenilənməsi çıxış etdirməsin). Tab bağlananda silinir, 12 saatdan sonra və PIN/rol dəyişəndə etibarsızdır.
-  var SESSION_KEY = 'mag.session', SESSION_TTL = 12 * 3600000;
+  // Sessiya (FR-106). Tətbiqi bağlayıb açmaq çıxış etdirmir:
+  //  • Kassir: cihazda (localStorage) saxlanılır. Menecer/Admin/Mühasib: yalnız girişdə "bu mənim cihazımdır" seçilibsə cihazda, əks halda yalnız brauzer tabında (tab bağlananda silinir).
+  //  • Mütləq müddət 12 saat; hərəkətsizlik limiti kassir 3 saat, digərləri 5 saat. PIN/rol dəyişəndə və ya hesab söndürüləndə etibarsızdır.
+  var SESSION_KEY = 'mag.session', SESSION_TTL = 12 * 3600000, IDLE_CASHIER = 3 * 3600000, IDLE_OTHER = 5 * 3600000;
+  function idleLimit(role) { return role === 'kassir' ? IDLE_CASHIER : IDLE_OTHER; }
   function sessionStore() { try { return root.sessionStorage || null; } catch (e) { return null; } }
+  function localStore() { try { return root.localStorage || null; } catch (e) { return null; } }
   function fingerprint(u) { return String(u.pinHash || '').slice(0, 16) + '|' + u.role; }
+  function readSessionRec() {
+    var stores = [localStore(), sessionStore()];
+    for (var i = 0; i < stores.length; i++) {
+      var st = stores[i]; if (!st) continue;
+      var raw = null;
+      try { raw = JSON.parse(st.getItem(SESSION_KEY) || 'null'); } catch (e) { raw = null; }
+      if (raw) return { rec: raw, store: st };
+    }
+    return null;
+  }
   function persistSession(u) {
-    var ss = sessionStore(); if (!ss) return;
-    try { if (!u) ss.removeItem(SESSION_KEY); else ss.setItem(SESSION_KEY, JSON.stringify({ id: u.id, fp: fingerprint(u), at: Date.now() })); } catch (e) { /* yaddaş bağlıdırsa davam */ }
+    var ls = localStore(), ss = sessionStore(), old = readSessionRec();
+    [ls, ss].forEach(function (st) { if (st) { try { st.removeItem(SESSION_KEY); } catch (e) { /* yaddaş bağlıdırsa davam */ } } });
+    if (!u) return;
+    var remember = u.role === 'kassir' || !!session.remember;
+    var same = old && old.rec && old.rec.id === u.id && Number(old.rec.at) > 0;
+    var rec = { id: u.id, fp: fingerprint(u), at: same ? Number(old.rec.at) : Date.now(), last: Date.now(), rem: remember ? 1 : 0 };
+    var target = remember ? (ls || ss) : (ss || ls);        // localStorage əlçatmazdırsa tab yaddaşına düşür (cihazda saxlanmır, amma işləyir)
+    try { if (target) target.setItem(SESSION_KEY, JSON.stringify(rec)); } catch (e) { /* yaddaş bağlıdırsa davam */ }
+  }
+  // İstifadəçi fəaliyyəti (klik, düymə): hərəkətsizlik sayğacı sıfırlanır. Çağıran sıxlığı özü məhdudlaşdırır (ui: dəqiqədə bir dəfə).
+  function touchSession() {
+    if (!session.user || session.user.mustChangePin) return;
+    var r = readSessionRec(); if (!r || r.rec.id !== session.user.id) return;
+    r.rec.last = Date.now();
+    try { r.store.setItem(SESSION_KEY, JSON.stringify(r.rec)); } catch (e) { /* yaddaş bağlıdırsa davam */ }
+  }
+  // Açıq sessiyanın vaxtı çatıbsa (hərəkətsizlik və ya 12 saat) true: tətbiq çıxış etdirir
+  function sessionExpired() {
+    if (!session.user || session.user.mustChangePin) return false;
+    var r = readSessionRec();
+    if (!r || r.rec.id !== session.user.id) return true;      // başqa tabda çıxış edilib
+    var at = Number(r.rec.at) || 0, last = Number(r.rec.last) || at;
+    return Date.now() - at > SESSION_TTL || Date.now() - last > idleLimit(session.user.role);
   }
   function restoreSession() {
-    var ss = sessionStore(); if (!ss) return Promise.resolve(null);
-    var raw = null;
-    try { raw = JSON.parse(ss.getItem(SESSION_KEY) || 'null'); } catch (e) { raw = null; }
-    if (!raw || !raw.id || Date.now() - raw.at > SESSION_TTL) { persistSession(null); return Promise.resolve(null); }
+    var r0 = readSessionRec(); if (!r0) return Promise.resolve(null);
+    var raw = r0.rec, at = Number(raw.at) || 0, last = Number(raw.last) || at;
+    if (!raw.id || Date.now() - at > SESSION_TTL) { persistSession(null); return Promise.resolve(null); }
     return Promise.all([DB.get('users', raw.id), getAuthPolicy()]).then(function (r) {
       var u = r[0];
-      if (!u || !u.active || needsChange(u, r[1]) || fingerprint(u) !== raw.fp) { persistSession(null); return null; }
+      if (!u || !u.active || needsChange(u, r[1]) || fingerprint(u) !== raw.fp || Date.now() - last > idleLimit(u.role)) { persistSession(null); return null; }
       session.user = { id: u.id, name: u.name, role: u.role, mustChangePin: false };
+      session.remember = !!raw.rem;
       return session.user;
     });
   }
 
-  function logout() { session.user = null; persistSession(null); }
+  function logout() { session.user = null; session.remember = false; persistSession(null); }
   function currentUser() { return session.user; }
 
   function validateNewPin(newPin, oldPin) {
@@ -1490,7 +1526,7 @@
     recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, setClockOffset: setClockOffset, decideApproval: decideApproval, cancelApproval: cancelApproval,
-    checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, _session: session
+    checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, touchSession: touchSession, sessionExpired: sessionExpired, _session: session
   };
   root.Services = Services;
   if (typeof module !== 'undefined') module.exports = Services;

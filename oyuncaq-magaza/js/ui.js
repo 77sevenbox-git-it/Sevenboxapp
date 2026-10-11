@@ -84,6 +84,8 @@
     modalStack.forEach(function (m, i) { setInert(m.back, i < modalStack.length - 1); });
   }
   function modalOpen() { return modalStack.length > 0; }
+  // Çıxış / sessiya bitməsi: bütün açıq pəncərələr bağlanır (onClose işləyir, gözləyən təsdiq vədləri "imtina" ilə həll olunur)
+  function closeAllModals() { modalStack.slice().reverse().forEach(function (m) { if (m.close) m.close(); }); }
   var FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type=hidden]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
   // modal({title, body: Node, buttons: [{text, kind, onClick(close) -> Promise|any}], wide, sticky, noGuard, onClose})
@@ -94,6 +96,7 @@
     var back = h('div', { class: 'modal-back' });
     var box = h('div', { class: 'modal' + (opts.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true', 'aria-label': opts.title });
     var entry = { back: back }, dirty = false, closed = false;
+    entry.close = function () { close(); };
     function close() {
       if (closed) return; closed = true;
       back.remove(); document.removeEventListener('keydown', onKey, true);
@@ -334,6 +337,6 @@
   function labelsHtml(items, opts) { return root.Print.labelsHtml(items, opts); }
   function receiptWrap(inner) { return root.Print.wrap(inner); }
 
-  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, modalOpen: modalOpen, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
+  root.UI = { h: h, clear: clear, toast: toast, pendingBanner: pendingBanner, abortPending: abortPending, beep: beep, modal: modal, modalOpen: modalOpen, closeAllModals: closeAllModals, approve: approve, printHtml: printHtml, esc: esc, fmtDate: fmtDate, fmtTime: fmtTime, req: req, reqText: reqText, langSwitch: langSwitch,
     thumb: thumb, shrinkImage: shrinkImage, receiptHtml: receiptHtml, returnReceiptHtml: returnReceiptHtml, labelsHtml: labelsHtml, receiptWrap: receiptWrap, BANK_TYPE: BANK_TYPE, METHOD: METHOD };
 })(window);

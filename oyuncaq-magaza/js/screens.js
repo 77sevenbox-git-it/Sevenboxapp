@@ -8,7 +8,10 @@
   function can(perm) { var u = S.currentUser(); return !!(u && root.App.matrix && R.can(root.App.matrix, u.role, perm)); }
 
   /* ================= Giriş ================= */
-  function login(el, onDone) {
+  // opts.approvals: bildiriş kliki ilə açılıb, gözləyən sorğular (yalnız oxumaq üçün) göstərilir
+  function login(el, opts, onDone) {
+    if (typeof opts === 'function') { onDone = opts; opts = {}; }
+    opts = opts || {};
     UI.clear(el);
     var chosen = null;
     var pin = h('input', { class: 'input mono', type: 'password', inputmode: 'numeric', id: 'pin', maxlength: '8', autocomplete: 'off', style: 'font-size:22px' });
@@ -25,11 +28,29 @@
     var list = h('div', { class: 'users', role: 'group', 'aria-label': _t('İstifadəçi') });
     var foot = h('div', { class: 'muted', style: 'font-size:13px' });
     var submitBtn = h('button', { class: 'btn primary', type: 'submit' }, _t('Daxil ol'));
+    // Kassir cihazda həmişə açıq qalır (növbə boyu); digər rollar yalnız "bu mənim cihazımdır" seçsələr (FR-106)
+    var remember = h('input', { type: 'checkbox', id: 'remember-dev' });
+    var rememberRow = h('label', { class: 'check-row', hidden: true }, remember, h('span', null, _t('Bu mənim cihazımdır: tətbiqi bağlayıb açanda çıxış olmasın')));
+    var roles = {};
+    // Gözləyən təsdiq sorğuları (bildirişə klik): kod soruşulmadan görünür, təsdiq üçün aşağıda daxil olmaq lazımdır
+    var gate = h('div', { class: 'card gate', id: 'approval-gate', hidden: true });
+    if (opts.approvals) {
+      S.listPendingApprovals().then(function (reqs) {
+        if (!reqs.length) return;
+        gate.hidden = false;
+        gate.appendChild(h('h2', { style: 'margin:0;font-size:18px' }, _t('Təsdiq sorğusu gözləyir')));
+        reqs.slice(0, 5).forEach(function (a) {
+          gate.appendChild(h('div', { class: 'gate-item' }, h('div', null, UI.reqText(a)), h('div', { class: 'muted', style: 'font-size:13px' }, a.requestedBy.name + ' · ' + UI.fmtTime(a.at))));
+        });
+        gate.appendChild(h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Təsdiq etmək və ya rədd etmək üçün aşağıda daxil olun.')));
+      }).catch(function () { /* vacib deyil */ });
+    }
     var form = h('form', { class: 'card' },
       h('div', { class: 'lang-row' }, UI.langSwitch()),
       h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
       list,
       h('div', { class: 'field' }, pinLabel, pin),
+      rememberRow,
       submitBtn,
       foot);
     form.addEventListener('submit', function (e) {
@@ -38,28 +59,37 @@
       // Səhv PIN-də PIN-in başqa cihazda dəyişib-dəyişmədiyi serverdən yoxlanılır (2–3 san): bu müddətdə düymə "Yoxlanılır…" göstərir
       submitBtn.disabled = true; submitBtn.textContent = _t('Yoxlanılır…');
       function ready() { submitBtn.disabled = false; submitBtn.textContent = _t('Daxil ol'); }
-      S.login(chosen, pin.value).then(function (u) { pin.value = ''; ready(); onDone(u); }).catch(function (err) {
+      S.login(chosen, pin.value, { remember: !rememberRow.hidden && remember.checked }).then(function (u) {
+        pin.value = ''; ready();
+        try { root.localStorage.setItem('mag.lastUser', u.id); } catch (e) { /* yaddaş bağlıdırsa davam */ }
+        onDone(u);
+      }).catch(function (err) {
         ready(); pin.value = ''; pin.focus(); UI.toast(err.message, 'bad');
         // Giriş forması başqa cihazda dəyişmiş ola bilər (PIN ↔ şifrə): siyahı yenilənir ki, sahə düzgün növdə olsun
         S.listUsers().then(function (us) { us.forEach(function (x) { creds[x.id] = x.cred; }); if (chosen && creds[chosen]) { var was = pinLabel.textContent; setForm(creds[chosen]); if (pinLabel.textContent !== was) UI.toast(_t('Bu istifadəçinin giriş forması dəyişib. Yeni formada yazın'), 'bad'); } });
       });
     });
     S.listUsers().then(function (users) {
+      var last = null; try { last = root.localStorage.getItem('mag.lastUser'); } catch (e) { last = null; }
+      var lastBtn = null;
       users.forEach(function (u) {
-        creds[u.id] = u.cred;
+        creds[u.id] = u.cred; roles[u.id] = u.role;
         var b = h('button', { type: 'button', 'aria-pressed': 'false', onclick: function () {
-          chosen = u.id; Array.prototype.forEach.call(list.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); }); setForm(creds[u.id]); pin.focus();
+          chosen = u.id; Array.prototype.forEach.call(list.children, function (x) { x.setAttribute('aria-pressed', String(x === b)); }); setForm(creds[u.id]);
+          rememberRow.hidden = u.role === 'kassir'; pin.focus();
         } }, u.name, h('small', null, R.ROLE_NAMES[u.role]));
         list.appendChild(b);
+        if (u.id === last) lastBtn = b;
       });
+      if (lastBtn) lastBtn.click();       // bu cihazda sonuncu daxil olan seçilir: yalnız PIN yazmaq qalır
     });
     // Yeni cihaz: serverə qoşulub istifadəçiləri və məlumatı yükləmək. Qoşulubsa, dəyişmək yalnız Admin üçün (İcazələr bölməsi).
     root.Sync.endpoint().then(function (url) {
       if (url) { foot.textContent = _t('Server qoşulub · istifadəçilər və məlumat avtomatik yenilənir'); return; }
-      foot.appendChild(h('button', { type: 'button', class: 'btn small', id: 'connect-btn', onclick: function () { connectForm(function () { login(el, onDone); }); } }, _t('Bu cihazı serverə qoş')));
+      foot.appendChild(h('button', { type: 'button', class: 'btn small', id: 'connect-btn', onclick: function () { connectForm(function () { login(el, opts, onDone); }); } }, _t('Bu cihazı serverə qoş')));
       foot.appendChild(h('div', { style: 'margin-top:6px' }, _t('Başqa cihazda artıq işləyirsinizsə, bunu edin: istifadəçilər, məhsullar və çeklər oradan yüklənəcək.')));
     });
-    el.appendChild(h('div', { class: 'login' }, form));
+    el.appendChild(h('div', { class: 'login' }, h('div', { class: 'login-col' }, gate, form)));
   }
 
   function connectForm(done) {

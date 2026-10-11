@@ -832,6 +832,19 @@
     "Dil": "Язык",
     "Sistem vəziyyəti": "Состояние системы",
     "Bu zolağı yalnız Admin görür": "Эту полосу видит только Админ",
-    "Sistem": "Система"
+    "Sistem": "Система",
+    "Uzun müddət fəaliyyət olmadığı üçün çıxış edildi. Yenidən daxil olun": "Выход выполнен из-за длительного бездействия. Войдите снова",
+    "Başqa pəncərədə çıxış edildi. Yenidən daxil olun": "Выход выполнен в другом окне. Войдите снова",
+    "Bu kompüter birbaşa çek çapı rejimindədir: etiket və A4 sənəd burada çap olunmur. Onları başqa kompüterdən çap edin (və ya Çap ayarlarında birbaşa çapı söndürün)": "Этот компьютер работает в режиме прямой печати чеков: этикетки и документы A4 здесь не печатаются. Печатайте их с другого компьютера (или отключите прямую печать в настройках печати)",
+    "Birbaşa çap (çap pəncərəsiz)": "Прямая печать (без окна печати)",
+    "Bu kompüterdə Chrome birbaşa çap rejimindədir: çek çap pəncərəsi açılmadan çıxır. Etiket və A4 sənəd bu kompüterdə bağlanır.": "Chrome на этом компьютере работает в режиме прямой печати: чеки печатаются без окна печати. Этикетки и документы A4 на этом компьютере отключены.",
+    "Windows-da çek printerini \"defolt printer\" edin (Parametrlər → Printerlər).": "В Windows сделайте чековый принтер принтером по умолчанию (Параметры → Принтеры).",
+    "Chrome-un bütün pəncərələrini bağlayın. Masaüstündə Chrome qısayoluna sağ klik → Xassələr → \"Obyekt\" sahəsinin sonuna boşluq qoyub bunu əlavə edin:": "Закройте все окна Chrome. Щёлкните правой кнопкой по ярлыку Chrome на рабочем столе → Свойства → в конец поля «Объект» добавьте пробел и это:",
+    "Qısayolla Chrome-u açın, tətbiqi bu qısayoldan işlədin. \"Test çeki çap et\" pəncərəsiz çıxmalıdır. Pəncərə çıxırsa, Chrome başqa yolla açılıb: bütün Chrome pəncərələrini bağlayıb yenidən cəhd edin.": "Откройте Chrome через этот ярлык и работайте с приложением из него. «Печать тестового чека» должна выполняться без окна. Если окно появляется, Chrome открыт другим способом: закройте все окна Chrome и повторите.",
+    "Əmr kopyalandı": "Команда скопирована",
+    "Tam əmri kopyala (tətbiqi ayrıca pəncərədə açır)": "Скопировать полную команду (открывает приложение в отдельном окне)",
+    "Bu mənim cihazımdır: tətbiqi bağlayıb açanda çıxış olmasın": "Это моё устройство: не выходить из системы при закрытии и открытии приложения",
+    "Təsdiq sorğusu gözləyir": "Ожидает запрос на подтверждение",
+    "Təsdiq etmək və ya rədd etmək üçün aşağıda daxil olun.": "Чтобы подтвердить или отклонить, войдите ниже."
   });
 })(typeof window !== 'undefined' ? window : globalThis);
