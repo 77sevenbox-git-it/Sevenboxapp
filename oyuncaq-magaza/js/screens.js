@@ -95,12 +95,13 @@
   function connectForm(done) {
     var url = h('input', { class: 'input', id: 'c-url', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off' });
     var tok = h('input', { class: 'input', id: 'c-tok', type: 'password', autocomplete: 'off' });
-    var msg = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status' }, _t('Ünvanı və açarı (SYNC_TOKEN) yazın. Məlumat serverdən yüklənəcək, bir neçə saniyə çəkə bilər.'));
+    var msg = h('p', { class: 'muted', style: 'margin:0;font-size:13px', role: 'status' }, _t('Ünvanı və bu cihaz üçün Admin-in verdiyi açarı yazın. Məlumat serverdən yüklənəcək, bir neçə saniyə çəkə bilər.'));
     UI.modal({
       title: _t('Bu cihazı serverə qoş'),
       body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
         h('div', { class: 'field' }, h('label', { for: 'c-url' }, _t('Apps Script veb tətbiq ünvanı')), url),
-        h('div', { class: 'field' }, h('label', { for: 'c-tok' }, _t('Sinxron açarı')), tok), msg),
+        h('div', { class: 'field' }, h('label', { for: 'c-tok' }, _t('Sinxron açarı')), tok), msg,
+        deviceIdLine()),
       buttons: [{ text: _t('İmtina') }, { text: _t('Qoş və yüklə'), kind: 'primary', submit: true, onClick: function (close) {
         msg.textContent = _t('Yoxlanılır və yüklənir…');
         return root.Sync.connect(url.value, tok.value).then(function (r) {
@@ -1417,6 +1418,7 @@
         can('admin.users') ? usersCard() : null,
         can('admin.users') ? discountCapsCard(r[1]) : null,
         settingsCard(r[1]),
+        devicesCard(),
         archiveCard()));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
   }
@@ -1444,7 +1446,7 @@
     function f(id, label, val, attrs) { var i = h('input', Object.assign({ class: 'input', id: id, value: val || '' }, attrs || {})); return { i: i, el: h('div', { class: 'field' }, h('label', { for: id }, label), i) }; }
     var name = f('s-name', _t('Mağaza adı'), store.name), voen = f('s-voen', _t('VÖEN'), store.voen), addr = f('s-addr', _t('Ünvan'), store.address), reg = f('s-reg', _t('Kassa adı'), store.registerName);
     var url = f('s-url', _t('Apps Script veb tətbiq ünvanı'), '', { placeholder: 'https://script.google.com/macros/s/…/exec' });
-    var tok = f('s-tok', _t('Sinxron açarı (SYNC_TOKEN)'), '', { type: 'password', autocomplete: 'off', placeholder: _t('Dəyişmək üçün yazın') });
+    var tok = f('s-tok', _t('Bu cihazın sinxron açarı'), '', { type: 'password', autocomplete: 'off', placeholder: _t('Dəyişmək üçün yazın') });
     var info = h('div', { class: 'muted', style: 'font-size:13px', id: 's-info', role: 'status' });
     var conflicts = h('ul', { class: 'conflicts' });
     root.Sync.endpoint().then(function (u) { url.i.value = u; });
@@ -1456,6 +1458,7 @@
         UI.clear(info);
         info.appendChild(document.createTextNode('Cihaz: ' + String(S.deviceId() || '').slice(-8) + ' · ' + (r[0] ? _t('server qoşulub') : _t('server qoşulmayıb (yalnız bu cihaz)')) +
           (r[1] ? _t(' · göndərilməmiş: {0}', [r[1]]) : '') + (st.lastOk ? _t(' · son sinxron: {0}', [UI.fmtTime(st.lastOk)]) : '')));
+        if (st.kind) info.appendChild(h('div', { id: 's-kind' }, st.kind === 'legacy' ? _t('Açar: köhnə ümumi açar (Admin-dən bu cihaz üçün ayrıca açar alın)') : _t('Açar: bu cihaza məxsusdur')));
         if (st.error) info.appendChild(h('div', { class: 'sync-err', style: 'color:var(--bad)' }, _t('Son xəta: {0}', [st.error])));
         UI.clear(conflicts);
         r[2].slice(-5).forEach(function (c) { conflicts.appendChild(h('li', null, c.message)); });
@@ -1472,7 +1475,7 @@
       h('h2', { style: 'margin:0;font-size:18px' }, _t('Mağaza və server')),
       h('div', { class: 'grid2' }, name.el, voen.el, addr.el, reg.el, url.el, tok.el),
       h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Ünvan boşdursa, sistem yalnız bu kompyuterdə işləyir. Hər yeni brauzer/cihaz bir dəfə qoşulmalıdır (giriş ekranında "Bu cihazı serverə qoş").')),
-      info, conflicts,
+      info, deviceIdLine(), conflicts,
       h('div', { class: 'row' },
         h('button', { class: 'btn primary', onclick: function () {
           var u = url.i.value.trim();
@@ -1704,6 +1707,236 @@
       h('table', null, h('thead', null, h('tr', null, h('th', null, _t('Ad')), h('th', null, _t('Rol')), h('th', null, _t('Giriş forması')), h('th', null, _t('Vəziyyət')), h('th', null, ''))), tb));
   }
 
-  root.Screens = { login: login, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, admin: admin,
+  /* ================= Cihaz açarları (Code.gs v9, FR-101) ================= */
+  function shortId(id) { return String(id || '').slice(-8); }
+
+  // Bu cihazın tam ID-si (Admin onu "Cihazlar" kartında yazır) + kopyala
+  function deviceIdLine() {
+    var id = S.deviceId() || '';
+    return h('div', { class: 'device-id', id: 'device-id-line' },
+      h('span', { class: 'muted' }, _t('Bu cihazın ID-si')), ' ',
+      h('code', { class: 'mono', id: 'device-id' }, id), ' ',
+      h('button', { class: 'btn small', type: 'button', id: 'device-id-copy', onclick: function () {
+        copyText(id).then(function () { UI.toast(_t('Kopyalandı')); }, function () { UI.toast(id); });
+      } }, _t('Kopyala')));
+  }
+
+  // Açar yaradılanda yalnız bir dəfə göstərilir (serverdə yalnız hash saxlanılır: itirilibsə "Yeni açar" yaradılır)
+  function tokenModal(r, done) {
+    var tok = h('input', { class: 'input mono', id: 'dev-token', readonly: true, value: r.token, 'aria-label': _t('Cihaz açarı'), onfocus: function () { this.select(); } });
+    var mine = r.id === S.deviceId();
+    var buttons = [{ text: _t('Kopyala'), onClick: function () { return copyText(r.token).then(function () { UI.toast(_t('Kopyalandı')); }); } }];
+    if (mine) buttons.push({ text: _t('Bu cihaza tətbiq et'), onClick: function (close) {
+      return root.Sync.endpoint().then(function (u) { return root.Sync.setEndpoint(u, r.token); }).then(function () { return root.Sync.cycle(); })
+        .then(function () { UI.toast(_t('Bu cihazın açarı yeniləndi')); close(); });
+    } });
+    buttons.push({ text: _t('Bağla'), kind: 'primary' });
+    UI.modal({
+      title: _t('Cihaz açarı'), sticky: true, onClose: done,
+      body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+        h('p', { style: 'margin:0' }, _t('«{0}» cihazı üçün açar yaradıldı. Açar yalnız indi göstərilir: kopyalayın.', [r.name || shortId(r.id)])),
+        tok,
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Həmin cihazda "Rollar və icazələr → Mağaza və server" bölməsindəki açar sahəsinə (və ya giriş ekranında "Bu cihazı serverə qoş"a) yazın. Açar itərsə, yeni açar yaradılır; köhnəsi dayanır.'))),
+      buttons: buttons
+    });
+  }
+
+  // Admin: cihazlar, onların açarları, bloklama (Code.gs v9). ADMIN_KEY hər dəfə əl ilə yazılır, yalnız yaddaşda qalır (ekran bağlananda itir).
+  function devicesCard() {
+    var adminKey = '';
+    var body = h('div', { style: 'display:flex;flex-direction:column;gap:14px' });
+    function call(action, extra) { return root.Sync.api(action, Object.assign({ adminKey: adminKey }, extra || {})); }
+    function nice(e) { return e && e.message === _t('Naməlum əməliyyat') ? new Error(_t('Cihaz açarları üçün Code.gs v9 lazımdır: yeni kodu yapışdırıb "New version" deploy edin')) : e; }
+    function bad(e) { UI.toast(nice(e).message, 'bad'); }
+
+    function askKey(note) {
+      UI.clear(body);
+      var inp = h('input', { class: 'input mono', id: 'dev-key', type: 'password', autocomplete: 'off' });
+      var form = h('form', { class: 'row', style: 'gap:8px;align-items:flex-end;flex-wrap:wrap' },
+        h('div', { class: 'field', style: 'flex:1;min-width:220px' }, h('label', { for: 'dev-key' }, _t('Admin açarı (ADMIN_KEY)')), inp),
+        h('button', { class: 'btn primary', id: 'dev-open', type: 'submit' }, _t('Cihazları göstər')));
+      form.addEventListener('submit', function (e) { e.preventDefault(); adminKey = inp.value.trim(); inp.value = ''; if (adminKey) load(); });
+      body.appendChild(h('p', { class: note ? 'warn-text' : 'muted', id: 'dev-msg', role: 'status', style: 'margin:0;font-size:13px' },
+        note || _t('Cihazları idarə etmək üçün Admin açarını yazın. O yalnız Apps Script-də (Script properties → ADMIN_KEY) saxlanılır; bu cihazda saxlanmır.')));
+      body.appendChild(form);
+    }
+
+    function load() {
+      UI.clear(body); body.appendChild(h('div', { class: 'muted' }, _t('Yüklənir…')));
+      return call('devices.list').then(show, function (e) { adminKey = ''; askKey(nice(e).message); });
+    }
+    function reload() { return call('devices.list').then(show, function (e) { adminKey = ''; askKey(nice(e).message); }); }
+
+    function nameModal(title, initial, okText, fn) {
+      var inp = h('input', { class: 'input', id: 'dev-name', maxlength: '60', value: initial || '' });
+      UI.modal({ title: title, body: h('div', { class: 'field' }, h('label', { for: 'dev-name' }, _t('Cihazın adı (məs. Kassa 2, Anbar)')), inp),
+        buttons: [{ text: _t('İmtina') }, { text: okText, kind: 'primary', submit: true, onClick: function (close) { return fn(inp.value.trim()).then(function () { close(); }); } }] });
+    }
+    function create(id, name, rotate) {
+      return call(rotate ? 'devices.rotate' : 'devices.create', { id: id, name: name }).then(function (r) { tokenModal(r, reload); reload(); });
+    }
+    function revokeModal(d) {
+      var why = h('input', { class: 'input', id: 'dev-why', maxlength: '60' });
+      UI.modal({ title: _t('Cihazı blokla'), sticky: true,
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
+          h('p', { style: 'margin:0' }, _t('«{0}» serverə qoşula bilməyəcək, tətbiq həmin cihazda kilidlənəcək. Məlumat silinmir; cihaz sonra bərpa edilə bilər.', [d.name || shortId(d.id)])),
+          h('div', { class: 'field' }, h('label', { for: 'dev-why' }, _t('Səbəb (istəyə bağlı)')), why)),
+        buttons: [{ text: _t('İmtina') }, { text: _t('Blokla'), kind: 'danger', submit: true, onClick: function (close) {
+          return call('devices.revoke', { id: d.id, name: d.name, reason: why.value.trim() }).then(function () { close(); UI.toast(_t('Cihaz bloklandı')); reload(); });
+        } }] });
+    }
+    function legacyBlock(lg) {
+      var row = h('div', { class: 'row', id: 'dev-legacy', style: 'gap:8px;align-items:center;flex-wrap:wrap' });
+      var txt;
+      if (!lg.tokenSet) txt = _t('Köhnə ümumi açar (SYNC_TOKEN) təyin olunmayıb.');
+      else if (lg.active && lg.until) txt = _t('Köhnə ümumi açar hələ işləyir, son tarix: {0}. Bütün cihazlara öz açarını verəndən sonra söndürün.', [UI.fmtDate(lg.until)]);
+      else if (lg.active) txt = _t('Köhnə ümumi açar hələ işləyir. İlk cihaz açarı yaradılandan 14 gün sonra bağlanacaq.');
+      else txt = _t('Köhnə ümumi açar söndürülüb.');
+      row.appendChild(h('span', { class: lg.active ? 'warn-text' : 'muted', style: 'font-size:14px' }, txt));
+      if (lg.tokenSet && lg.active) {
+        row.appendChild(h('button', { class: 'btn small danger', type: 'button', id: 'dev-legacy-off', onclick: function () {
+          UI.modal({ title: _t('Ümumi açarı söndür'), sticky: true, body: h('p', { style: 'margin:0' }, _t('Hələ öz açarı olmayan cihazlar serverə qoşula bilməyəcək (qeydləri cihazda qalır). Davam edək?')),
+            buttons: [{ text: _t('İmtina') }, { text: _t('Söndür'), kind: 'danger', submit: true, onClick: function (close) { return call('legacy.set', { mode: 'off' }).then(function () { close(); reload(); }); } }] });
+        } }, _t('Söndür')));
+        if (lg.until) row.appendChild(h('button', { class: 'btn small', type: 'button', id: 'dev-legacy-ext', onclick: function () { call('legacy.set', { mode: 'on', days: 14 }).then(function () { UI.toast(_t('14 gün uzadıldı')); reload(); }).catch(bad); } }, _t('14 gün uzat')));
+      } else if (lg.tokenSet) {
+        row.appendChild(h('button', { class: 'btn small', type: 'button', id: 'dev-legacy-on', onclick: function () { call('legacy.set', { mode: 'on', days: 14 }).then(function () { reload(); }).catch(bad); } }, _t('14 gün aç')));
+      }
+      return row;
+    }
+    function kindText(d) { return !d.hasToken ? _t('açarı yoxdur') : d.lastKind === 'legacy' ? _t('ümumi açar (köhnə)') : d.lastKind === 'device' ? _t('öz açarı') : '—'; }
+    function deviceTable(list) {
+      if (!list.length) return h('p', { class: 'muted', id: 'dev-empty', style: 'margin:0;font-size:14px' }, _t('Hələ heç bir cihaza ayrıca açar verilməyib.'));
+      return h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'dev-table' },
+        h('thead', null, h('tr', null, h('th', null, _t('Cihaz')), h('th', null, _t('Açar')), h('th', null, _t('Son görünmə')), h('th', null, _t('Vəziyyət')), h('th', null, ''))),
+        h('tbody', null, list.map(function (d) {
+          var me = d.id === S.deviceId();
+          return h('tr', { 'data-id': d.id },
+            h('td', null, h('b', null, d.name || shortId(d.id)), ' ', h('span', { class: 'mono muted', title: d.id }, shortId(d.id)), me ? [' ', h('span', { class: 'badge' }, _t('Bu cihaz'))] : null),
+            h('td', null, kindText(d)),
+            h('td', null, d.lastSeen ? UI.fmtDate(d.lastSeen) : '—'),
+            h('td', null, d.status === 'revoked' ? h('span', { class: 'badge bad', title: d.reason || '' }, _t('Bloklanıb')) : _t('Aktiv')),
+            h('td', null, h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+              d.status === 'revoked'
+                ? h('button', { class: 'btn small', type: 'button', 'data-act': 'restore', onclick: function () { call('devices.restore', { id: d.id }).then(function () { UI.toast(_t('Cihaz bərpa edildi')); reload(); }).catch(bad); } }, _t('Bərpa et'))
+                : [h('button', { class: 'btn small', type: 'button', 'data-act': 'rotate', onclick: function () {
+                    UI.modal({ title: _t('Yeni açar'), sticky: true, body: h('p', { style: 'margin:0' }, _t('Köhnə açar dərhal dayanacaq; cihaza yeni açar yazılana qədər o, serverə qoşula bilməyəcək. Davam edək?')),
+                      buttons: [{ text: _t('İmtina') }, { text: _t('Yeni açar yarat'), kind: 'primary', submit: true, onClick: function (close) { return create(d.id, d.name, true).then(close); } }] });
+                  } }, d.hasToken ? _t('Yeni açar') : _t('Açar yarat')),
+                  h('button', { class: 'btn small', type: 'button', 'data-act': 'rename', onclick: function () { nameModal(_t('Cihazın adı'), d.name, _t('Yadda saxla'), function (n) { return call('devices.rename', { id: d.id, name: n }).then(reload); }); } }, _t('Ad')),
+                  h('button', { class: 'btn small danger', type: 'button', 'data-act': 'revoke', disabled: me, title: me ? _t('Admin kompüterinin özünü bloklamaq olmaz') : null, onclick: function () { revokeModal(d); } }, _t('Blokla'))])));
+        }))));
+    }
+    function unknownTable(list) {
+      return h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+        h('h3', { style: 'margin:0;font-size:15px' }, _t('Ümumi açarla işləyən tanınmayan cihazlar')),
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'dev-unknown' },
+          h('thead', null, h('tr', null, h('th', null, _t('Cihaz ID')), h('th', null, _t('Son görünmə')), h('th', null, ''))),
+          h('tbody', null, list.map(function (u) {
+            return h('tr', { 'data-id': u.id },
+              h('td', null, h('span', { class: 'mono', title: u.id }, shortId(u.id)), u.id === S.deviceId() ? [' ', h('span', { class: 'badge' }, _t('Bu cihaz'))] : null),
+              h('td', null, u.lastSeen ? UI.fmtDate(u.lastSeen) : '—'),
+              h('td', null, h('div', { class: 'row', style: 'gap:6px;flex-wrap:wrap' },
+                h('button', { class: 'btn small primary', type: 'button', 'data-act': 'create', onclick: function () {
+                  nameModal(_t('Cihaz üçün açar yarat'), '', _t('Açar yarat'), function (n) { return create(u.id, n, false); });
+                } }, _t('Açar yarat')),
+                h('button', { class: 'btn small danger', type: 'button', 'data-act': 'revoke', disabled: u.id === S.deviceId(), onclick: function () { revokeModal({ id: u.id, name: '' }); } }, _t('Blokla')))));
+          })))));
+    }
+    function addForm(list) {
+      var known = list.some(function (d) { return d.id === S.deviceId(); });
+      var id = h('input', { class: 'input mono', id: 'dev-new-id', autocomplete: 'off', value: known ? '' : (S.deviceId() || '') });
+      var nm = h('input', { class: 'input', id: 'dev-new-name', maxlength: '60', autocomplete: 'off' });
+      var form = h('form', { style: 'display:flex;flex-direction:column;gap:8px' },
+        h('h3', { style: 'margin:0;font-size:15px' }, _t('Yeni cihaz üçün açar')),
+        h('div', { class: 'grid2' },
+          h('div', { class: 'field' }, h('label', { for: 'dev-new-id' }, _t('Cihaz ID')), id),
+          h('div', { class: 'field' }, h('label', { for: 'dev-new-name' }, _t('Cihazın adı (məs. Kassa 2, Anbar)')), nm)),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Cihazın ID-sini həmin cihazda "Mağaza və server" bölməsində (və ya qoşulma pəncərəsində) görə bilərsiniz.') + (known ? '' : ' ' + _t('Bu cihazın ID-si hazır yazılıb.'))),
+        h('div', null, h('button', { class: 'btn primary', id: 'dev-new-go', type: 'submit' }, _t('Açar yarat'))));
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        create(id.value.trim(), nm.value.trim(), false).catch(bad);
+      });
+      return form;
+    }
+    // Bloklanmış cihazdan çıxarılmış qeydləri qəbul edir: bu cihazın göndərmə növbəsinə qoyulur
+    function importBlock() {
+      var file = h('input', { type: 'file', accept: '.json,application/json', id: 'dev-import', 'aria-label': _t('Növbə faylı') });
+      file.addEventListener('change', function () {
+        var f = file.files && file.files[0]; if (!f) return;
+        f.text().then(function (txt) { return root.Sync.importOutbox(txt); })
+          .then(function (r) { UI.toast(_t('{0} qeyd göndərmə növbəsinə qoyuldu ({1} artıq var idi)', [r.added, r.skipped])); })
+          .catch(bad).then(function () { file.value = ''; });
+      });
+      return h('div', { style: 'display:flex;flex-direction:column;gap:6px' },
+        h('h3', { style: 'margin:0;font-size:15px' }, _t('Bloklanmış cihazdan qeydlər')),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Bloklanmış cihazın serverə göndərilməmiş qeydləri varsa, o cihazın ekranından fayla yüklənir. Faylı buradan seçin: qeydlər bu cihazdan serverə göndəriləcək.')),
+        file);
+    }
+
+    function show(res) {
+      UI.clear(body);
+      body.appendChild(h('div', { class: 'row', style: 'justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap' },
+        h('span', { class: 'muted', style: 'font-size:13px' }, _t('Admin açarı qəbul edildi')),
+        h('button', { class: 'btn small', id: 'dev-lock', type: 'button', onclick: function () { adminKey = ''; askKey(); } }, _t('Kilidlə'))));
+      body.appendChild(legacyBlock(res.legacy));
+      body.appendChild(deviceTable(res.devices));
+      if (res.unknown.length) body.appendChild(unknownTable(res.unknown));
+      body.appendChild(addForm(res.devices));
+      body.appendChild(importBlock());
+    }
+
+    askKey();
+    return h('div', { class: 'card', id: 'dev-card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('Cihazlar və sinxron açarları')),
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Hər kompüter və telefon öz açarı ilə qoşulur. Cihaz itərsə və ya işçi getsə, onu burada bloklayın: məlumat silinmir, amma cihaz serverə qoşula bilməz.')),
+      body);
+  }
+
+  // Admin cihazı bloklayıb (Code.gs v9). Tətbiq kilidlənir, məlumat cihazda qalır; göndərilməmiş qeydləri Admin kodu ilə fayla çıxarmaq olar.
+  function revokedLock(el, onUnlock) {
+    UI.clear(el);
+    var timer = null;
+    var count = h('p', { class: 'muted', id: 'rv-count', style: 'margin:0' });
+    var code = h('input', { class: 'input mono', id: 'rv-code', type: 'password', autocomplete: 'off' });
+    var tok = h('input', { class: 'input mono', id: 'rv-tok', type: 'password', autocomplete: 'off' });
+    var msg = h('p', { class: 'muted', id: 'rv-msg', role: 'status', style: 'margin:0;font-size:13px' });
+    var exportBox = h('div', { class: 'field', id: 'rv-export-box', hidden: true },
+      h('label', { for: 'rv-code' }, _t('Admin PIN / şifrəsi')), code,
+      h('button', { class: 'btn', id: 'rv-export', type: 'button', style: 'margin-top:8px', onclick: function () {
+        S.verifyAdminCode(code.value).then(function () { return root.Sync.exportOutbox(); }).then(function (r) {
+          blobDownload('7boxs-novbe-' + shortId(S.deviceId()) + '-' + new Date().toISOString().slice(0, 10) + '.json', new Blob([r.text], { type: 'application/json' }));
+          code.value = '';
+          msg.textContent = _t('{0} qeyd faylda saxlanıldı. Admin faylı İcazələr → Cihazlar bölməsindən işləyən cihaza yükləsin.', [r.count]);
+        }).catch(function (e) { msg.textContent = e.message; });
+      } }, _t('Qeydləri fayla yüklə')));
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+    function check(manual) {
+      var t = tok.value.trim();
+      if (manual) msg.textContent = _t('Yoxlanılır…');
+      var p = t ? root.Sync.endpoint().then(function (u) { return root.Sync.connect(u, t).then(function () { return true; }); }) : root.Sync.recheck();
+      return p.then(function (ok) {
+        if (ok) { stop(); onUnlock(); return; }
+        if (manual) msg.textContent = _t('Cihaz hələ də bloklu qalır. Admin ilə əlaqə saxlayın.');
+      }, function (e) { if (manual) msg.textContent = e.message; });
+    }
+    S.outboxCount().then(function (n) {
+      count.textContent = n ? _t('Serverə göndərilməmiş qeyd: {0}. Onlar cihazda qalır.', [n]) : _t('Serverə göndərilməmiş qeyd yoxdur.');
+      exportBox.hidden = !n;
+    });
+    var card = h('div', { class: 'card', id: 'revoked-card', style: 'display:flex;flex-direction:column;gap:12px' },
+      h('h1', { style: 'margin:0;font-size:24px' }, _t('Bu cihaz bloklanıb')),
+      h('p', { style: 'margin:0' }, _t('Administrator bu cihazı serverdən ayırıb. Tətbiqdən istifadə etmək olmaz, amma cihazdakı məlumat silinməyib. Cihaz sizindirsə, Administratorla əlaqə saxlayın.')),
+      deviceIdLine(), count, exportBox,
+      h('div', { class: 'field' }, h('label', { for: 'rv-tok' }, _t('Yeni açar (Administrator veribsə)')), tok),
+      h('button', { class: 'btn primary', id: 'rv-recheck', type: 'button', onclick: function () { check(true); } }, _t('Yenidən yoxla')),
+      msg);
+    el.appendChild(h('div', { class: 'login' }, card));
+    timer = setInterval(function () { check(false); }, 60000);
+    return stop;
+  }
+
+  root.Screens = { login: login, revokedLock: revokedLock, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, admin: admin,
     pendingForMe: pendingForMe, approvalsModal: approvalsModal, _refresh: null };
 })(window);

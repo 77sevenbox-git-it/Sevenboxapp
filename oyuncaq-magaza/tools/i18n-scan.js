@@ -74,7 +74,7 @@ const ALLOW = [
   /^services\.js:.*(Mühasib [12]|\[Mağaza adı\]|\[VÖEN\]|\[Ünvan\]|Konstruktor dəsti|Yumşaq ayı|Maqnit|Qız qalası|Puzzl|Nümunə qalıq)/,
   /^replica\.js:.*(başqa cihaz|təsdiq düzəlişi)/,
   /^print\.js:.*(Konstruktor dəsti|ƏÖÜĞŞİÇ|Sınaq məhsulu|Azərbaycanca)/,   // "Azərbaycanca" — dil seçimində hər dilin öz adı ilə yazılır
-  /^sync\.js:\d+:(İcazə yoxdur|JSON səhvdir|Naməlum əməliyyat|Naməlum açar|Server məşğuldur, sonra təkrar olunacaq|Bildiriş ünvanı tanınmır|Bu cihaz bildiriş üçün qeydiyyatdan keçməyib|Təsdiq lazımdır|Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq)$/   // Code.gs-in qaytardığı xəta mətnləri (müqayisə üçün; ekrana srvErr() ilə tərcümə olunmuş çıxır)
+  /^sync\.js:\d+:(İcazə yoxdur|JSON səhvdir|Naməlum əməliyyat|Naməlum açar|Server məşğuldur, sonra təkrar olunacaq|Bildiriş ünvanı tanınmır|Bu cihaz bildiriş üçün qeydiyyatdan keçməyib|Təsdiq lazımdır|Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq|Bu cihaz bloklanıb|ADMIN_KEY təyin olunmayıb: Apps Script-də setupAdminKey\(\) funksiyasını işlədin|Çox səhv cəhd: 10 dəqiqə gözləyin|Admin açarı səhvdir|Əməliyyat səhvdir|Müddət 1–90 gün olmalıdır|Heç bir cihaza ayrıca açar verilməyib: ümumi açarı söndürmək hamını kilidləyər|Bu kompüter hələ ümumi açarla işləyir: əvvəl ona ayrıca açar yazın|Cihaz id-si səhvdir \(3–64 simvol: hərf, rəqəm, _ və -\)|Cihaz bloklanıb: əvvəlcə bərpa edin|Bu cihaz üçün açar artıq var\. "Yeni açar" seçin|Cihaz tapılmadı)$/   // Code.gs-in qaytardığı xəta mətnləri (müqayisə üçün; ekrana srvErr() ilə tərcümə olunmuş çıxır)
 ];
 function unwrappedFiltered() { return unwrapped().filter(u => !ALLOW.some(r => r.test(u.file + ':' + u.line + ':' + u.text))); }
 

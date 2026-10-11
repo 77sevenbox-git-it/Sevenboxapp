@@ -1,10 +1,10 @@
 # 7BOXS — Kassa (MVP, mərhələ 1)
 
-Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build addımı yoxdur: fayllar GitHub Pages və ya istənilən statik hostda olduğu kimi işləyir.
+Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 və BRD v1.1 (2026-10-11) əlavələri (FR-101…FR-114) əsasındadır. Build addımı yoxdur: fayllar GitHub Pages və ya istənilən statik hostda olduğu kimi işləyir.
 
 ## Bu mərhələdə nə var
 
-- **Kassa (variant A):** mağaza barkodu ilə satış; istehsalçı barkodu kassada qəbul olunmur. Nağd / Bank (POS kart, karta köçürmə) / Qarışıq ödəniş, qaytarılacaq məbləğ avtomatik. 80 mm çek, çek barkodu ilə.
+- **Kassa (variant A):** mağaza və ya **istehsalçı barkodu** ilə satış (aşağıda «Kassada axtarış və istehsalçı barkodu»). Nağd / Bank (POS kart, karta köçürmə) / Qarışıq ödəniş, qaytarılacaq məbləğ avtomatik. 80 mm çek, çek barkodu ilə.
 - **Endirim:** məbləğlə və ya faizlə; məhsula (sətrə) və ya bütün çeke; hədləri məhsul/Admin təyin edir (aşağıda «Məhsul şəkli və endirim»). Hər endirim menecer PIN-i/şifrəsi ilə təsdiq olunur. **Mənfi qalıq:** xəbərdarlıq, mal qəbuluna qədər max 2 çek, 3-cüdə blok.
 - **Qaytarma:** çek barkodu ilə, 14 təqvim günü (Bakı vaxtı), say limiti, menecer təsdiqi, qaytarma çeki.
 - **Növbə:** açılış, mədaxil/məxaric, Z hesabatı, kassa fərqi + izah.
@@ -17,11 +17,11 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
   - Server (sinxron) qoşulmayıbsa sorğu menecerin cihazına çata bilmir: bu halda kassir sorğu göndərə bilmir, mal qəbulunu menecer özü edir. Mənfi qalıqla satış limiti (3-cü çekdə blok) qəbul təsdiqlənənə qədər davam edir, ona görə menecer gecikərsə kassada "mənfi qalıq" xəbərdarlığı çıxa bilər.
   - Admin İcazələr bölməsində kassirdən **"Mal qəbulu sorğusu göndərmək"** icazəsini ala bilər. Server kodu (`Code.gs`) dəyişmir, yenidən yerləşdirmək lazım deyil.
 - **Çek sətri:** kassir sayı sərbəst azaldır (1-ə qədər); sətri silmək zibil ikonu ilə, menecer təsdiqi tələb edir: ya menecer PIN-i, ya da (server qoşulubsa) menecerin cihazına sorğu. Menecer üst paneldə "Sorğular (N)" düyməsindən təsdiqləyir və ya rədd edir.
-- **Sessiya və yarımçıq çek:** səhifəni yeniləmək çıxış etdirmir və açıq çeki silmir (brauzer tabında saxlanır; tab bağlananda, çıxışda, PIN/rol dəyişəndə və 12 saatdan sonra silinir).
+- **Sessiya və yarımçıq çek (FR-106):** tətbiqi bağlayıb açmaq və ya səhifəni yeniləmək çıxış etdirmir, açıq çeki silmir. **Kassir** sessiyası cihazda saxlanılır; **Menecer/Admin/Mühasib** yalnız girişdə «bu mənim cihazımdır» seçsələr cihazda saxlanılır, əks halda yalnız brauzer tabında (tab bağlananda çıxış). Mütləq müddət **12 saat**; hərəkətsizlik limiti kassir üçün **3 saat**, digərləri üçün **5 saat**; vaxt bitəndə çıxış olur, yarımçıq çek yaddaşda qalır və eyni istifadəçi girəndə bərpa olunur. PIN/rol dəyişəndə və ya hesab söndürüləndə sessiya etibarsızdır. **Bildirişə klik** tətbiqi açır: sessiya varsa sorğular pəncərəsi dərhal açılır; yoxdursa kod soruşulmadan gözləyən sorğuların siyahısı (yalnız oxumaq) görünür, təsdiq/rədd üçün PIN ilə daxil olmaq lazımdır.
 - **Menecerə sorğu:** "Menecerə sorğu göndər" basılan kimi pəncərə bağlanır, yuxarıda "gözlənilir" zolağı qalır, kassir işləməyə davam edir. Menecer təsdiq edəndə əməliyyat avtomatik tamamlanır; təsdiq yalnız sorğuda göstərilən sətirə/say-a tətbiq olunur (arada çek dəyişibsə tətbiq olunmur). Çıxışda gözləyən sorğular ləğv olunur.
 - **Növbə:** yeni növbə əvvəlki növbənin sayılmış nağdı ilə açılır (fərqli məbləğ üçün izah məcburidir və auditə düşür); bağlayanda gözləmə göstəricisi var; Z çekində sıfır olan sətirlər yoxdur.
 - **Qaytarma:** say satılandan (və əvvəl qaytarılandan) çox ola bilməz; bu, menecer təsdiq ekranından əvvəl yoxlanır.
-- **İstehsalçı barkodu:** uzunluq və format məhdudiyyəti yoxdur (hərf-rəqəm, istənilən uzunluq); yalnız boşluq və öz mağaza/çek barkodlarımız qəbul olunmur.
+- **İstehsalçı barkodu:** uzunluq və format məhdudiyyəti yoxdur (hərf-rəqəm, istənilən uzunluq); yalnız boşluq və öz mağaza/çek barkodlarımız qəbul olunmur. Mağaza barkodu unikaldır, istehsalçı barkodu bir neçə məhsulda ola bilər.
 - **Xəta mesajları:** ekranın yuxarısında və pəncərənin içində göstərilir (telefon klaviaturası aşağını örtəndə itmir).
 - **4 dil: Azərbaycanca, Русский, English, Türkçe.** Giriş ekranında və üst paneldə dil seçimi var. Seçim **cihaza aiddir** (hər kassa/telefon öz dilində işləyir; kassir rusca, menecer azərbaycanca ola bilər), dəyişəndə səhifə bir dəfə yenilənir — giriş və yarımçıq çek itmir. Mətnlər kodda Azərbaycanca `_t('Qalıq: {0}', [n])` kimi yazılır, tərcümələr `js/lang-ru.js`, `lang-en.js`, `lang-tr.js` fayllarındadır; tərcümə tapılmasa Azərbaycanca göstərilir (səhifə sınmır). Tarix/saat seçilmiş dilin yerli formatındadır. Təsdiq sorğusunun mətni sorğunu görən menecerin dilində göstərilir (sorğu şablon + dəyərlər kimi saxlanılır). Telefon bildirişi də seçilmiş dildədir (service worker dili keş yaddaşından oxuyur).
   - **Müştəri çeki interfeys dilindən ayrıdır:** "Çap → Çekin dili" (ilkin: Azərbaycanca). Kassir rusca işləsə də çek Azərbaycanca çıxır; istəsəniz çek dilini dəyişin.
@@ -40,11 +40,11 @@ Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 əsasındadır. Build add
   - Server kodu (Code.gs v6) xarici xidmətə sorğu göndərir (`UrlFetchApp`): `setup()` işlədəndə Google yeni icazə istəyir ("Connect to an external service"). Apps Script layihəsində V8 runtime olmalıdır (yeni layihələrdə defoltdur; BigInt lazımdır). Xüsusi (private) VAPID açarı Script properties-də qalır, cihaza göndərilmir; `PUSH_CONTACT` property-sini (məs. `mailto:siz@firma.az`) istəsəniz yazın.
 - **Oflayn:** bütün məlumat IndexedDB-də; service worker tətbiqi internetsiz açır. Hər əməliyyat audit jurnalına və sinxron növbəsinə yazılır.
 - **Çoxcihazlı sinxron (iki istiqamətli):** hər brauzer/cihaz öz lokal nüsxəsi ilə işləyir; hadisələr Google Sheets-ə yazılır və digər cihazlara paylanır. İstifadəçilər/PIN-lər, məhsullar, qalıq, çeklər, qaytarmalar, növbə, icazələr, mağaza məlumatı və təsdiq sorğuları cihazlar arasında eynidir.
-- **Backend:** `apps-script/Code.gs` (v8: şəkil/endirim sütunları, böyük hadisə və çatışmayan sütun qorunması; v7: arxiv; v6: bildiriş; v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
+- **Backend:** `apps-script/Code.gs` (v9: **cihaz açarları**, bax «Cihaz açarları»; v8: şəkil/endirim sütunları, böyük hadisə və çatışmayan sütun qorunması; v7: arxiv; v6: bildiriş; v5: `Suppliers` vərəqi, `StockReceipts`-də təchizatçı/partiya sütunları) — Google Sheets-ə yazan və digər cihazların hadisələrini qaytaran Apps Script (idempotent, token, yazıda kilid, boş yoxlamada kilid və cədvəl oxuması yoxdur, toplu yazı). Köhnə v3/v4 ilə də işləyir (təchizatçı/partiya məlumatı yenə Events vərəqində saxlanılır, amma ayrıca vərəqlərə yazılmır), v3 yavaşdır: Ayarlar → Mağaza və server → "Bağlantını yoxla" skriptin köhnə olduğunu deyir.
 
 ## Hələ yoxdur (növbəti mərhələlər)
 
-Tam mal qəbulu sənədi, təchizatçıya mal qaytarma (kredit-nota), digər hesabatlar, inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması.
+Digər hesabatlar, inventarizasiya, e-kassa modulunun interfeysi, server tərəfində rol yoxlaması (hadisənin məzmununun yoxlanması). Alış qaimələri üçün ayrıca Sheets vərəqləri yoxdur: qaimə və qaytarma hadisələri `Events` və `Audit`-də saxlanılır (məhsul/partiya hərəkəti `StockReceipts`-dədir).
 
 ## İşə salmaq
 
@@ -53,7 +53,7 @@ python3 -m http.server 8000      # sonra http://localhost:8000
 ```
 İlk girişdə hər istifadəçi öz PIN-ini təyin edir. Başlanğıc PIN-ləri layihə sahibinə məlumdur; ekranda və burada yazılmır.
 
-**Səssiz çap:** Chrome-u `--kiosk-printing` parametri ilə açın və 80 mm printeri default edin — çek pəncərəsiz çap olunur.
+**Birbaşa çap (FR-112):** Chrome-u `--kiosk-printing` parametri ilə açın və 80 mm çek printerini Windows-da default edin: çek çap önizləməsiz çıxır. Tətbiqdə (Menyu → Çap → «Birbaşa çap») bu cihaz üçün rejimi açın: bu cihazda **yalnız çek** çap olunur, etiket və A4 sənədlər bağlanır (onlar eyni default printerə düşməsin). Etiket/A4 üçün başqa kompüter və ya ayrıca Chrome profili istifadə edin. Chrome parametri tətbiqdən verilə bilməz, ona görə hər cihazda bir dəfə əl ilə qurulur (bax «Çapı işə salmaq»).
 
 ## Google Sheets-ə qoşmaq
 
@@ -63,8 +63,9 @@ Verilənlər bazası faylı Drive-da hazırdır, cədvəllər və başlıqlar qu
 2. Script properties: `SYNC_TOKEN` = uzun təsadüfi sətir.
 3. `setup()` funksiyasını işə salın (yeni `Users`, `Settings` vərəqlərini yaradır, başlıqları yeniləyir; təkrar işə salmaq təhlükəsizdir).
 4. Deploy → Web app → Execute as: **Me**, Who has access: **Anyone**. Kodu sonradan dəyişəndə: Deploy → Manage deployments → ✏️ → Version: **New version** (ünvan dəyişmir).
-5. **Birinci cihaz:** giriş ekranında "Bu cihazı serverə qoş" (və ya admin kimi İcazələr → Mağaza və server) → URL və token.
-6. **Hər yeni brauzer/cihaz:** eyni addım. Qoşulan kimi istifadəçilər (yeni PIN-lərlə), məhsullar, qalıq və çeklər serverdən yüklənir. URL və token brauzerdə saxlanılır, ona görə hər brauzerdə bir dəfə yazılmalıdır.
+5. **Admin açarı (v9):** redaktorda `setupAdminKey()` funksiyasını bir dəfə işə salın; `ADMIN_KEY` Logs-da görünür, onu parol menecerində saxlayın (cihazı idarə etməyə lazımdır, cihazda saxlanmır).
+6. **Birinci cihaz:** giriş ekranında "Bu cihazı serverə qoş" (və ya admin kimi İcazələr → Mağaza və server) → URL və **açar**. Köhnə ümumi `SYNC_TOKEN` keçid dövründə işləyir (aşağıda «Cihaz açarları»); sonra hər cihaza öz açarı verilir.
+7. **Hər yeni brauzer/cihaz:** eyni addım. Qoşulan kimi istifadəçilər (yeni PIN-lərlə), məhsullar, qalıq və çeklər serverdən yüklənir. URL və açar brauzerdə saxlanılır, ona görə hər brauzerdə bir dəfə yazılmalıdır.
 
 Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir. Google giriş səhifəsi görünürsə, "Who has access" = Anyone deyil: digər brauzerlər qoşula bilməyəcək.
 
@@ -91,7 +92,37 @@ Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir
 - **Ləğv**: səbəb məcburidir; nağd idisə məbləğ açıq növbənin kassasına geri mədaxil olur (iki cihaz eyni anda ləğv etsə də yalnız bir mədaxil). Ödənişlər silinmir, ləğv kimi qalır.
 - **Hesabat sənədi** («Hesabat sənədi»): dövr (bu gün defolt, dünən, ay, seçilmiş tarixlər, bütün vaxt) üzrə təchizatçının malı olan **çeklər** (qaytarmalar mənfi), **hesablaşma** (əvvəlki borc + hesablanan − ödənişlər = **QALIQ BORC**), ödənişlər və (alınan mal əsasında) alınan mal siyahısı. Çap/PDF (A4), «Paylaş» (telefonda/Windows-da sistem paylaşma pəncərəsi) və «Kopyala» (WhatsApp/e-poçta yapışdırmaq üçün mətn). Sənədin dili ayrıca seçilir (AZ/RU/EN/TR). Sənəd faylı yaradılmır: fayl lazımdırsa «Çap et / PDF» → «PDF kimi saxla».
 - Sheets: `SupplierPayments` vərəqi (ödənişlər + ləğv), `Suppliers`-də `debtBasis`, `openingDebt` sütunları, nağd hərəkətlər `CashMoves`-da. Code.gs-i yeniləyəndən sonra `setup()` işlədin.
-- **Məhdudiyyətlər:** təchizatçıya mal qaytarma (kredit-nota) və fakturaların özü hələ yoxdur: belə düzəlişi açılış borcuna yazmaq olar; «satılan mal» əsasında offlayn cihaz gec sinxronlaşanda FIFO bölgüsü təchizatçılar arasında düzələ bilər (borc da ona uyğun dəyişir); alış qiyməti 0 olan partiyalar borca düşmür (sənəddə xəbərdarlıq var).
+- **Məhdudiyyətlər:** «satılan mal» əsasında offlayn cihaz gec sinxronlaşanda FIFO bölgüsü təchizatçılar arasında düzələ bilər (borc da ona uyğun dəyişir); alış qiyməti 0 olan partiyalar borca düşmür (sənəddə xəbərdarlıq var).
+
+## Kassada axtarış və istehsalçı barkodu (FR-102/103)
+- **Ada görə axtarış:** barkod sahəsinin yanındakı **«+»** (və ya `F8`) ad, marka, kateqoriya və barkodla axtarır (Azərbaycan hərfləri və böyük/kiçik hərf fərqsizdir). Qalığı sıfır olan məhsul solğun göstərilir; mənfi çek limiti dolubsa əlavə olunmur.
+- **İstehsalçı barkodu:** skan olunanda məhsul tapılır, ekranda və çekdə **mağaza barkodu** görünür. Barkod bir məhsula aiddirsə birbaşa əlavə olunur; 2 və daha çox məhsula aiddirsə seçim pəncərəsi çıxır (şəkil, ad, mağaza barkodu, qiymət, qalıq). Seçim yadda saxlanmır: hər skanda yenidən soruşulur. Mağaza barkodu eyni nömrəli istehsalçı barkodundan üstündür.
+
+## Alış qaimələri və təchizatçıya qaytarma (FR-104/105)
+**Təchizatçılar** bölməsində:
+- **«Yeni alış qaiməsi»** (Menecer/Admin): təchizatçı, qaimə nömrəsi/tarixi, sətirlər (məhsul, say, alış qiyməti). Saxlananda qalıq artır, hər sətir ayrıca **partiya** olur və borc hesablanır. Eyni təchizatçıdan eyni qaimə nömrəsi rədd olunur. Alış qiyməti əvvəlkindən fərqlidirsə, sonda **satış qiymətini dəyişmək təklifi** çıxır (satış qiyməti avtomatik dəyişmir). Kassirin «Mal gəldi» sorğusunu menecer təsdiqləyəndə bir sətirli qaimə yaranır; kassir yalnız sorğu göndərir.
+- Saxlanmış qaimə **dəyişdirilmir**. Səhvdirsə: heç nə satılmayıbsa **«Qaiməni ləğv et»**; satılıbsa **«Təchizatçıya qaytar»**.
+- **«Təchizatçıya qaytarma»**: istənilən qaimənin partiyasından, qismən də mümkündür. Qalıq azalır (satılmış hissə qaytarıla bilməz), qaytarma məbləği təchizatçı borcundan çıxılır (**«alınan mal»** əsaslı təchizatçıda). **«Satılan mal»** (komissiya) əsaslı təchizatçıda borc yalnız satılana görədir: qaytarma borcu dəyişmir, yalnız qalığı azaldır. Qaytarma ləğv edilmir; səhv olarsa yeni qaimə ilə düzəldilir.
+- Qaimə və qaytarmalar siyahıda görünür; hadisələr `purchase.created`, `stock.received` (docId ilə), `supplier.returned` kimi sinxronlanır. Köhnə versiyadan yenilənən cihaz bunları serverdən bir dəfə oxuyur (DB v5, schema 7).
+
+## Məhsulların Excel-dən yüklənməsi (FR-113)
+**Məhsullar → «Excel-dən yüklə»** (məhsul yaratmaq icazəsi lazımdır). Şablonu endirin (`.xlsx`), doldurun, faylı seçin: **önizləmə** hər sətri «yeni / dublikat / səhv» kimi göstərir (səhv səbəbi ilə), yalnız düzgün sətirlər yüklənir. `.xlsx` və CSV (UTF-8; ayırıcı `;`, `,` və ya Tab avtomatik tanınır) oxunur; ən çox 500 sətir. Fayl brauzerdə, öz yüngül oxuyucu ilə oxunur (kənar kitabxana yoxdur; `DecompressionStream` olan müasir Chrome/Edge lazımdır, yoxdursa CSV istifadə edin). Mağaza barkodları serverdən nömrə ehtiyatı ilə verilir (serverə qoşulubsa və əlçatandırsa), ona görə iki kassada eyni barkod çıxmır. **«Açılış qalığı»** təchizatçısız yazılır: borc yaranmır. İstehsalçı barkodunu Excel-də «Mətn» formatında yazın (uzun rəqəmlər elmi yazıya keçməsin).
+
+## İnterfeys (FR-107…111, 114)
+- **Tablar:** alt xətli sakit görünüş; dar ekranda ikinci sətirdə üfüqi sürüşən tablar. **Menyu** düyməsi: Çap, Bildiriş, Dil, «Kompüterə quraşdır», Çıxış.
+- **Sistem zolağı (yalnız Admin):** onlayn/oflayn, server cavabı, versiya, gözləyən sinxron, xəta, saat səhvi, açar növü («Ümumi açar»), növbə və istifadəçi. Digər rollar bunları görmür; kassada saat fərqi xəbərdarlığı yalnız fərq olanda çıxır.
+- **Pəncərə açıqdırsa** arxa ekran bloklanır (kliklənmir, sürüşmür, Tab pəncərədə qalır); Esc/fona klik yalnız saxlanmamış dəyişiklik yoxdursa bağlayır.
+- **Skrol çubuqları** gizlidir (kənar solması var); dar ekranda Məhsullar/Təchizatçılar/Çeklər kart görünüşündədir. Chrome ikonu: `favicon.ico`, 16/32 px PNG və manifest.
+
+## Cihaz açarları (Code.gs v9, FR-101)
+Hər kompüter/telefonun **öz açarı** var; ümumi `SYNC_TOKEN` yalnız keçid üçündür.
+1. **Qurulum (bir dəfə):** v9 kodunu yapışdırın → `setup()` → `setupAdminKey()` (Logs-dakı `ADMIN_KEY`-i saxlayın) → Deploy → **New version**.
+2. **Cihaza açar vermək:** Admin **İcazələr → «Cihazlar və sinxron açarları»** kartında `ADMIN_KEY`-i yazır (yalnız yaddaşda qalır, cihazda saxlanmır). Cihaz ya «tanınmayan cihazlar» siyahısındadır (hələ ümumi açarla işləyir), ya da yeni cihazın ID-si (həmin cihazın «Mağaza və server» bölməsində və ya qoşulma pəncərəsində görünür) əl ilə yazılır. **«Açar yarat»** → sistem 64 simvollu açar yaradır, **bir dəfə** göstərilir (serverdə yalnız hash saxlanılır). Admin onu həmin cihazın açar sahəsinə yazır (Admin kompüteri üçün «Bu cihaza tətbiq et» var). İtirilərsə «Yeni açar»: köhnəsi dərhal dayanır.
+3. **Keçid pəncərəsi:** ilk cihaz açarı yaradılandan **14 gün** köhnə ümumi açar işləyir (Admin «14 gün uzat» / «Söndür» edə bilər). Bundan əvvəl ümumi açarın müddəti yoxdur: yeni quraşdırma heç vaxt təsadüfən kilidlənmir. Ümumi açarı söndürmək üçün ən azı bir cihazın açarı olmalı və söndürən kompüter özü ayrıca açarla işləməlidir; yoxsa server rədd edir.
+4. **Cihazı bloklamaq:** itmiş cihaz və ya gedən işçi üçün «Blokla» (səbəb istəyə bağlıdır). Server həmin cihazın sorğularını qəbul etmir, bildiriş göndərməyi dayandırır. Cihazın özündə tətbiq **kilidlənir** («Bu cihaz bloklanıb» səhifəsi), **məlumat silinmir**. Göndərilməmiş qeydlər: Admin PIN/şifrəsi ilə **fayla yüklənir**, Admin onu işləyən cihazda «Bloklanmış cihazdan qeydlər» ilə seçir, qeydlər həmin cihazdan göndərilir (təkrar yükləmə dublikat yaratmır). «Bərpa et» cihazı açır (kilid səhifəsində «Yenidən yoxla» və ya 60 saniyədə bir avtomatik yoxlama; açar dəyişibsə yenisi yazılır).
+5. **Nəyi qoruyur:** hadisənin hansı cihazdan gəldiyi artıq **sübutdur** (açar cihaz ID-sinə bağlıdır: bir cihazın açarı başqa cihazın adından yaza bilmir), cihazı ləğv etmək olur. **Nəyi qorumur:** açar hadisənin **məzmununu** yoxlamır; açarı olan daxili cihaz saxta hadisə göndərə bilər (RİSK-2…7 qalır, bax «Təhlükəsizlik»).
+6. **ADMIN_KEY:** 5 səhv cəhddən sonra 10 dəqiqə bağlanır; cihaz idarəsi üçün həm cihaz (və ya keçid) açarı, həm `ADMIN_KEY` lazımdır. Bütün cihaz əməliyyatları `Audit` vərəqində `device.created/rotated/revoked/restored/renamed`, `legacy.set` kimi yazılır (açar yazılmır). «Son görünmə» ən çox 5 dəqiqə gecikmə ilə yazılır.
+7. **Hər şey kilidlənərsə:** Script properties-də `LEGACY_UNTIL` dəyərini gələcək vaxta (millisaniyə) qoyun və ya `SYNC_TOKEN` yazıb Admin kompüterində «Cihazlar» kartını açın; ya da `DEV_<id>` property-sini silin.
 
 ## Giriş forması (rol üzrə PIN və ya şifrə)
 Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında hər rol üçün seçir: **PIN** (4–8 rəqəm) və ya **şifrə** (≥ 8 simvol, ən azı 1 böyük hərf, 1 kiçik hərf, 1 rəqəm, 1 işarə; boşluq olmaz; ə, ğ, ı, ö, ü, ş, ç hərf sayılır). İlkin vəziyyət: hamı PIN.
@@ -155,6 +186,7 @@ npm test                       # aşağıdakı node testləri birlikdə (brauzer
 node tests/run.js              # qaydalar, pul, barkod
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
+node tests/devices.test.js     # cihaz açarları (Code.gs v9): ADMIN_KEY, açar yaratma/yeniləmə, bloklama/bərpa, ümumi açarın keçid pəncərəsi, kilidlənmədən qorunma
 node tests/archive.test.js     # arxivləşdirmə: 2500 hadisə, köhnə kursor arxivdən oxuyur, soyuq cihaz eyni vəziyyəti alır, yarımçıq qalma bərpası, xətada heç nə silinmir, xana sayı azalır
 node tests/auth.test.js        # rol üzrə PIN/şifrə: siyasət, şifrə qaydaları, PBKDF2 (Node ilə eyni), məcburi dəyişmə, rol dəyişimi, bloklama, saxta siyasət hadisələri
 node tests/supplier.test.js    # tədarükçü borcu: iki əsas, ödəniş/ləğv, kassaya təsir, icazələr, sinxron, saxta hadisələr, 4 dildə hesabat sənədi
@@ -182,7 +214,7 @@ python3 tests/e2e_a11y.py       # əlçatanlıq (WCAG 2.1 A/AA, axe-core: `npm i
 node tests/stress.test.js [N]   # yük: 3 kassa × N satış (defolt 800), yeni cihazın yüklənməsi, oflayn yığılma, paralel sinxron, böyük çek; Sheets tutumu hesablanır
 ```
 
-**Çapı işə salmaq (Windows + Chrome):** Xprinter sürücüsünü quraşdırın; çap pəncərəsində *Printer* — Xprinter, *Miqyas* — 100%, *Kənar boşluqlar* — Yoxdur, *Başlıq və sonluq* — söndürülü. Hər çekdə pəncərə çıxmasın deyirsinizsə, Chrome-u `chrome.exe --kiosk-printing --app=<ünvan>` ilə açın: çap pəncərəsiz, defolt printerə gedir (Xprinter-i Windows-da defolt edin; etiket printeri ayrıdırsa, onu başqa kompyuterdə və ya başqa brauzer profilində defolt edin). Çek printerində sürücünün kağızı "80mm × Receipt" (və ya 58 mm) olmalıdır. Test çapında çərçivə kəsilirsə "Çap" pəncərəsində "Kağız ölçüsü: Çap sürücüsünün ölçüsü" seçin. Çox uzun çeklərdə (50+ sətir) sürücü maksimum uzunluğu məhdudlaşdıra bilər, o halda da həmin seçim işləyir.
+**Çapı işə salmaq (Windows + Chrome):** (Menyu → Çap → «Birbaşa çap» rejimi bu cihazda yalnız çeki çap etdirir; Chrome parametri hər cihazda əl ilə qoyulur.) Xprinter sürücüsünü quraşdırın; çap pəncərəsində *Printer* — Xprinter, *Miqyas* — 100%, *Kənar boşluqlar* — Yoxdur, *Başlıq və sonluq* — söndürülü. Hər çekdə pəncərə çıxmasın deyirsinizsə, Chrome-u `chrome.exe --kiosk-printing --app=<ünvan>` ilə açın: çap pəncərəsiz, defolt printerə gedir (Xprinter-i Windows-da defolt edin; etiket printeri ayrıdırsa, onu başqa kompyuterdə və ya başqa brauzer profilində defolt edin). Çek printerində sürücünün kağızı "80mm × Receipt" (və ya 58 mm) olmalıdır. Test çapında çərçivə kəsilirsə "Çap" pəncərəsində "Kağız ölçüsü: Çap sürücüsünün ölçüsü" seçin. Çox uzun çeklərdə (50+ sətir) sürücü maksimum uzunluğu məhdudlaşdıra bilər, o halda da həmin seçim işləyir.
 Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəsilməməsi, barkodun printer sıxlığında oxunması (`tests/e2e_print.py`). **Yoxlanıla bilməyən:** sizin konkret printerin sürücüsünün kağızı qəbul etməsi və termo başlığın qaralığı — ona görə ilk dəfə test çeki və test etiketi çap edin.
 
 **Giriş kodunu unutmusunuzsa (Admin də):** Apps Script redaktorunda `resetAdminPin()` funksiyasını işə salın. Admin üçün təsadüfi müvəqqəti PIN yaranır (Admin rolu şifrəyə keçirilibsə də PIN verilir: daxil olur və dərhal şifrə seçməlidir) və Logs-da (View → Logs / Execution log) göstərilir; cihazlar onu bir neçə saniyəyə alır, Admin girişdən sonra yeni PIN seçməlidir.
@@ -191,10 +223,10 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 
 ## Təhlükəsizlik (GitHub Pages + Google Sheets/Apps Script)
 
-**Model:** serverə giriş yalnız `SYNC_TOKEN` ilə olur; token kimdədirsə, "tərəfdaş cihaz"dır. Rollar (Kassir/Menecer/Admin) və PIN-lər **brauzerdə** yoxlanılır, server istifadəçini tanımır. Bu mərhələdə bu, bilinən məhdudiyyətdir (`tests/security.test.js` RİSK-1…8). Ona görə əsas qoruma: **token və cədvəl məxfi qalsın, cihazlar etibarlı olsun**.
+**Model:** serverə giriş **cihaz açarı** ilə olur (v9; keçid dövründə ümumi `SYNC_TOKEN` də); açar kimdədirsə, həmin cihaz «tərəfdaş cihaz»dır. Cihaz ləğv edilə bilər. Rollar (Kassir/Menecer/Admin) və PIN-lər **brauzerdə** yoxlanılır, server istifadəçini tanımır. Bu mərhələdə bu, bilinən məhdudiyyətdir (`tests/security.test.js` RİSK-1…8). Ona görə əsas qoruma: **token və cədvəl məxfi qalsın, cihazlar etibarlı olsun**.
 
 **Mütləq edin:**
-1. **Token ≥ 32 təsadüfi simvol** olsun (Apps Script → Project Settings → Script properties → `SYNC_TOKEN`). Dəyişəndə hər cihazda "Serverə qoş"da yenisini yazın. Token-i heç vaxt GitHub-a, mesajlaşma qruplarına, skrinşotlara qoymayın; kimsə işdən çıxanda tokeni dəyişin.
+1. **Cihaz açarları (v9) və `ADMIN_KEY`:** hər cihaza ayrıca açar verin, keçiddən sonra köhnə ümumi açarı söndürün (İcazələr → Cihazlar). Açarları və `ADMIN_KEY`-i GitHub-a, mesajlaşma qruplarına, skrinşotlara qoymayın; kimsə işdən çıxanda və ya cihaz itəndə həmin cihazı bloklayın (ümumi açarı dəyişmək lazım deyil). Köhnə ümumi `SYNC_TOKEN` hələ işlədilirsə ≥ 32 təsadüfi simvol olsun.
 2. **Cədvəl (Sheets) yalnız sizin hesabda qalsın:** "Share" → *Restricted*, heç kimə "link ilə" açmayın. Bu faylı yalnız Admin görsün (mühasib hesabat istəyirsə, ayrıca *Viewer* kimi və yalnız adı ilə). Apps Script veb-tətbiqi "Execute as: Me", "Who has access: Anyone" qalır (token bunu qoruyur), amma ünvanı (`/exec`) açıq yerdə paylaşmayın.
 3. **Standart PIN-ləri dəyişin / artıq lazım olmayan hesabları söndürün** (Mühasib 1/2 hələ standart PIN-dədir; PIN-lər kodda və GitHub-da açıqdır). Admin və Menecer üçün PIN-dən çox **şifrə** forması seçin (Giriş forması kartı); PIN qalırsa ≥ 6 rəqəm. 5 səhv cəhddən sonra 5 dəq. bloklama var və yenilənmə ilə sıfırlanmır.
 4. **Google və GitHub hesablarında 2FA** (Authenticator/passkey). Bu iki hesab bütün sistemin açarıdır: GitHub-a giriş = kodu dəyişib bütün kassalara zərərli skript göndərmək.
@@ -211,7 +243,7 @@ Real printer olmadan yoxlanılan: PDF ölçüləri, səhifə sayı, mətnin kəs
 
 **Kod səviyyəsində edilənlər (bu mərhələ):** CSP; XSS yoxlaması (ad, qeyd, şablon, URL); CSV/Excel formul inyeksiyasının zərərsizləşdirilməsi; serverdən gələn hadisələrin tip/uzunluq/aralıq yoxlaması (zəhərli hadisə bütün cihazları dondura bilməz); girişdə bloklamanın yenilənmədən sonra qalması; service worker yalnız uğurlu cavabları saxlayır; token müqayisəsi sabit vaxtlıdır, `doPost` boş/yanlış gövdədə çökmür; nömrə aralıqları serverdə 1000 ilə məhdud; çekdə ≤ 100 sətir və hadisə ≤ 45 000 simvol (Sheets xanası 50 000 simvol).
 
-**Açıq risklər (Səviyyə 2 – BRD v1.3 üçün):** server tərəfində istifadəçiyə bağlı imza / cihaz açarları, PIN hash-larının cihazlara yayılmaması, hadisələrin rol əsasında serverdə rədd edilməsi. Bunlar olmadan token-i əldə edən daxili şəxs saxta hadisə göndərə bilər (RİSK-1…6); audit izində hadisənin hansı cihazdan gəldiyi görünür.
+**Açıq risklər (Səviyyə 2 – BRD v1.3 üçün):** server tərəfində istifadəçiyə bağlı imza (cihaz açarları v9-da var, amma yalnız giriş hüququ və ləğv verir, məzmunu yoxlamır), PIN hash-larının cihazlara yayılmaması, hadisələrin rol əsasında serverdə rədd edilməsi. Bunlar olmadan token-i əldə edən daxili şəxs saxta hadisə göndərə bilər (RİSK-1…6); audit izində hadisənin hansı cihazdan gəldiyi görünür.
 
 ## Struktur
 
@@ -225,10 +257,11 @@ js/barcode.js   EAN-13, mağaza və çek barkodu, SVG (svgMm: printer nöqtəsin
 js/rules.js     biznes qaydaları (saf funksiyalar)
 js/db.js        IndexedDB, atomik tranzaksiyalar
 js/services.js  satış, qaytarma, növbə, məhsul, giriş, audit
-js/fifo.js      FIFO bölgüsü və təchizatçı hesabatı (saf funksiyalar)
+js/fifo.js      FIFO bölgüsü, təchizatçı borcu və qaytarmalar (saf funksiyalar)
+js/import.js    Excel/CSV idxalı: .xlsx oxuyucu, sütun uyğunlaşdırma, təsnifat, şablon
 js/notify.js    bildirişlər: Web Push abunəsi, icazə, test, yerli bildiriş
 js/replica.js   başqa cihazlardan gələn hadisələrin lokal bazaya tətbiqi
-js/sync.js      outbox ⇄ Apps Script (göndər + al, nömrə aralıqları)
+js/sync.js      outbox ⇄ Apps Script (göndər + al, nömrə aralıqları, cihaz açarı və bloklanma vəziyyəti, növbənin fayla çıxarılması)
 js/ui.js        modal, PIN təsdiqi, bildirişlər
 js/print.js     çek/etiket şablonları, kağız/etiket ayarları, çap
 js/pos.js       kassa ekranı

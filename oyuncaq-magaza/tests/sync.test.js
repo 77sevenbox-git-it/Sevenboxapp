@@ -58,7 +58,7 @@ async function t(name, fn) {
 
   await t('yanlış açar: aydın xəta, cihaz qoşulmur', async () => {
     const d = await boot(be, false);
-    await rejects(d.Sync.connect(URL_OK, 'yanlis'), /Açar uyğun gəlmir/);
+    await rejects(d.Sync.connect(URL_OK, 'yanlis'), /Açar (bu cihaza )?uyğun gəlmir/);
     assert.strictEqual(await d.Sync.endpoint(), '');
   });
 

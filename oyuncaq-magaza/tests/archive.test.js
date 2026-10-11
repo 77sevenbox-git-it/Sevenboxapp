@@ -134,7 +134,7 @@ async function snapshot(d) {
 
   await t('status: əsas 0, canlı 2500, arxiv yoxdur, version 7', async () => {
     const s = post(be, { action: 'archive.status' });
-    assert.ok(s.ok); assert.strictEqual(s.version, 8);
+    assert.ok(s.ok); assert.strictEqual(s.version, 9);
     assert.strictEqual(s.base, 0); assert.strictEqual(s.live, 2500); assert.strictEqual(s.total, 2500);
     assert.strictEqual(s.cells, cellsBefore); assert.strictEqual(s.limit, 10000000); assert.deepStrictEqual(s.segs, []);
     assert.strictEqual(s.last, '');

@@ -335,6 +335,31 @@
     });
   }
 
+  // Bloklanmış cihazda göndərilməmiş qeydləri fayla çıxarmaq üçün: giriş olmadan Admin kodu (PIN/şifrə) yoxlanılır.
+  // Yanlış cəhd sayğacı giriş sayğacı kimi cihazın bazasındadır (yeniləmək sıfırlamır): 5 səhv → 5 dəqiqə.
+  function verifyAdminCode(secret) {
+    var KEY = '_export';
+    return loadFail(KEY).then(function (f) {
+      if (Date.now() < f.until) throw err(_t('Çox səhv cəhd. {0} dəqiqə gözləyin', [Math.ceil((f.until - Date.now()) / 60000)]), 'locked');
+      return DB.getAll('users').then(function (us) {
+        var admins = us.filter(function (u) { return u.active && u.role === 'admin'; });
+        return Promise.all(admins.map(function (u) { return checkSecret(u, secret); })).then(function (res) { return { ok: res.some(Boolean), pw: admins.some(function (u) { return credOf(u) === 'password'; }) }; });
+      });
+    }).then(function (r) {
+      return DB.atomic(['meta'], function (t) {
+        return t.get('meta', 'authFail').then(function (m) {
+          var all = (m && m.value) || {};
+          if (r.ok) { if (!Object.prototype.hasOwnProperty.call(all, KEY)) return; delete all[KEY]; return t.put('meta', { key: 'authFail', value: all }); }
+          var f = Object.prototype.hasOwnProperty.call(all, KEY) ? all[KEY] : { n: 0, until: 0 };
+          f = { n: (f.n | 0) + 1, until: Number(f.until) || 0 };
+          if (f.n >= 5) { f.until = Date.now() + 5 * 60000; f.n = 0; }
+          all[KEY] = f;
+          return t.put('meta', { key: 'authFail', value: all });
+        });
+      }).then(function () { if (!r.ok) throw err(r.pw ? _t('Şifrə səhvdir') : _t('PIN səhvdir')); return true; });
+    });
+  }
+
   // Yanlış PIN sayğacı cihazın bazasında (meta.authFail) saxlanılır: səhifəni yeniləmək (F5) və ya tabı yenidən açmaq sayğacı sıfırlamır. Serverə getmir.
   function loadFail(userId) {
     return DB.get('meta', 'authFail').then(function (m) {
@@ -1786,7 +1811,7 @@
     receiveStock: receiveStock, createPurchase: createPurchase, listPurchases: listPurchases, returnableLots: returnableLots, createSupplierReturn: createSupplierReturn, cancelPurchase: cancelPurchase, listSupplierReturns: listSupplierReturns, MAX_PURCHASE_LINES: MAX_PURCHASE_LINES, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,
     checkout: checkout, auditEvent: auditEvent, findSaleByCode: findSaleByCode, returnedQtyBySale: returnedQtyBySale, createReturn: createReturn, validateReturn: validateReturn,
-    recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
+    verifyAdminCode: verifyAdminCode, recentSales: recentSales, searchSales: whenLoggedIn(searchSales), outboxCount: outboxCount, deviceId: deviceId, resetPin: resetPin, listSuppliers: listSuppliers, createSupplier: createSupplier, updateSupplier: updateSupplier, supplierReport: supplierReport, productLots: productLots, stockBySupplier: stockBySupplier, supplierBalances: supplierBalances, listSupplierPays: listSupplierPays, supplierStatement: supplierStatement, paySupplier: paySupplier, voidSupplierPay: voidSupplierPay,
     listAllUsers: listAllUsers, createUser: createUser, updateUser: updateUser, refreshSession: refreshSession, validateNewPin: validateNewPin,
     requestApproval: requestApproval, requestStockReceipt: requestStockReceipt, listMyStockRequests: listMyStockRequests, listPendingApprovals: listPendingApprovals, setClockOffset: setClockOffset, decideApproval: decideApproval, cancelApproval: cancelApproval,
     checkApproval: checkApproval, listConflicts: listConflicts, EPOCH: EPOCH, restoreSession: restoreSession, touchSession: touchSession, sessionExpired: sessionExpired, _session: session

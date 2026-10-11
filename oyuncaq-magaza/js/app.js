@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.11-5';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.10.11-6';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   var ROUTES = [
     { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
@@ -19,6 +19,7 @@
   var app = { matrix: null, route: null };
   var shell, nav, main, sysEl, reqSlot, menuWrap, headerEl;      // sysEl: yalnız Admin üçün sistem zolağı (FR-108)
   var installEvt = null;                                            // brauzerin "quraşdır" təklifi (Chrome kompüterdə/Android)
+  var revoked = false, stopLock = null;                             // Admin bu cihazı bloklayıb (Code.gs v9): tətbiq kilidlənir
 
   function allowed() { var u = S.currentUser(); return ROUTES.filter(function (r) { return u && R.can(app.matrix, u.role, r.perm); }); }
 
@@ -102,6 +103,7 @@
     sysEl.appendChild(h('span', { class: 'muted', title: _t('Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın') }, 'v' + BUILD));
     if (unsent) sysEl.appendChild(h('span', { class: 'badge', title: _t('Serverə göndərilməmiş qeydlər') }, _t('{0} sinxron gözləyir', [unsent])));
     if (sy.ok === false) sysEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, _t('Sinxron xətası')));
+    if (sy.kind === 'legacy') sysEl.appendChild(h('span', { class: 'badge', title: _t('Bu cihaz köhnə ümumi açarla işləyir. İcazələr → Cihazlar bölməsində ona ayrıca açar verin') }, _t('Ümumi açar')));
     if (Math.abs(sy.skewMs || 0) > 120000) sysEl.appendChild(h('span', { class: 'badge bad', title: _t('Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını "avtomatik" rejimə keçirin', [Math.round(Math.abs(sy.skewMs) / 60000)]) }, _t('Saat səhvdir')));
     sysEl.appendChild(h('span', { class: 'sys-end' }, shift ? _t('Növbə açıq · {0}', [UI.fmtTime(shift.openedAt)]) : _t('Növbə bağlı')));
     sysEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
@@ -218,7 +220,23 @@
     root.Screens.pendingForMe().then(function (list) { if (list.length) root.Screens.approvalsModal(refreshStatus); });
   }
 
+  // Bloklanmış cihaz: giriş ekranı yox, "bloklanıb" səhifəsi. Admin cihazı bərpa edəndə (və ya yeni açar verəndə) kilid açılır.
+  function showRevoked() {
+    var el = document.getElementById('app');
+    reqSlot = null; sysEl = null; shell = null; closeMenu();
+    if (stopLock) stopLock();
+    stopLock = root.Screens.revokedLock(el, function () { revoked = false; stopLock = null; root.Sync.cycle(); start(); });
+  }
+  function onRevoked() {
+    if (revoked) return;
+    revoked = true;
+    closeMenu(); UI.abortPending(); UI.closeAllModals();
+    if (S.currentUser()) { S.logout(); root.POS.lock(); }      // yarımçıq çek yaddaşda qalır, amma ekran bağlanır
+    showRevoked();
+  }
+
   function start() {
+    if (revoked) return showRevoked();
     var el = document.getElementById('app');
     reqSlot = null; sysEl = null; shell = null; closeMenu();
     root.Screens.login(el, { approvals: location.hash === '#approvals' }, function (user) {
@@ -242,7 +260,7 @@
   addEventListener('online', refreshStatus);
   addEventListener('offline', refreshStatus);
   setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)
-  root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else refreshStatus(); });
+  root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else if (kind === 'revoked') onRevoked(); else refreshStatus(); });
 
   document.title = _t('7BOXS — Kassa');
   // Başqa saytın <iframe>-i içində açılıbsa (clickjacking) işləmir: GitHub Pages X-Frame-Options göndərmir, <meta> CSP isə frame-ancestors-u dəstəkləmir
@@ -250,10 +268,14 @@
   if (root.I18n) root.I18n.remember(root.I18n.lang());   // service worker bildirişi bu dildə göstərsin
   S.init().then(function () {
     root.Sync.start();
+    return root.Sync.isRevoked();
+  }).then(function (r) {
+    if (r) { revoked = true; return showRevoked(); }
     // Yeniləmə çıxış etdirməsin: sessiya hələ etibarlıdırsa birbaşa işçi ekrana qayıdırıq
     return S.restoreSession().then(function (u) {
+      if (revoked) return;                 // sessiyanı bərpa edərkən server cihazı bloklayıb: kilid ekranı qalır
       if (!u) return start();
-      return S.getMatrix().then(function (m) { app.matrix = m; startShell(); });
+      return S.getMatrix().then(function (m) { if (!revoked) { app.matrix = m; startShell(); } });
     });
   }).catch(function (e) {
     document.getElementById('app').textContent = _t('Başlatma xətası: {0}', [e.message]);

@@ -345,3 +345,8 @@ tr.inactive td { color: var(--faint); }
 .pf-table input.input { padding: 6px 8px; min-height: 36px; }
 input.input.changed { border-color: var(--warn); background: var(--warn-soft); }
 .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px 20px; }
+
+/* Cihaz açarları (FR-101) */
+.device-id { font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.device-id code { word-break: break-all; user-select: all; }
+#dev-token { font-size: 13px; letter-spacing: .02em; }

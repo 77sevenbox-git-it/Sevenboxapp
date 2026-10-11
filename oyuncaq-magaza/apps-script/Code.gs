@@ -1,11 +1,12 @@
 /**
- * 7BOXS — Google Apps Script backend (v7).
+ * 7BOXS — Google Apps Script backend (v9).
  * Kassaların hadisələrini (outbox) qəbul edib Google Sheets-ə yazır və digər cihazların hadisələrini geri verir (pull).
  *
  * Quraşdırma / yeniləmə:
  *  1. Verilənlər bazası faylını açın → Extensions → Apps Script → bu kodu yapışdırın (köhnəni əvəz edin).
  *     (Ayrıca script.google.com layihəsində də işləyir: fayl SPREADSHEET_ID ilə açılır.)
  *  2. Project Settings → Script properties: SYNC_TOKEN = uzun təsadüfi sətir (kassanın ayarlarına da eyni yazılır).
+ *     v9: hər cihazın öz açarı olur (aşağıda "Cihaz açarları"). SYNC_TOKEN köhnə cihazlar üçün keçid müddətində işləyir.
  *  3. setup() funksiyasını işə salın (yeni vərəqləri yaradır, başlıqları yeniləyir; təkrar işə salmaq təhlükəsizdir).
  *  4. Deploy → New deployment → Web app → Execute as: Me, Who has access: Anyone → URL-i kassaya yazın.
  *     Bildirişlər (v6): kod xarici push xidmətinə (UrlFetchApp) sorğu göndərir. setup()-ı redaktorda işə salanda Google yeni icazə istəyəcək
@@ -16,6 +17,10 @@
  * canlı cədvəldə son 45 gün qalır; cihazlar bunu hiss etmir (kursor mütləq nömrədir, köhnə hadisələr arxiv faylından oxunur).
  * Arxiv fayllarını SİLMƏYİN: yeni cihaz və uzun müddət oflayn qalan cihaz tarixçəni onlardan oxuyur.
  *
+ * Cihaz açarları (v9): redaktorda bir dəfə setupAdminKey() işlədin (ADMIN_KEY jurnalda göstərilir, saxlayın). Sonra Admin tətbiqdə
+ * İcazələr → Cihazlar kartında ADMIN_KEY-i yazıb cihaz id-si üçün açar yaradır, açarı həmin cihazda "Serverə qoş"a yazır.
+ * İlk cihaz açarı yaradılandan 14 gün sonra SYNC_TOKEN ilə giriş bağlanır (Admin uzada və ya əvvəl söndürə bilər).
+ *
  * Təhlükəsizlik (SEC-15): Sheets faylını yalnız Admin-lə paylaşın. "Users" vərəqində PIN-lərin duzlu hash-ı var.
  * Yazı yalnız bu skript vasitəsilə olur.
  */
@@ -24,7 +29,7 @@
 // Skript cədvəlin içindən (Extensions → Apps Script) yaradılıbsa, həmin fayl istifadə olunur;
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
-var VERSION = 8;
+var VERSION = 9;
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -89,7 +94,8 @@ function json(obj) {
 // Bağlantı yoxlaması: veb tətbiq ünvanını brauzerdə açanda {"ok":true,...} görünməlidir.
 function doGet() {
   var ss = db();
-  var hasToken = !!PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN');
+  var props = PropertiesService.getScriptProperties();
+  var hasToken = !!props.getProperty('SYNC_TOKEN') || props.getKeys().some(function (k) { return k.indexOf('DEV_') === 0; });
   var missing = Object.keys(SHEETS).filter(function (n) { return !ss.getSheetByName(n); });
   return json({ ok: true, service: 'magaza-is', version: VERSION, tokenSet: hasToken, missingSheets: missing });
 }
@@ -219,18 +225,217 @@ function sameToken(a, b) {
   for (var i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
 }
+
+/* ---------- Cihaz açarları (v9, FR-101) ----------
+   Hər cihazın ÖZ açarı var: Admin cihazın id-sini yazır, sistem açarı yaradır (yalnız bir dəfə göstərilir), Admin onu həmin cihaza yazır.
+   Script Properties-də açarın özü yox, SHA-256 hash-ı saxlanılır (DEV_<cihaz id>). Cihaz ləğv edilə bilər: o, bağlanır, məlumatı silinmir.
+   Açar giriş hüququdur (kim, nə vaxt, ləğv): hadisənin MƏZMUNUNU yoxlamır (RİSK-2…7 qalır, bax BRD K-10).
+   Köhnə ümumi açar (SYNC_TOKEN) keçid üçün işləyir: ilk cihaz açarı yaradılandan 14 gün (və ya Admin söndürənə qədər).
+   Cihaz idarəsi (devices.*, legacy.*) əlavə olaraq ADMIN_KEY tələb edir (Script properties; setupAdminKey() yaradır). */
+var DEV_RE = /^[A-Za-z0-9_-]{3,64}$/;
+var LEGACY_DAYS = 14;
+var ADMIN_MAX_FAILS = 5;          // ADMIN_KEY-i səhv yazma limiti; aşanda 10 dəqiqə bağlanır
+var SEEN_EVERY = 300;             // "son görünmə" Script Properties-ə ən çox 5 dəqiqədə bir yazılır (hər sinxronda yazmaq yavaşdır)
+
+function devId(v) { return typeof v === 'string' && DEV_RE.test(v) ? v : ''; }
+function devGet(props, id) {
+  var raw = id ? props.getProperty('DEV_' + id) : null;
+  if (!raw) return null;
+  try { var r = JSON.parse(raw); return r && typeof r === 'object' ? r : null; } catch (err) { return null; }
+}
+function devPut(props, id, rec) { props.setProperty('DEV_' + id, JSON.stringify(rec)); }
+function devHash(id, token) { return hexSha256('dev:' + id + ':' + token); }
+function newDeviceToken() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ''); }   // 64 onaltılıq simvol, ~240 bit
+
+// Köhnə ümumi açar: LEGACY_UNTIL yoxdursa məhdudiyyət hələ başlamayıb (heç bir cihaz açarı yaradılmayıb: təsadüfən kilidlənmə olmasın)
+function legacyUntil(props) {
+  var raw = props.getProperty('LEGACY_UNTIL');
+  if (raw === null || raw === undefined || raw === '') return -1;
+  return Number(raw) || 0;
+}
+function legacyActive(props) {
+  if (!props.getProperty('SYNC_TOKEN')) return false;
+  var u = legacyUntil(props);
+  return u === -1 || u > new Date().getTime();
+}
+function legacyInfo(props) {
+  var u = legacyUntil(props);
+  return { tokenSet: !!props.getProperty('SYNC_TOKEN'), active: legacyActive(props), until: u > 0 ? new Date(u).toISOString() : null, started: u !== -1 };
+}
+function fail(code, error) { return { ok: false, code: code, error: error }; }
+
+// Sorğu kimdən gəlir? → { ok, kind: 'device' | 'legacy', device } və ya { ok:false, code, error }
+function authenticate(body) {
+  var props = PropertiesService.getScriptProperties();
+  var token = typeof body.token === 'string' ? body.token : '';
+  var id = devId(body.device);
+  var rec = devGet(props, id);
+  var legacyTok = props.getProperty('SYNC_TOKEN');
+  var isLegacy = !!legacyTok && sameToken(token, legacyTok);
+  var isOwn = !!(rec && rec.hash && token && sameToken(devHash(id, token), rec.hash));
+  // Ləğv olunmuş cihaza yalnız açarı doğrudursa bildirilir (cihaz özünü kilidləsin); başqasına "icazə yoxdur"
+  if (rec && rec.status === 'revoked') return (isOwn || isLegacy) ? fail('revoked', 'Bu cihaz bloklanıb') : fail('denied', 'İcazə yoxdur');
+  if (isOwn) return { ok: true, kind: 'device', device: id };
+  if (isLegacy) return legacyActive(props) ? { ok: true, kind: 'legacy', device: id } : fail('legacy_off', 'İcazə yoxdur');
+  return fail('denied', 'İcazə yoxdur');
+}
+
+// "Son görünmə": keşdə qısa işarə, Script Properties-ə seyrək yazı
+function touchSeen(auth) {
+  if (!auth.device) return;
+  try {
+    var c = CacheService.getScriptCache(), key = 'lsw_' + auth.device;
+    if (c.get(key) === auth.kind) return;
+    c.put(key, auth.kind, SEEN_EVERY);
+    PropertiesService.getScriptProperties().setProperty('ls_' + auth.device, JSON.stringify({ at: new Date().toISOString(), kind: auth.kind }));
+  } catch (err) { /* son görünmə vacib deyil: sinxronu pozmur */ }
+}
+
+function adminCheck(body) {
+  var key = PropertiesService.getScriptProperties().getProperty('ADMIN_KEY');
+  if (!key) return fail('adminkey_unset', 'ADMIN_KEY təyin olunmayıb: Apps Script-də setupAdminKey() funksiyasını işlədin');
+  var c = CacheService.getScriptCache(), fails = Number(c.get('adm_fail') || 0);
+  if (fails >= ADMIN_MAX_FAILS) return fail('adminkey_locked', 'Çox səhv cəhd: 10 dəqiqə gözləyin');
+  if (!sameToken(body.adminKey, key)) { c.put('adm_fail', String(fails + 1), 600); return fail('adminkey_bad', 'Admin açarı səhvdir'); }
+  if (fails) c.remove('adm_fail');
+  return { ok: true };
+}
+
+function cleanName(v, fallback) {
+  var s = typeof v === 'string' ? v.replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, 60) : '';
+  return s || fallback || '';
+}
+
+function auditAdmin(type, data) {
+  var b = new Batch(db());
+  b.table('Audit').add([new Date().toISOString(), type, 'server', JSON.stringify(data)]);
+  b.flush();
+}
+
+function listDevices(props) {
+  var all = props.getProperties(), devices = [], known = {};
+  function parse(s) { try { return JSON.parse(s); } catch (err) { return null; } }
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf('DEV_') !== 0) return;
+    var id = k.slice(4), rec = parse(all[k]) || {}, ls = parse(all['ls_' + id]) || {};
+    known[id] = true;
+    devices.push({ id: id, name: rec.name || '', status: rec.status === 'revoked' ? 'revoked' : 'active', hasToken: !!rec.hash,
+      createdAt: rec.createdAt || null, rotatedAt: rec.rotatedAt || null, revokedAt: rec.revokedAt || null, reason: rec.reason || '',
+      lastSeen: ls.at || null, lastKind: ls.kind || null });
+  });
+  var unknown = [];
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf('ls_') !== 0 || known[k.slice(3)]) return;
+    var ls = parse(all[k]) || {};
+    unknown.push({ id: k.slice(3), lastSeen: ls.at || null, lastKind: ls.kind || null });
+  });
+  devices.sort(function (a, b) { return String(b.lastSeen || b.createdAt || '').localeCompare(String(a.lastSeen || a.createdAt || '')); });
+  unknown.sort(function (a, b) { return String(b.lastSeen || '').localeCompare(String(a.lastSeen || '')); });
+  return { ok: true, devices: devices, unknown: unknown, legacy: legacyInfo(props) };
+}
+
+// Admin əməliyyatları: əsas sorğu doğrulamasından (cihaz/ümumi açar) sonra əlavə olaraq ADMIN_KEY tələb olunur
+function handleAdmin(body, auth) {
+  var chk = adminCheck(body);
+  if (!chk.ok) return chk;
+  var props = PropertiesService.getScriptProperties();
+  if (body.action === 'devices.list') return listDevices(props);
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) return fail('busy', 'Server məşğuldur, sonra təkrar olunacaq');
+  try {
+    if (body.action === 'legacy.set') {
+      var days = Math.floor(Number(body.days));
+      var mode = body.mode === 'on' ? 'on' : body.mode === 'off' ? 'off' : '';
+      if (!mode) return fail('bad', 'Əməliyyat səhvdir');
+      if (mode === 'on') {
+        if (!(days >= 1 && days <= 90)) return fail('bad', 'Müddət 1–90 gün olmalıdır');
+        props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + days * 86400000));
+      } else {
+        // Hamını kilidləməmək üçün: ən az bir aktiv cihaz açarı olmalıdır və sorğunu göndərən cihaz özü ümumi açarla işləməməlidir
+        if (!listDevices(props).devices.some(function (d) { return d.hasToken && d.status === 'active'; })) return fail('no_devices', 'Heç bir cihaza ayrıca açar verilməyib: ümumi açarı söndürmək hamını kilidləyər');
+        if (auth.kind === 'legacy') return fail('self_legacy', 'Bu kompüter hələ ümumi açarla işləyir: əvvəl ona ayrıca açar yazın');
+        props.setProperty('LEGACY_UNTIL', '0');
+      }
+      auditAdmin('legacy.set', { mode: mode, days: mode === 'on' ? days : 0 });
+      return { ok: true, legacy: legacyInfo(props) };
+    }
+    var id = devId(body.id);
+    if (!id) return fail('bad', 'Cihaz id-si səhvdir (3–64 simvol: hərf, rəqəm, _ və -)');
+    var rec = devGet(props, id), at = new Date().toISOString(), token;
+    switch (body.action) {
+      case 'devices.create':
+      case 'devices.rotate':
+        if (rec && rec.status === 'revoked') return fail('dev_revoked', 'Cihaz bloklanıb: əvvəlcə bərpa edin');
+        if (body.action === 'devices.create' && rec && rec.hash) return fail('exists', 'Bu cihaz üçün açar artıq var. "Yeni açar" seçin');
+        if (body.action === 'devices.rotate' && !rec) return fail('missing', 'Cihaz tapılmadı');
+        token = newDeviceToken();
+        rec = rec || { createdAt: at };
+        rec.name = cleanName(body.name, rec.name || id.slice(-8));
+        rec.status = 'active'; rec.hash = devHash(id, token);
+        if (body.action === 'devices.rotate') rec.rotatedAt = at;
+        devPut(props, id, rec);
+        if (legacyUntil(props) === -1) props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + LEGACY_DAYS * 86400000));   // keçid pəncərəsi ilk cihaz açarı ilə başlayır
+        auditAdmin(body.action === 'devices.create' ? 'device.created' : 'device.rotated', { id: id, name: rec.name });
+        return { ok: true, id: id, token: token, name: rec.name, legacy: legacyInfo(props) };
+      case 'devices.revoke':
+        rec = rec || { createdAt: at, name: cleanName(body.name, id.slice(-8)) };
+        rec.status = 'revoked'; rec.revokedAt = at; rec.reason = cleanName(body.reason, '');
+        devPut(props, id, rec);
+        try {                                   // bildiriş də kəsilir
+          var pr = pushRows(db());
+          pr.rows.forEach(function (r) { if (r.device === id && r.active) pr.sh.getRange(r.row, 7, 1, 2).setValues([[false, at]]); });
+        } catch (err) { /* bildiriş qurulmayıb: vacib deyil */ }
+        auditAdmin('device.revoked', { id: id, name: rec.name, reason: rec.reason });
+        return { ok: true, id: id };
+      case 'devices.restore':
+        if (!rec) return fail('missing', 'Cihaz tapılmadı');
+        rec.status = 'active'; rec.revokedAt = null; rec.reason = '';
+        devPut(props, id, rec);
+        auditAdmin('device.restored', { id: id, name: rec.name });
+        return { ok: true, id: id };
+      case 'devices.rename':
+        if (!rec) return fail('missing', 'Cihaz tapılmadı');
+        rec.name = cleanName(body.name, rec.name);
+        devPut(props, id, rec);
+        auditAdmin('device.renamed', { id: id, name: rec.name });
+        return { ok: true, id: id };
+      default:
+        return fail('bad', 'Naməlum əməliyyat');
+    }
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Redaktorda bir dəfə işə salın: Admin açarı yaranır və jurnalda göstərilir (təkrar işə salmaq mövcud açarı dəyişmir).
+// Bu açar yalnız cihazları idarə edəndə (tətbiqdə "Cihazlar" kartı) lazımdır; cihazda saxlanmır, hər dəfə əl ilə yazılır.
+function setupAdminKey() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty('ADMIN_KEY')) { Logger.log('ADMIN_KEY artıq var. Dəyişmək üçün onu Script properties-dən silib bu funksiyanı təkrar işə salın.'); return null; }
+  var key = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  props.setProperty('ADMIN_KEY', key);
+  Logger.log('ADMIN_KEY (bir yerdə, məsələn parol meneceri; təkrar göstərilməyəcək): ' + key);
+  return key;
+}
+
 function doPost(e) {
   var body;
   try { body = JSON.parse(e.postData.contents); } catch (err) { return json({ ok: false, error: 'JSON səhvdir' }); }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ ok: false, error: 'JSON səhvdir' });
 
-  var token = PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN');
-  if (!token || !sameToken(body.token, token)) return json({ ok: false, error: 'İcazə yoxdur' });
+  var auth = authenticate(body);
+  if (!auth.ok) return json(auth);
+  touchSeen(auth);
 
   try {
     switch (body.action) {
-      case 'ping': return json({ ok: true, version: VERSION });
-      case 'sync': return json(handleSync(body));
+      case 'ping':
+        var pr = { ok: true, version: VERSION, kind: auth.kind };
+        if (auth.kind === 'legacy') pr.legacyUntil = legacyInfo(PropertiesService.getScriptProperties()).until;
+        return json(pr);
+      case 'sync': var sr = handleSync(body); sr.kind = auth.kind; return json(sr);
+      case 'devices.list': case 'devices.create': case 'devices.rotate': case 'devices.revoke': case 'devices.restore': case 'devices.rename': case 'legacy.set':
+        return json(handleAdmin(body, auth));
       case 'allocate': return json(handleAllocate(body));
       case 'archive.status': return json(archiveStatus());
       case 'archive.run':
@@ -853,8 +1058,11 @@ function notifyApprovals(ss, items) {
     if (!PropertiesService.getScriptProperties().getProperty('VAPID_PRIVATE')) return;     // bildiriş heç vaxt qurulmayıb: cədvələ toxunmuruq
     if (CacheService.getScriptCache().get('pushSlow')) return;
     var pr = pushRows(ss), targets = {}, list = [];
+    var props = PropertiesService.getScriptProperties();
     pr.rows.forEach(function (r) {
       if (!r.active || !r.endpoint) return;
+      var dv = devGet(props, devId(r.device));
+      if (dv && dv.status === 'revoked') return;          // ləğv olunmuş cihaza bildiriş getmir
       reqs.forEach(function (a) {
         if (r.device === a.device || (a.requestedBy && r.userId === a.requestedBy.id) || r.perms.indexOf(a.perm) === -1) return;
         if (!targets[r.endpoint]) { targets[r.endpoint] = true; list.push(r); }

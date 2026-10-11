@@ -145,8 +145,14 @@ function makeBackend(opts) {
       getUuid: () => nodeCrypto.randomUUID()
     },
     SpreadsheetApp: { getActiveSpreadsheet: () => null, openById: id => { calls.openById++; return store.spreadsheets[id] || ss; } },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: k => (k in store.props ? store.props[k] : null), setProperty: (k, v) => { store.props[k] = v; } }) },
-    CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = v; }, remove: k => { delete store.cache[k]; } }) },
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: k => (k in store.props ? store.props[k] : null),
+      setProperty: (k, v) => { store.props[k] = String(v); },          // Apps Script dəyərləri sətir kimi saxlayır
+      deleteProperty: k => { delete store.props[k]; },
+      getKeys: () => Object.keys(store.props),
+      getProperties: () => Object.assign({}, store.props)
+    }) },
+    CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = String(v); }, remove: k => { delete store.cache[k]; } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
     // Push xidmətinin təqlidi: backend.pushLog-da hər sorğu (url + başlıqlar); cavabı backend.pushRespond(url, req) təyin edir (defolt 201)

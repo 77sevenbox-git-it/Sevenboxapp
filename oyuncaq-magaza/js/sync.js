@@ -17,7 +17,7 @@
 
   var running = null, again = false, started = false, timer = null, kickTimer = null, fastUntil = 0, lastStart = 0, fails = 0, inflight = null;
   var listeners = [];
-  var state = { ok: null, error: null, lastOk: null, lastRun: null, skewMs: 0 };
+  var state = { ok: null, error: null, lastOk: null, lastRun: null, skewMs: 0, kind: null, revoked: false };
   var rtt = { last: 0, avg: 0 };
 
   function emit(kind, data) { listeners.slice().forEach(function (fn) { try { fn(kind, data); } catch (_) { /* dinləyici xətası sinxronu dayandırmasın */ } }); }
@@ -30,8 +30,8 @@
     return DB.put('meta', { key: 'syncUrl', value: url }).then(function () { if (token) return DB.put('meta', { key: 'syncToken', value: token }); });
   }
   function config() {
-    return Promise.all([DB.get('meta', 'syncUrl'), DB.get('meta', 'syncToken'), DB.get('meta', 'deviceId'), Replica.cursor()]).then(function (r) {
-      return { url: r[0] ? r[0].value : '', token: r[1] ? r[1].value : '', device: r[2] ? r[2].value : '', cursor: r[3] };
+    return Promise.all([DB.get('meta', 'syncUrl'), DB.get('meta', 'syncToken'), DB.get('meta', 'deviceId'), Replica.cursor(), DB.get('meta', 'revoked')]).then(function (r) {
+      return { url: r[0] ? r[0].value : '', token: r[1] ? r[1].value : '', device: r[2] ? r[2].value : '', cursor: r[3], revoked: !!(r[4] && r[4].value) };
     });
   }
 
@@ -87,6 +87,19 @@
       case 'Təsdiq lazımdır': return _t('Təsdiq lazımdır');
       case 'Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq': return _t('Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar olunacaq');
       case 'Bildiriş ünvanı tanınmır': return _t('Bildiriş ünvanı tanınmır');
+      // Cihaz açarları (Code.gs v9)
+      case 'Bu cihaz bloklanıb': return _t('Bu cihaz Admin tərəfindən bloklanıb');
+      case 'ADMIN_KEY təyin olunmayıb: Apps Script-də setupAdminKey() funksiyasını işlədin': return _t('ADMIN_KEY təyin olunmayıb: Apps Script-də setupAdminKey() funksiyasını işlədin');
+      case 'Çox səhv cəhd: 10 dəqiqə gözləyin': return _t('Çox səhv cəhd: 10 dəqiqə gözləyin');
+      case 'Admin açarı səhvdir': return _t('Admin açarı (ADMIN_KEY) səhvdir');
+      case 'Əməliyyat səhvdir': return _t('Əməliyyat səhvdir');
+      case 'Müddət 1–90 gün olmalıdır': return _t('Müddət 1–90 gün olmalıdır');
+      case 'Heç bir cihaza ayrıca açar verilməyib: ümumi açarı söndürmək hamını kilidləyər': return _t('Heç bir cihaza ayrıca açar verilməyib: ümumi açarı söndürmək hamını kilidləyər');
+      case 'Bu kompüter hələ ümumi açarla işləyir: əvvəl ona ayrıca açar yazın': return _t('Bu kompüter hələ ümumi açarla işləyir: əvvəl ona ayrıca açar yazın');
+      case 'Cihaz id-si səhvdir (3–64 simvol: hərf, rəqəm, _ və -)': return _t('Cihaz id-si səhvdir (3–64 simvol: hərf, rəqəm, _ və -)');
+      case 'Cihaz bloklanıb: əvvəlcə bərpa edin': return _t('Cihaz bloklanıb: əvvəlcə bərpa edin');
+      case 'Bu cihaz üçün açar artıq var. "Yeni açar" seçin': return _t('Bu cihaz üçün açar artıq var. "Yeni açar" seçin');
+      case 'Cihaz tapılmadı': return _t('Cihaz tapılmadı');
       case 'Bu cihaz bildiriş üçün qeydiyyatdan keçməyib': return _t('Bu cihaz bildiriş üçün qeydiyyatdan keçməyib');
       default:
         var m24 = /^Son arxivləşdirmədən 24 saat keçməyib \((.+) UTC\)$/.exec(e || '');
@@ -99,15 +112,25 @@
     opts = opts || {};
     return request(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) }, opts.timeout || T.timeout, opts.handle)
       .then(function (res) {
-        if (!res.ok) throw new Error(res.error === 'İcazə yoxdur' ? _t('Açar uyğun gəlmir: tətbiqdəki açar Script properties-dəki SYNC_TOKEN ilə eyni olmalıdır') : (srvErr(res.error) || _t('Server xətası')));
+        if (!res.ok) {
+          var msg;
+          if (res.error === 'İcazə yoxdur') {
+            // v9 server kod göndərir; köhnə server (v8) göndərmir: onda ümumi açar mesajı
+            msg = res.code === 'legacy_off' ? _t('Ümumi sinxron açarı söndürülüb. Admin-dən bu cihaz üçün ayrıca açar alın')
+              : res.code ? _t('Açar bu cihaza uyğun gəlmir. Admin-dən bu cihaz üçün verilən açarı yazın')
+              : _t('Açar uyğun gəlmir: tətbiqdəki açar Script properties-dəki SYNC_TOKEN ilə eyni olmalıdır');
+          } else msg = srvErr(res.error) || _t('Server xətası');
+          var e = new Error(msg); e.code = res.code || null; throw e;
+        }
         return res;
       });
   }
 
   // Bağlantı yoxlaması: ünvan, deploy icazəsi, vərəqlər və açar (token). İki sorğu PARALEL gedir (gözləmə yarıya düşür).
-  function verify(url, token) {
+  function verify(url, token, device) {
     var bad = checkUrl(url); if (bad) return Promise.reject(new Error(bad));
-    var pingP = post(url, { action: 'ping', token: token }, { timeout: T.pingTimeout });
+    if (device === undefined) return DB.get('meta', 'deviceId').then(function (m) { return verify(url, token, m ? m.value : ''); });
+    var pingP = post(url, { action: 'ping', token: token, device: device || undefined }, { timeout: T.pingTimeout });
     pingP.catch(function () { /* nəticəsi aşağıda gözlənilir; GET xətası daha informativdir */ });
     return request(url, { method: 'GET' }, T.pingTimeout, null).then(function (res) {
       if (!res.ok || res.service !== 'magaza-is') throw new Error(_t('Cavab gəldi, amma bu, mağaza skripti deyil'));
@@ -117,12 +140,14 @@
       return pingP;
     }).then(function (p) {
       var v = (p && p.version) || 0;
-      return _t('Bağlantı işləyir{0}', [(v < 6 ? _t('. Diqqət: skript köhnədir (v{0}). {1}{2}telefona bildiriş üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)', [v, (v < 4 ? _t('Sürətli sinxron və keş düzəlişi, ') : ''), (v < 5 ? _t('təchizatçı/partiya cədvəllərinin Sheets-ə yazılması, ') : '')]) : '')]);
-    }).catch(function (e) { throw new Error(explain(e)); });
+      var legacyNote = p && p.kind === 'legacy' && v >= 9
+        ? '. ' + _t('Bu cihaz hələ ümumi açarla işləyir{0}. Admin-dən bu cihaz üçün ayrıca açar alın.', [p.legacyUntil ? _t(' (son tarix: {0})', [String(p.legacyUntil).slice(0, 10)]) : '']) : '';
+      return _t('Bağlantı işləyir{0}', [(v < 6 ? _t('. Diqqət: skript köhnədir (v{0}). {1}{2}telefona bildiriş üçün yeni Code.gs-i yapışdırın, setup() işlədin və "New version" deploy edin (tətbiq bu olmadan da işləyir, məlumat Events vərəqində saxlanılır)', [v, (v < 4 ? _t('Sürətli sinxron və keş düzəlişi, ') : ''), (v < 5 ? _t('təchizatçı/partiya cədvəllərinin Sheets-ə yazılması, ') : '')]) : '')]) + legacyNote;
+    }).catch(function (e) { var ne = new Error(explain(e)); ne.code = e && e.code || null; throw ne; });
   }
 
   function test() {
-    return config().then(function (c) { return verify(c.url, c.token); });
+    return config().then(function (c) { return verify(c.url, c.token, c.device); });
   }
 
   // Sinxron dövrü olmayan tək əməliyyat (bildiriş qeydiyyatı və s.). Server qoşulmayıbsa xəta.
@@ -204,7 +229,7 @@
   /* ---------- Bir dövr: göndər + al ---------- */
   function doCycle() {
     return config().then(function (c) {
-      if (!c.url) return { sent: 0, received: 0, skipped: true };
+      if (!c.url || c.revoked) return { sent: 0, received: 0, skipped: true };
       var bad = checkUrl(c.url); if (bad) throw new Error(bad);
       var total = { sent: 0, received: 0 }, touched = {}, cursor = c.cursor, skew = null, legacy = false;
 
@@ -222,6 +247,7 @@
             inflight = null;
             // Kompüterin saatı serverdən çox fərqlənirsə xəbərdarlıq (son yazan qalib qaydası saata əsaslanır)
             if (res.now) skew = Date.parse(res.now) - (sentAt + Date.now()) / 2;
+            if (res.kind) state.kind = res.kind;
             if (alloc.length && !res.blocks) legacy = true;          // köhnə server aralığı bu sorğuda vermir
             var acked = res.acked || [];
             return Promise.all(acked.map(function (id) { return DB.del('outbox', id); })).then(function () {
@@ -270,6 +296,55 @@
     });
   }
 
+  /* ---------- Bloklanmış cihaz (Code.gs v9, FR-101) ----------
+     Admin cihazı ləğv edəndə server "revoked" qaytarır. Cihaz kilidlənir (giriş ekranı əvəzinə "bloklanıb" səhifəsi), məlumat SİLİNMİR,
+     sinxron dayanır. Göndərilməmiş qeydləri Admin kodu ilə fayl kimi çıxarmaq olur (exportOutbox), Admin onu işləyən cihaza yükləyir (importOutbox). */
+  function markRevoked() {
+    return DB.put('meta', { key: 'revoked', value: { at: new Date().toISOString() } }).then(function () {
+      state = { ok: false, error: _t('Bu cihaz Admin tərəfindən bloklanıb'), lastOk: state.lastOk, lastRun: new Date().toISOString(), skewMs: state.skewMs, kind: state.kind, revoked: true };
+      emit('revoked', state); emit('status', state);
+      return { sent: 0, received: 0, revoked: true, error: state.error };
+    });
+  }
+  function isRevoked() { return DB.get('meta', 'revoked').then(function (m) { return !!(m && m.value); }); }
+  // Admin cihazı bərpa edibsə kilid açılır (köhnə açar yenidən işləyir). true = açıldı.
+  function recheck() {
+    return config().then(function (c) {
+      if (!c.url || !c.token) return false;
+      return post(c.url, { action: 'ping', token: c.token, device: c.device || undefined }, { timeout: T.pingTimeout }).then(function () {
+        return DB.del('meta', 'revoked').then(function () { state.revoked = false; emit('status', state); return true; });
+      }, function (e) {
+        if (e && e.code === 'revoked') return false;
+        throw new Error(explain(e));
+      });
+    });
+  }
+  var OUTBOX_FORMAT = '7boxs-outbox';
+  function exportOutbox() {
+    return Promise.all([DB.getAll('outbox'), DB.get('meta', 'deviceId')]).then(function (r) {
+      var items = r[0].slice().sort(function (a, b) { return a.id < b.id ? -1 : 1; });
+      return { count: items.length, text: JSON.stringify({ format: OUTBOX_FORMAT, v: 1, device: r[1] ? r[1].value : '', exportedAt: new Date().toISOString(), items: items }) };
+    });
+  }
+  // Fayldakı hadisələr bu cihazın göndərmə növbəsinə qoyulur; server onları ilkin cihazın adı ilə yazır, hamı (bu cihaz da) normal yolla alır.
+  function importOutbox(text) {
+    var data;
+    try { data = JSON.parse(String(text)); } catch (e) { return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7BOXS növbə faylı deyil'))); }
+    if (!data || data.format !== OUTBOX_FORMAT || !Array.isArray(data.items)) return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7BOXS növbə faylı deyil')));
+    if (data.items.length > 20000) return Promise.reject(new Error(_t('Fayl çox böyükdür')));
+    var good = data.items.filter(function (it) {
+      return it && typeof it === 'object' && typeof it.id === 'string' && it.id.length > 0 && it.id.length <= 200 && typeof it.at === 'string' && it.at.length <= 40 &&
+        typeof it.type === 'string' && /^[\w.]{1,60}$/.test(it.type) && it.data && typeof it.data === 'object' && typeof it.userId === 'string' && it.userId.length <= 120 &&
+        typeof it.device === 'string' && it.device.length <= 200;
+    }).map(function (it) { return { id: it.id, at: it.at, type: it.type, data: it.data, userId: it.userId, device: it.device }; });
+    var added = 0;
+    return DB.atomic(['outbox'], function (t) {
+      return good.reduce(function (chain, it) {
+        return chain.then(function () { return t.get('outbox', it.id).then(function (have) { if (have) return; added++; return t.put('outbox', it); }); });
+      }, Promise.resolve());
+    }).then(function () { if (added) kick(); return { added: added, skipped: data.items.length - added }; });
+  }
+
   // opts.push: yazıdan sonra çağırılır (gedən "yoxlama" sorğusunu dayandırıb dərhal göndərir)
   // opts.passive: zamanlayıcıdan çağırılır (dövr gedirsə, əlavə dövr yaratmır)
   function cycle(opts) {
@@ -281,12 +356,13 @@
     }
     if (root.navigator && root.navigator.onLine === false) return Promise.resolve({ sent: 0, received: 0, skipped: true });
     running = doCycle().then(function (r) {
-      if (!r.skipped) { fails = 0; state = { ok: true, error: null, lastOk: new Date().toISOString(), lastRun: new Date().toISOString(), skewMs: state.skewMs }; emit('status', state); }
+      if (!r.skipped) { fails = 0; state = { ok: true, error: null, lastOk: new Date().toISOString(), lastRun: new Date().toISOString(), skewMs: state.skewMs, kind: state.kind, revoked: false }; emit('status', state); }
       return r;
     }, function (e) {
       if (e && e.aborted) return { sent: 0, received: 0, aborted: true };   // yoxlama göndərmə ilə əvəzləndi, xəta deyil
+      if (e && e.code === 'revoked') return markRevoked();                    // Admin bu cihazı bağlayıb: sinxron dayanır, tətbiq kilidlənir
       fails++;
-      state = { ok: false, error: explain(e), lastOk: state.lastOk, lastRun: new Date().toISOString(), skewMs: state.skewMs };
+      state = { ok: false, error: explain(e), lastOk: state.lastOk, lastRun: new Date().toISOString(), skewMs: state.skewMs, kind: state.kind, revoked: false };
       emit('status', state);
       return { sent: 0, received: 0, error: state.error };
     }).then(function (r) {
@@ -344,7 +420,7 @@
   function connect(url, token) {
     url = String(url || '').trim(); token = String(token || '').trim();
     if (!token) return Promise.reject(new Error(_t('Açarı (SYNC_TOKEN) yazın')));
-    return verify(url, token).then(function () { return setEndpoint(url, token); }).then(function () { return cycle(); }).then(function (r) {
+    return verify(url, token).then(function () { return setEndpoint(url, token); }).then(function () { return DB.del('meta', 'revoked'); }).then(function () { return cycle(); }).then(function (r) {
       if (r.error) throw new Error(r.error);
       return r;
     });
@@ -354,6 +430,6 @@
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, api: api, reserve: reserve, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, reserve: reserve, isRevoked: isRevoked, recheck: recheck, exportOutbox: exportOutbox, importOutbox: importOutbox, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);
