@@ -8,11 +8,11 @@ const nodeCrypto = require('crypto');
 
 function makeBackend(opts) {
   opts = opts || {};
-  const calls = { sheetApi: 0, openById: 0, requests: 0 };
+  const calls = { sheetApi: 0, openById: 0, requests: 0, propRead: 0, propWrite: 0, cacheOp: 0, lock: 0 };   // propRead/propWrite: Script Properties əməliyyatları (Google kvotası: gmail.com üçün gündə 50 000 oxu+yaz)
   const logs = [];
   const pushLog = [];
   const backendRef = {};
-  const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, sheets: {}, spreadsheets: {} };
+  const store = { props: { SYNC_TOKEN: opts.token === undefined ? 'secret-token' : opts.token }, cache: {}, cacheExp: {}, cacheSkew: 0, sheets: {}, spreadsheets: {} };
 
   class Range {
     constructor(sh, r, c, nr, nc) { Object.assign(this, { sh, r, c, nr, nc }); }
@@ -146,14 +146,19 @@ function makeBackend(opts) {
     },
     SpreadsheetApp: { getActiveSpreadsheet: () => null, openById: id => { calls.openById++; return store.spreadsheets[id] || ss; } },
     PropertiesService: { getScriptProperties: () => ({
-      getProperty: k => (k in store.props ? store.props[k] : null),
-      setProperty: (k, v) => { store.props[k] = String(v); },          // Apps Script dəyərləri sətir kimi saxlayır
-      deleteProperty: k => { delete store.props[k]; },
-      getKeys: () => Object.keys(store.props),
-      getProperties: () => Object.assign({}, store.props)
+      getProperty: k => { calls.propRead++; return k in store.props ? store.props[k] : null; },
+      setProperty: (k, v) => { calls.propWrite++; store.props[k] = String(v); },          // Apps Script dəyərləri sətir kimi saxlayır
+      deleteProperty: k => { calls.propWrite++; delete store.props[k]; },
+      getKeys: () => { calls.propRead++; return Object.keys(store.props); },
+      getProperties: () => { calls.propRead++; return Object.assign({}, store.props); }
     }) },
-    CacheService: { getScriptCache: () => ({ get: k => (k in store.cache ? store.cache[k] : null), put: (k, v) => { store.cache[k] = String(v); }, remove: k => { delete store.cache[k]; } }) },
-    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
+    CacheService: { getScriptCache: () => ({
+      // TTL təqlidi: put(k, v, saniyə) → store.cacheExp[k]; backend.tick(san) keş saatını irəli çəkir (real gözləmədən müddətin bitməsini yoxlamaq üçün).
+      // store.cache sadə xəritə olaraq qalır (testlər birbaşa yazıb silir); müddəti olmayan açar bitmir.
+      get: k => { calls.cacheOp++; if (k in store.cacheExp && store.cacheExp[k] <= Date.now() + store.cacheSkew) { delete store.cache[k]; delete store.cacheExp[k]; } return k in store.cache ? store.cache[k] : null; },
+      put: (k, v, ttl) => { calls.cacheOp++; store.cache[k] = String(v); if (ttl) store.cacheExp[k] = Date.now() + store.cacheSkew + ttl * 1000; else delete store.cacheExp[k]; },
+      remove: k => { calls.cacheOp++; delete store.cache[k]; delete store.cacheExp[k]; } }) },
+    LockService: { getScriptLock: () => ({ tryLock: () => { calls.lock++; return true; }, releaseLock() {} }) },
     ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ text: s, setMimeType() { return this; } }) },
     // Push xidmətinin təqlidi: backend.pushLog-da hər sorğu (url + başlıqlar); cavabı backend.pushRespond(url, req) təyin edir (defolt 201)
     UrlFetchApp: {
@@ -175,6 +180,7 @@ function makeBackend(opts) {
 
   Object.assign(backendRef, {
     calls, store, sandbox, logs, pushLog,
+    tick(sec) { store.cacheSkew += sec * 1000; },        // keşin saatını irəli çəkir (TTL bitir)
     get: () => JSON.parse(sandbox.doGet().text),
     post(body) { calls.requests++; return JSON.parse(sandbox.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } }).text); },
     // Sheets limiti (10 milyon) BOŞ xanaları da sayır: bütün vərəqlərin şəbəkə ölçüsü

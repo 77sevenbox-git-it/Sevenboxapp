@@ -138,7 +138,7 @@ const propsSnap = (b) => JSON.stringify(Object.keys(b.store.props).sort().map(k 
       for (const secret of [dk, hash, b.adminKey, LEGACY, '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g']) assert.ok(!s.includes(secret), 'sızıb: ' + secret.slice(0, 8) + ' → ' + s.slice(0, 120));
     }
     const g = b.get();                                   // girişsiz GET yalnız ümumi vəziyyəti göstərir
-    assert.deepStrictEqual(Object.keys(g).sort(), ['missingSheets', 'ok', 'service', 'tokenSet', 'version']);
+    assert.deepStrictEqual(Object.keys(g).sort(), ['missingSheets', 'ok', 'rev', 'service', 'tokenSet', 'version']);
   });
 
   await t('A9 ləğv olunmuş cihaz: heç bir əməliyyat keçmir, hadisə yazılmır, açarı bilməyən "ləğv" cavabından məlumat çıxara bilmir', () => {
@@ -157,7 +157,7 @@ const propsSnap = (b) => JSON.stringify(Object.keys(b.store.props).sort().map(k 
 
   await t('A10 köhnə ümumi açarın müddəti bitəndən sonra bağlanır; müddəti uzatma yalnız ADMIN_KEY ilə, yanlış müddət dəyərləri rədd', () => {
     const b = fresh(); const dk = mkDevice(b, 'dev_aaa');
-    b.store.props.LEGACY_UNTIL = String(Date.now() - 1000);
+    b.store.props.LEGACY_UNTIL = String(Date.now() - 1000); b.tick(121);   // əllə dəyişiklik keş müddəti qədər gecikir
     assert.strictEqual(ping(b, LEGACY, 'old_pc').ok, false);
     assert.strictEqual(b.post({ action: 'legacy.set', mode: 'on', days: 3, token: LEGACY, device: 'admin_pc', adminKey: b.adminKey }).ok, false, 'müddəti bitmiş ümumi açar admin əməliyyatı da aça bilmir');
     const own = (over) => b.post(Object.assign({ token: dk, device: 'dev_aaa', adminKey: b.adminKey, action: 'legacy.set' }, over));
@@ -180,6 +180,7 @@ const propsSnap = (b) => JSON.stringify(Object.keys(b.store.props).sort().map(k 
 
   await t('A12 yetkisiz sorğular heç bir property/keş yazmır (500 rədd edilmiş sorğudan sonra vəziyyət eynidir)', () => {
     const b = fresh(); mkDevice(b, 'dev_aaa');
+    b.post({ action: 'sync', token: 'x', device: 'rand_warm', items: [] });                 // yalnız sabit açarlar (p_SYNC_TOKEN, p_devIds) keşə düşür
     const snap = propsSnap(b), cacheKeys = Object.keys(b.store.cache).length;
     for (let i = 0; i < 500; i++) b.post({ action: 'sync', token: 'x' + i, device: 'rand_' + i, items: [ev()] });
     assert.strictEqual(propsSnap(b), snap); assert.strictEqual(Object.keys(b.store.cache).length, cacheKeys); assert.strictEqual(eventsCount(b), 0);

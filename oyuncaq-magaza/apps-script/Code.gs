@@ -30,6 +30,7 @@
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
 var VERSION = 9;
+var REV = '2026.10.11-quota';   // dəqiq buraxılış: /exec ünvanını brauzerdə açanda görünür (Deploy-un yeniləndiyini yoxlamaq üçün)
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -45,10 +46,48 @@ var ARCHIVE_BUSY = 'Arxivləşdirmə gedir, bir neçə dəqiqə sonra təkrar ol
 var APPEND_ONLY = [{ name: 'Sales', time: 3 }, { name: 'Returns', time: 4 }, { name: 'StockReceipts', time: 1 },
   { name: 'Shifts', time: 3 }, { name: 'CashMoves', time: 6 }, { name: 'Audit', time: 1 }];
 
+/* Script Properties kvotası: gmail.com hesabında gündə cəmi 50 000 oxu+yaz ("Service invoked too many times for one day: properties get").
+   Hər sorğu əvvəllər 2 (köhnə ümumi açarla 4) oxuyurdu; 3 kassa × 12 saat × hər 4 san ≈ 65 000/gün, yəni kvota günün sonuna çatmazdı və bütün sinxron dayanardı.
+   Həll: yalnız autentifikasiya üçün lazım olan, SEYRƏK dəyişən dəyərlər (cihaz açarının hash-ı, SYNC_TOKEN, LEGACY_UNTIL, SPREADSHEET_ID,
+   cihaz id siyahısı) CacheService-də PROP_TTL saniyə saxlanır. Kodun özü bu dəyərləri dəyişəndə keşi dərhal silir (ləğv/yeniləmə anında qüvvəyə minir);
+   Script properties-i əllə dəyişsəniz təsir ən çox PROP_TTL saniyə sonra olur (və ya redaktorda dropPropCache() işə salın).
+   Keş boşdursa/xəta verirsə birbaşa Properties oxunur (davranış dəyişmir, yalnız kvota işlənir). Uydurma cihaz id-si Properties-ə toxunmur. */
+var PROP_TTL = 120;
+function cacheGetJson(key) {
+  try { var v = CacheService.getScriptCache().get(key); return v === null || v === undefined ? undefined : JSON.parse(v); } catch (e) { return undefined; }
+}
+function cachePutJson(key, val) { try { CacheService.getScriptCache().put(key, JSON.stringify(val), PROP_TTL); } catch (e) { /* keş yoxdursa Properties işləyir */ } }
+function cdrop(name) { try { CacheService.getScriptCache().remove('p_' + name); } catch (e) { /* vacib deyil */ } }
+// Tək xüsusiyyət (null da keşlənir: SYNC_TOKEN təyin olunmayıbsa hər dəfə soruşmasın)
+function cprop(props, key) {
+  var hit = cacheGetJson('p_' + key);
+  if (hit !== undefined && hit !== null && typeof hit === 'object' && 'v' in hit) return hit.v;
+  var v = props.getProperty(key);
+  cachePutJson('p_' + key, { v: v });
+  return v;
+}
+// Tanınan cihaz id-ləri: id siyahıda yoxdursa DEV_<id> oxunmur (autentifikasiyasız sel Properties kvotasını yeyə bilməsin)
+function devIdSet(props) {
+  var hit = cacheGetJson('p_devIds');
+  var map = Object.create(null);
+  if (Array.isArray(hit)) { hit.forEach(function (k) { map[k] = true; }); return map; }
+  var ids = [];
+  props.getKeys().forEach(function (k) { if (k.indexOf('DEV_') === 0) { ids.push(k.slice(4)); map[k.slice(4)] = true; } });
+  cachePutJson('p_devIds', ids);
+  return map;
+}
+// Redaktorda əllə dəyişiklikdən sonra (SYNC_TOKEN, DEV_*, LEGACY_UNTIL) dərhal qüvvəyə mindirmək üçün
+function dropPropCache() {
+  var props = PropertiesService.getScriptProperties();
+  ['SYNC_TOKEN', 'LEGACY_UNTIL', 'SPREADSHEET_ID', 'devIds'].forEach(cdrop);
+  props.getKeys().forEach(function (k) { if (k.indexOf('DEV_') === 0) cdrop(k); });
+  Logger.log('Properties keşi təmizləndi');
+}
+
 function db() {
   var active = SpreadsheetApp.getActiveSpreadsheet();
   if (active) return active;
-  var id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID') || SPREADSHEET_ID;
+  var id = cprop(PropertiesService.getScriptProperties(), 'SPREADSHEET_ID') || SPREADSHEET_ID;
   return SpreadsheetApp.openById(id);
 }
 
@@ -97,9 +136,9 @@ function json(obj) {
 function doGet() {
   var ss = db();
   var props = PropertiesService.getScriptProperties();
-  var hasToken = !!props.getProperty('SYNC_TOKEN') || props.getKeys().some(function (k) { return k.indexOf('DEV_') === 0; });
+  var hasToken = !!cprop(props, 'SYNC_TOKEN') || Object.keys(devIdSet(props)).length > 0;
   var missing = Object.keys(SHEETS).filter(function (n) { return !ss.getSheetByName(n); });
-  return json({ ok: true, service: 'magaza-is', version: VERSION, tokenSet: hasToken, missingSheets: missing });
+  return json({ ok: true, service: 'magaza-is', version: VERSION, rev: REV, tokenSet: hasToken, missingSheets: missing });
 }
 
 /* ---------- Köməkçilər ---------- */
@@ -241,28 +280,32 @@ var SEEN_EVERY = 300;             // "son görünmə" Script Properties-ə ən �
 
 function devId(v) { return typeof v === 'string' && DEV_RE.test(v) ? v : ''; }
 function devGet(props, id) {
-  var raw = id ? props.getProperty('DEV_' + id) : null;
+  if (!id) return null;
+  var hit = cacheGetJson('p_DEV_' + id), raw;
+  if (hit && typeof hit === 'object' && typeof hit.v === 'string') raw = hit.v;     // isti yol: bir keş çağırışı
+  else if (!devIdSet(props)[id]) return null;                                       // tanınmayan id: Properties oxunmur
+  else raw = cprop(props, 'DEV_' + id);
   if (!raw) return null;
   try { var r = JSON.parse(raw); return r && typeof r === 'object' ? r : null; } catch (err) { return null; }
 }
-function devPut(props, id, rec) { props.setProperty('DEV_' + id, JSON.stringify(rec)); }
+function devPut(props, id, rec) { props.setProperty('DEV_' + id, JSON.stringify(rec)); cdrop('DEV_' + id); cdrop('devIds'); }
 function devHash(id, token) { return hexSha256('dev:' + id + ':' + token); }
 function newDeviceToken() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ''); }   // 64 onaltılıq simvol, ~240 bit
 
 // Köhnə ümumi açar: LEGACY_UNTIL yoxdursa məhdudiyyət hələ başlamayıb (heç bir cihaz açarı yaradılmayıb: təsadüfən kilidlənmə olmasın)
 function legacyUntil(props) {
-  var raw = props.getProperty('LEGACY_UNTIL');
+  var raw = cprop(props, 'LEGACY_UNTIL');
   if (raw === null || raw === undefined || raw === '') return -1;
   return Number(raw) || 0;
 }
 function legacyActive(props) {
-  if (!props.getProperty('SYNC_TOKEN')) return false;
+  if (!cprop(props, 'SYNC_TOKEN')) return false;
   var u = legacyUntil(props);
   return u === -1 || u > new Date().getTime();
 }
 function legacyInfo(props) {
   var u = legacyUntil(props);
-  return { tokenSet: !!props.getProperty('SYNC_TOKEN'), active: legacyActive(props), until: u > 0 ? new Date(u).toISOString() : null, started: u !== -1 };
+  return { tokenSet: !!cprop(props, 'SYNC_TOKEN'), active: legacyActive(props), until: u > 0 ? new Date(u).toISOString() : null, started: u !== -1 };
 }
 function fail(code, error) { return { ok: false, code: code, error: error }; }
 
@@ -272,7 +315,7 @@ function authenticate(body) {
   var token = typeof body.token === 'string' ? body.token : '';
   var id = devId(body.device);
   var rec = devGet(props, id);
-  var legacyTok = props.getProperty('SYNC_TOKEN');
+  var legacyTok = cprop(props, 'SYNC_TOKEN');
   var isLegacy = !!legacyTok && sameToken(token, legacyTok);
   var isOwn = !!(rec && rec.hash && token && sameToken(devHash(id, token), rec.hash));
   // Ləğv olunmuş cihaza yalnız açarı doğrudursa bildirilir (cihaz özünü kilidləsin); başqasına "icazə yoxdur"
@@ -367,12 +410,12 @@ function handleAdmin(body, auth) {
       if (!mode) return fail('bad', 'Əməliyyat səhvdir');
       if (mode === 'on') {
         if (!(days >= 1 && days <= 90)) return fail('bad', 'Müddət 1–90 gün olmalıdır');
-        props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + days * 86400000));
+        props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + days * 86400000)); cdrop('LEGACY_UNTIL');
       } else {
         // Hamını kilidləməmək üçün: ən az bir aktiv cihaz açarı olmalıdır və sorğunu göndərən cihaz özü ümumi açarla işləməməlidir
         if (!listDevices(props).devices.some(function (d) { return d.hasToken && d.status === 'active'; })) return fail('no_devices', 'Heç bir cihaza ayrıca açar verilməyib: ümumi açarı söndürmək hamını kilidləyər');
         if (auth.kind === 'legacy') return fail('self_legacy', 'Bu kompüter hələ ümumi açarla işləyir: əvvəl ona ayrıca açar yazın');
-        props.setProperty('LEGACY_UNTIL', '0');
+        props.setProperty('LEGACY_UNTIL', '0'); cdrop('LEGACY_UNTIL');
       }
       auditAdmin('legacy.set', { mode: mode, days: mode === 'on' ? days : 0 });
       return { ok: true, legacy: legacyInfo(props) };
@@ -392,7 +435,7 @@ function handleAdmin(body, auth) {
         rec.status = 'active'; rec.hash = devHash(id, token);
         if (body.action === 'devices.rotate') rec.rotatedAt = at;
         devPut(props, id, rec);
-        if (legacyUntil(props) === -1) props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + LEGACY_DAYS * 86400000));   // keçid pəncərəsi ilk cihaz açarı ilə başlayır
+        if (legacyUntil(props) === -1) { props.setProperty('LEGACY_UNTIL', String(new Date().getTime() + LEGACY_DAYS * 86400000)); cdrop('LEGACY_UNTIL'); }   // keçid pəncərəsi ilk cihaz açarı ilə başlayır
         auditAdmin(body.action === 'devices.create' ? 'device.created' : 'device.rotated', { id: id, name: rec.name });
         return { ok: true, id: id, token: token, name: rec.name, legacy: legacyInfo(props) };
       case 'devices.revoke':
@@ -448,7 +491,7 @@ function doPost(e) {
   try {
     switch (body.action) {
       case 'ping':
-        var pr = { ok: true, version: VERSION, kind: auth.kind };
+        var pr = { ok: true, version: VERSION, rev: REV, kind: auth.kind };
         if (auth.kind === 'legacy') pr.legacyUntil = legacyInfo(PropertiesService.getScriptProperties()).until;
         return json(pr);
       case 'sync': var sr = handleSync(body); sr.kind = auth.kind; return json(sr);

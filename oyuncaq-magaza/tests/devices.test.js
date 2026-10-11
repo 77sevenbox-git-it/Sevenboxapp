@@ -92,7 +92,7 @@ const ev = (n) => { const at = new Date().toISOString(); return { id: at + '_' +
     assert.ok(c.legacy.active && c.legacy.started);
     assert.strictEqual(ping(b, LEGACY, 'old_dev').kind, 'legacy');
     assert.ok(ping(b, LEGACY, 'old_dev').legacyUntil, 'köhnə açarla gələn cihaz son tarixi görür');
-    b.store.props.LEGACY_UNTIL = String(Date.now() - 1000);
+    b.store.props.LEGACY_UNTIL = String(Date.now() - 1000); b.tick(121);   // Properties-i əllə dəyişmək keş müddəti (PROP_TTL=120 san) qədər gecikir
     assert.strictEqual(ping(b, LEGACY, 'old_dev').code, 'legacy_off');
     assert.strictEqual(ping(b, LEGACY, 'dev_one').code, 'legacy_off', 'qeydiyyatlı cihaz da ümumi açarla girə bilməz');
     assert.ok(ping(b, c.token, 'dev_one').ok, 'öz açarı işləyir');
@@ -189,10 +189,10 @@ const ev = (n) => { const at = new Date().toISOString(); return { id: at + '_' +
   await t('doGet: yalnız cihaz açarları qalıbsa (SYNC_TOKEN silinib) tokenSet=true; heç biri yoxdursa false', () => {
     const b = fresh();
     admin(b, { action: 'devices.create', id: 'dev_only' });
-    delete b.store.props.SYNC_TOKEN;
+    delete b.store.props.SYNC_TOKEN; b.tick(121);
     assert.strictEqual(b.get().tokenSet, true);
     const b2 = makeBackend({ token: '' });
-    delete b2.store.props.SYNC_TOKEN;
+    delete b2.store.props.SYNC_TOKEN; b2.tick(121);
     assert.strictEqual(b2.get().tokenSet, false);
     assert.strictEqual(ping(b2, '', 'dev_abc').ok, false, 'açar təyin olunmayıbsa heç nə keçmir');
   });
@@ -200,7 +200,7 @@ const ev = (n) => { const at = new Date().toISOString(); return { id: at + '_' +
   await t('SYNC_TOKEN silinibsə cihaz açarı ilə işləmək davam edir; boş açarla heç kim keçmir', () => {
     const b = fresh();
     const c = admin(b, { action: 'devices.create', id: 'dev_solo' });
-    delete b.store.props.SYNC_TOKEN;
+    delete b.store.props.SYNC_TOKEN; b.tick(121);
     assert.ok(sync(b, c.token, 'dev_solo').ok);
     assert.strictEqual(ping(b, '', 'dev_solo').ok, false);
     assert.strictEqual(ping(b, undefined, 'dev_solo').ok, false);

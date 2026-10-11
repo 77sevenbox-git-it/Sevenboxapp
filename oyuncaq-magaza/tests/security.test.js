@@ -63,7 +63,7 @@ async function risk(name, fn) {
 
   await must('doGet açarsız cavabı yalnız ümumi vəziyyət göstərir (açar, ID, hash, e-poçt yoxdur)', async () => {
     const g = be.get();
-    assert.deepStrictEqual(Object.keys(g).sort(), ['missingSheets', 'ok', 'service', 'tokenSet', 'version']);
+    assert.deepStrictEqual(Object.keys(g).sort(), ['missingSheets', 'ok', 'rev', 'service', 'tokenSet', 'version']);
     const s = JSON.stringify(g); assert.ok(!s.includes(TOKEN) && !/@|pinHash|salt/.test(s));
   });
 
