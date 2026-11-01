@@ -65,7 +65,7 @@
     if (/Naməlum əməliyyat/.test(m)) return _t('Server skripti köhnədir: Code.gs-in v6 versiyasını yapışdırın, setup() işlədin və "New version" deploy edin');
     if (/BigInt/.test(m)) return _t('Apps Script-də V8 runtime aktiv deyil (BigInt yoxdur): Project Settings → "Chrome V8 runtime" seçin, sonra New version deploy edin. Sinxron təsirlənmir, yalnız bildiriş işləmir');
     if (/UrlFetchApp|permission|authoriz/i.test(m)) return _t('Apps Script-ə xarici sorğu icazəsi verilməyib: redaktorda setup() işlədin, "Connect to an external service" icazəsini təsdiqləyin və yenidən "New version" deploy edin');
-    if (/Server qoşulmayıb/.test(m)) return _t('Əvvəl serveri qoşun (İcazələr → Mağaza və server)');
+    if (/Server qoşulmayıb/.test(m)) return _t('Əvvəl serveri qoşun (Ayarlar → Mağaza və server)');
     return m;
   }
 

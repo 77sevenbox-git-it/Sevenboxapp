@@ -30,22 +30,53 @@
     'supplier.manage': _t('Təchizatçı əlavə etmək və dəyişmək'),
     'supplier.pay': _t('Təchizatçıya ödəniş etmək (nağd olarsa kassadan çıxır)'),
     'admin.users': _t('İstifadəçiləri idarə etmək'),
-    'admin.permissions': _t('İcazə matrisini dəyişmək')
+    'admin.permissions': _t('İcazə matrisini dəyişmək'),
+    // Bölmələr (tablar): rol hansı bölməni görür. Bölmənin içindəki əməliyyatlar yenə yuxarıdakı icazələrlə idarə olunur.
+    'tab.pos': _t('Bölmə: Kassa'),
+    'tab.returns': _t('Bölmə: Qaytarma'),
+    'tab.products': _t('Bölmə: Məhsullar'),
+    'tab.suppliers': _t('Bölmə: Təchizatçılar'),
+    'tab.reports': _t('Bölmə: Hesabatlar'),
+    'tab.sales': _t('Bölmə: Çeklər'),
+    'tab.shift': _t('Bölmə: Növbə'),
+    'tab.permissions': _t('Bölmə: İcazələr'),
+    'tab.settings': _t('Bölmə: Ayarlar')
   };
+
+  // Bölmə (tab) → onu əvvəllər açan əməliyyat icazəsi. Köhnə matrisdə bölmə icazəsi yoxdursa, əvvəlki davranış saxlanılsın deyə buradan çıxarılır.
+  // Sıra = bölmələrin ilkin sırası (Admin Ayarlar bölməsində dəyişir).
+  var TABS = [
+    { id: 'pos', perm: 'tab.pos', legacy: 'pos.sell' },
+    { id: 'returns', perm: 'tab.returns', legacy: 'pos.return.request' },
+    { id: 'products', perm: 'tab.products', legacy: 'product.view' },
+    { id: 'suppliers', perm: 'tab.suppliers', legacy: 'supplier.view' },
+    { id: 'reports', perm: 'tab.reports', legacy: 'report.view' },
+    { id: 'sales', perm: 'tab.sales', legacy: 'report.view' },
+    { id: 'shift', perm: 'tab.shift', legacy: 'shift.open_close' },
+    { id: 'permissions', perm: 'tab.permissions', legacy: 'admin.permissions' },
+    { id: 'settings', perm: 'tab.settings', legacy: 'admin.permissions' }
+  ];
+  function withTabs(list) {
+    var out = list.slice();
+    TABS.forEach(function (t) { if (out.indexOf(t.perm) === -1 && out.indexOf(t.legacy) !== -1) out.push(t.perm); });
+    return out;
+  }
 
   var DEFAULT_MATRIX = {
     admin: Object.keys(PERMISSIONS),
-    menecer: ['pos.sell', 'pos.discount.request', 'pos.discount.approve', 'pos.line.delete', 'pos.return.request', 'pos.return.approve',
-      'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view', 'supplier.view', 'supplier.manage'],
-    kassir: ['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print', 'stock.request'],
-    muhasib: ['product.view', 'product.cost.view', 'report.view', 'supplier.view']
+    menecer: withTabs(['pos.sell', 'pos.discount.request', 'pos.discount.approve', 'pos.line.delete', 'pos.return.request', 'pos.return.approve',
+      'shift.open_close', 'product.view', 'product.edit', 'stock.receive', 'product.price.set', 'product.cost.view', 'label.print', 'report.view', 'supplier.view', 'supplier.manage']),
+    kassir: withTabs(['pos.sell', 'pos.discount.request', 'pos.return.request', 'shift.open_close', 'product.view', 'label.print', 'stock.request']),
+    muhasib: withTabs(['product.view', 'product.cost.view', 'report.view', 'supplier.view'])
   };
 
   // İcazə matrisinin versiyası. 3-dən əvvəl "stock.receive" yox idi, mal qəbulu "product.edit" ilə gedirdi.
   // 4: təchizatçı icazələri. "supplier.manage" mal qəbul edən rollara, "supplier.view" mal qəbul edən və ya hesabata baxan rollara verilir.
   // 5: "stock.request" — kassir mal gəldiyini bildirən sorğu göndərir, qalığı menecer təsdiqləyəndə artır (kassirə verilir).
   // 6: "supplier.pay" — təchizatçıya ödəniş və borc hesabı. Yalnız Admin-ə verilir (pul kassadan çıxır); Admin başqa rola özü verə bilər.
-  var MATRIX_VERSION = 6;
+  // 7: bölmə (tab) icazələri ("tab.*"). Köhnə matrisdə rol heç bir bölmə icazəsinə malik deyilsə, əvvəl açdığı bölmələr ona verilir (davranış dəyişmir).
+  //    Rolda ən azı bir "tab.*" varsa, Admin onu bilərəkdən təyin edib: toxunulmur (silinmiş bölmə geri qayıtmır).
+  var MATRIX_VERSION = 7;
   function upgradeMatrix(m) {
     var out = {};
     Object.keys(m || {}).forEach(function (role) {
@@ -56,8 +87,17 @@
       if (list.indexOf('stock.receive') !== -1 || list.indexOf('report.view') !== -1) add('supplier.view');
       if (role === 'kassir') add('stock.request');
       if (role === 'admin') add('supplier.pay');
+      if (!list.some(function (p) { return p.indexOf('tab.') === 0; })) list = withTabs(list);
       out[role] = list;
     });
+    return out;
+  }
+
+  // Bölmələrin sırası (Admin təyin edir, hamı üçün eynidir). Saxlanmış siyahıda olmayan / yeni bölmələr sonda ilkin sıra ilə əlavə olunur, naməlumlar atılır.
+  function tabOrder(saved) {
+    var ids = TABS.map(function (t) { return t.id; }), out = [];
+    (Array.isArray(saved) ? saved : []).forEach(function (id) { if (ids.indexOf(id) !== -1 && out.indexOf(id) === -1) out.push(id); });
+    ids.forEach(function (id) { if (out.indexOf(id) === -1) out.push(id); });
     return out;
   }
 
@@ -330,7 +370,7 @@
 
   var Rules = {
     TZ: TZ, MAX_DISCOUNT_PERCENT: MAX_DISCOUNT_PERCENT, NEGATIVE_SALE_LIMIT: NEGATIVE_SALE_LIMIT, RETURN_DAYS: RETURN_DAYS,
-    PERMISSIONS: PERMISSIONS, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
+    PERMISSIONS: PERMISSIONS, TABS: TABS, tabOrder: tabOrder, DEFAULT_MATRIX: DEFAULT_MATRIX, MATRIX_VERSION: MATRIX_VERSION, upgradeMatrix: upgradeMatrix, ROLE_NAMES: ROLE_NAMES, can: can,
     AUTH_FORMS: AUTH_FORMS, DEFAULT_AUTH: DEFAULT_AUTH, PASSWORD_MIN: PASSWORD_MIN, passwordProblem: passwordProblem, normalizeAuth: normalizeAuth,
     foldAz: foldAz, cartTotals: cartTotals, validateDiscountPercent: validateDiscountPercent, negativeStockCheck: negativeStockCheck, applyReceipt: applyReceipt,
     DEFAULT_DISCOUNT_CAPS: DEFAULT_DISCOUNT_CAPS, IMAGE_MAX_CHARS: IMAGE_MAX_CHARS, discountKind: discountKind, discountValue: discountValue, validateLineDiscount: validateLineDiscount,

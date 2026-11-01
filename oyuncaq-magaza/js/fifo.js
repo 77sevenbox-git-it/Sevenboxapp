@@ -216,6 +216,25 @@
     return rows;
   }
 
+  // Dövr üzrə məhsul bazında hesabat: hər məhsul üçün satış və qaytarma AYRI göstəricilərlə (qaytarma ekranda ayrıca sətir olur).
+  // Satış sətrinin gəliri endirimdən sonrakı məbləğdir (çekin yekunu ilə uzlaşır), qaytarmanın gəliri qaytarılan pul məbləğidir.
+  // Qaytarır: { pid: {productId, name, barcode, soldQty, soldRevenue, soldCost, retQty, retRevenue, retCost} } (qəpik, yuvarlaqlaşdırılmış; maya FIFO ilə)
+  function productReport(res, sales, returns, from, to) {
+    var rows = {};
+    walkParts(res, sales, returns, from, to, function (kind, doc, i, l, p, rev, cost) {
+      var r = rows[l.productId] || (rows[l.productId] = { productId: l.productId, name: '', barcode: '', soldQty: 0, soldRevenue: 0, soldCost: 0, retQty: 0, retRevenue: 0, retCost: 0 });
+      if (l.name) r.name = l.name;
+      if (l.storeBarcode) r.barcode = l.storeBarcode;
+      if (kind === 'sale') { r.soldQty += p.qty; r.soldRevenue += rev; r.soldCost += cost; }
+      else { r.retQty += p.qty; r.retRevenue += rev; r.retCost += cost; }
+    });
+    Object.keys(rows).forEach(function (k) {
+      var r = rows[k];
+      r.soldRevenue = Math.round(r.soldRevenue); r.soldCost = Math.round(r.soldCost); r.retRevenue = Math.round(r.retRevenue); r.retCost = Math.round(r.retCost);
+    });
+    return rows;
+  }
+
   // Bir təchizatçının malı olan çeklər və qaytarmalar (günün sonunda təchizatçıya göndəriləcək sənəd üçün).
   // Hər çekdə YALNIZ bu təchizatçının hissəsi: [{kind:'sale'|'ret', id, receiptNo, at, qty, revenue, cost, lines:[{lineIndex, productId, name, price, qty, revenue, cost}]}] (zamana görə).
   // Qaytarmada say/məbləğ mənfidir. Sətrin məbləği qəpiyə yuvarlaqlaşdırılır, çekin yekunu sətirlərin cəmidir (sənəd öz daxilində uzlaşır).
@@ -299,7 +318,7 @@
       reversed: reversed, reversedTotal: revTotal, closing: closing, receipts: receipts, sales: tot, unpricedLots: unpriced, supReturns: supReturns };
   }
 
-  var Fifo = { replay: replay, onHand: onHand, productLots: productLots, supplierReport: supplierReport, supplierReceipts: supplierReceipts, supplierStatement: supplierStatement, debtAt: debtAt, payActive: payActive };
+  var Fifo = { replay: replay, onHand: onHand, productLots: productLots, supplierReport: supplierReport, productReport: productReport, supplierReceipts: supplierReceipts, supplierStatement: supplierStatement, debtAt: debtAt, payActive: payActive };
   root.Fifo = Fifo;
   if (typeof module !== 'undefined') module.exports = Fifo;
 })(typeof window !== 'undefined' ? window : globalThis);

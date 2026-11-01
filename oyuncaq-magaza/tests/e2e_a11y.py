@@ -68,7 +68,7 @@ try:
             pg.keyboard.press('F1'); pg.wait_for_selector('#pay-cash'); audit(pg, 'Ödəniş pəncərəsi', device)
             pg.keyboard.press('Escape'); pg.wait_for_selector('.modal-back'); audit(pg, 'Çekin ləğvi (menecer PIN-i) pəncərəsi', device)
             pg.get_by_role('button', name='İmtina').click(); pg.wait_for_selector('.modal-back', state='detached')
-            for nm in ('Qaytarma', 'Məhsullar', 'Təchizatçılar', 'Çeklər', 'Növbə', 'İcazələr'):
+            for nm in ('Qaytarma', 'Məhsullar', 'Təchizatçılar', 'Hesabatlar', 'Çeklər', 'Növbə', 'İcazələr', 'Ayarlar'):
                 pg.get_by_role('navigation').get_by_role('button', name=nm, exact=True).click(); pg.wait_for_timeout(600)
                 audit(pg, 'Ekran: ' + nm, device)
             # məhsullar: pəncərələr

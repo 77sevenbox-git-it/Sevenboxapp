@@ -145,7 +145,19 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6).then(migrateV7);
+    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6).then(migrateV7).then(migrateV8);
+  }
+
+  // v7 → v8: bölmə (tab) icazələri. Köhnə matrisdə rolun bölmə icazəsi yoxdursa, əvvəl açdığı bölmələr verilir (Rules.upgradeMatrix): heç kimin görünən bölməsi dəyişmir.
+  function migrateV8() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 8) return;
+      return DB.atomic(['meta'], function (t) {
+        return t.get('meta', 'matrix').then(function (x) {
+          return t.put('meta', { key: 'matrix', value: Rules.upgradeMatrix(x ? x.value : Rules.DEFAULT_MATRIX) });
+        }).then(function () { return t.put('meta', { key: 'schema', value: 8 }); });
+      });
+    });
   }
 
   // v6 → v7: alış qaimələri və təchizatçıya qaytarmalar ("purchases", "supplierReturns" anbarları). Köhnə versiyalı cihaz bu hadisələri tanımayıb ötürmüş ola bilər:
@@ -270,7 +282,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 7 }),
+              t.put('meta', { key: 'schema', value: 8 }),
               t.put('meta', { key: 'setup', value: 'pending' }),            // yeni cihaz: istifadəçi adları serverə qoşulana (və ya "serversiz" seçilənə) qədər göstərilmir
               t.put('meta', { key: 'initialized', value: now() })
             ]);
@@ -702,10 +714,29 @@
           if (!bad && d.cost != null && !(d.cost >= 0)) bad = _t('Alış qiyməti səhvdir');
           if (bad) throw err(_t('{0}-ci sətir: {1}', [d.line, bad]));
         });
+        // Faylda təchizatçı adı olan sətirlər: mövcud təchizatçı (id) və ya yeni ad. Yeni təchizatçı yaratmaq ayrıca icazədir.
+        var wantsNew = list.some(function (d) { return d.opening > 0 && d.supplierNew; });
+        if (wantsNew && !Rules.can(m, user.role, 'supplier.manage')) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [Rules.PERMISSIONS['supplier.manage']]), 'forbidden');
         var reserve = root.Sync && root.Sync.reserve ? root.Sync.reserve('productSeq', list.length) : Promise.resolve();
         return reserve.then(function () {
-          var created = 0, opened = 0, at = now();
+          var created = 0, opened = 0, at = now(), newSuppliers = 0, made = {};
           return DB.atomic(['products', 'meta', 'priceHistory', 'stockMoves', 'lots', 'suppliers', 'audit', 'outbox'], function (t) {
+            // Yeni təchizatçılar bir dəfə yaradılır (eyni ad bir neçə sətirdə olsa da); mövcud ad yenidən yoxlanır (ekrandakı siyahı köhnə ola bilər)
+            function supplierFor(d) {
+              if (!(d.opening > 0)) return Promise.resolve(null);
+              if (d.supplierId) return Promise.resolve(d.supplierId);
+              if (!d.supplierNew) return Promise.resolve(null);
+              var k = nameKey(d.supplierNew);
+              if (made[k]) return Promise.resolve(made[k]);
+              return t.getAll('suppliers').then(function (all) {
+                var have = all.filter(function (x) { return nameKey(x.name) === k; })[0];
+                if (have) { if (!have.active) throw err(_t('{0}-ci sətir: {1}', [d.line, _t('Təchizatçı tapılmadı və ya söndürülüb')])); made[k] = have.id; return have.id; }
+                var bad = validateSupplier({ name: d.supplierNew, debtBasis: 'received', openingDebt: 0 }, all);
+                if (bad) throw err(_t('{0}-ci sətir: {1}', [d.line, bad]));
+                var sp = { id: DB.uid('sup'), name: cleanName(d.supplierNew), phone: '', note: '', active: true, updatedAt: at, debtBasis: 'received', openingDebt: 0 };
+                return t.put('suppliers', sp).then(function () { return log(t, 'supplier.upserted', { supplier: sp, reason: 'created' }, user, at); }).then(function () { made[k] = sp.id; newSuppliers++; return sp.id; });
+              });
+            }
             return list.reduce(function (chain, d) {
               return chain.then(function () {
                 return nextSeq(t, 'productSeq').then(function (seq) {
@@ -715,10 +746,12 @@
                   created++;
                   if (!(d.opening > 0)) return null;
                   opened++;
-                  return receiveInTx(t, user, { productId: p.id, qty: d.opening, unitCost: canCost ? (d.cost || 0) : 0, note: _t('Açılış qalığı (Excel)'), supplierId: null }, at);
+                  return supplierFor(d).then(function (supplierId) {
+                    return receiveInTx(t, user, { productId: p.id, qty: d.opening, unitCost: canCost ? (d.cost || 0) : 0, note: _t('Açılış qalığı (Excel)'), supplierId: supplierId }, at);
+                  });
                 });
               });
-            }, Promise.resolve()).then(function () { return { created: created, opening: opened }; });
+            }, Promise.resolve()).then(function () { return { created: created, opening: opened, suppliers: newSuppliers }; });
           });
         });
       });
@@ -1104,7 +1137,7 @@
       var res = root.Fifo.replay({ lots: r[0], sales: r[1], returns: r[2], stock: stock, avgCost: avg, sreturns: r[5] });
       var names = {}; r[4].forEach(function (s) { names[s.id] = s.name; });
       var pnames = {}; r[3].forEach(function (p) { pnames[p.id] = p.name; });
-      return { res: res, lots: r[0], sales: r[1], returns: r[2], suppliers: r[4], sreturns: r[5], names: names, pnames: pnames };
+      return { res: res, lots: r[0], sales: r[1], returns: r[2], products: r[3], suppliers: r[4], sreturns: r[5], names: names, pnames: pnames };
     });
   }
 
@@ -1162,6 +1195,129 @@
           if (f) f.qty += L.remaining; else arr.push({ name: nm, qty: L.remaining });
         });
         return out;
+      });
+    });
+  }
+
+  /* ---------- Hesabatlar bölməsi: məhsul üzrə satış, stok, gəlir-xərc ----------
+     Hamısı eyni FIFO hesabından (fifoState) çıxır: Təchizatçılar hesabatı və çeklərlə eyni ədədlər. Alış qiyməti / maya / mənfəət yalnız "product.cost.view" olanlara verilir. */
+  function rangeOf(range) { return { from: range && range.from || '', to: range && range.to || '' }; }
+  function inRange(at, rg) { return (!rg.from || at >= rg.from) && (!rg.to || at < rg.to); }
+
+  // Məhsul üzrə satış. Hər məhsul üçün bir "satış" sətri; dövrdə həmin məhsuldan qaytarma olubsa, ondan dərhal sonra ayrıca "qaytarma" sətri (say və məbləğ mənfi).
+  // Qaytarma sətri məhsul üzrə cəmlənir (eyni məhsulun bir neçə qaytarması bir sətirdə). from/to: ISO vaxt, [from, to).
+  function productSalesReport(range) {
+    return requirePerm('report.view').then(function (user) {
+      return Promise.all([fifoState(), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[1], user.role, 'product.cost.view'), rg = rangeOf(range);
+        var rep = root.Fifo.productReport(st.res, st.sales, st.returns, rg.from, rg.to);
+        var byId = {}; st.products.forEach(function (p) { byId[p.id] = p; });
+        var list = Object.keys(rep).map(function (pid) {
+          var a = rep[pid], p = byId[pid];
+          return Object.assign({}, a, { name: p ? p.name : (a.name || pid), barcode: p ? p.storeBarcode : a.barcode });
+        }).sort(function (x, y) { return (y.soldRevenue - x.soldRevenue) || (y.retRevenue - x.retRevenue) || x.name.localeCompare(y.name, 'az'); });
+        var rows = [], t = { soldQty: 0, soldRevenue: 0, soldCost: 0, retQty: 0, retRevenue: 0, retCost: 0 };
+        list.forEach(function (a) {
+          Object.keys(t).forEach(function (k) { t[k] += a[k]; });
+          var base = { productId: a.productId, name: a.name, barcode: a.barcode };
+          if (a.soldQty || a.soldRevenue) rows.push(Object.assign({ kind: 'sale', qty: a.soldQty, revenue: a.soldRevenue, unit: a.soldQty ? Math.round(a.soldRevenue / a.soldQty) : 0,
+            cost: seeCost ? a.soldCost : null, profit: seeCost ? a.soldRevenue - a.soldCost : null }, base));
+          if (a.retQty || a.retRevenue) rows.push(Object.assign({ kind: 'ret', qty: -a.retQty, revenue: -a.retRevenue, unit: a.retQty ? Math.round(a.retRevenue / a.retQty) : 0,
+            cost: seeCost ? -a.retCost : null, profit: seeCost ? -(a.retRevenue - a.retCost) : null }, base));
+        });
+        var totals = { soldQty: t.soldQty, soldRevenue: t.soldRevenue, retQty: t.retQty, retRevenue: t.retRevenue, netQty: t.soldQty - t.retQty, netRevenue: t.soldRevenue - t.retRevenue,
+          netCost: seeCost ? t.soldCost - t.retCost : null, netProfit: seeCost ? (t.soldRevenue - t.retRevenue) - (t.soldCost - t.retCost) : null };
+        return { rows: rows, totals: totals, seeCost: seeCost };
+      });
+    });
+  }
+
+  // Stok hesabatı: hər məhsulun qalığı, minimum qalığı, qiyməti, FIFO ilə qalığın dəyəri və qalığın hansı təchizatçının malından olduğu.
+  // Vəziyyət: neg (mənfi qalıq), out (qalıq yoxdur), low (minimum qalığa çatıb və ya altındadır), ok. Qalığı 0 olan söndürülmüş məhsullar göstərilmir.
+  function stockReport() {
+    return requirePerm('product.view').then(function (user) {
+      return Promise.all([fifoState(), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[1], user.role, 'product.cost.view'), by = {};
+        Object.keys(st.res.lots).forEach(function (id) {
+          var L = st.res.lots[id]; if (L.remaining <= 0) return;
+          var e = by[L.productId] || (by[L.productId] = { value: 0, sup: [] }), nm = L.supplierId ? (st.names[L.supplierId] || '—') : null;
+          e.value += L.remaining * L.unitCost;
+          var f = e.sup.filter(function (x) { return x.name === nm; })[0];
+          if (f) f.qty += L.remaining; else e.sup.push({ name: nm, qty: L.remaining });
+        });
+        var rows = st.products.filter(function (p) { return p.active !== false || p.stock !== 0; }).map(function (p) {
+          var e = by[p.id] || { value: 0, sup: [] }, min = p.minStock || 0;
+          var neg = p.stock < 0 || (st.res.deficits[p.id] || 0) > 0;
+          return { productId: p.id, name: p.name, barcode: p.storeBarcode, mfrBarcode: p.mfrBarcode || '', category: p.category || '', brand: p.brand || '', active: p.active !== false,
+            qty: p.stock, minStock: min, price: p.price, status: neg ? 'neg' : p.stock === 0 ? 'out' : (min > 0 && p.stock <= min) ? 'low' : 'ok',
+            costValue: seeCost ? Math.round(e.value) : null, retailValue: Math.max(p.stock, 0) * p.price,
+            suppliers: e.sup.sort(function (a, b) { return b.qty - a.qty; }) };
+        }).sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
+        var totals = rows.reduce(function (t, x) {
+          if (x.qty > 0) { t.qty += x.qty; t.retailValue += x.retailValue; if (seeCost) t.costValue += x.costValue; }
+          t[x.status] += 1; return t;
+        }, { qty: 0, costValue: seeCost ? 0 : null, retailValue: 0, neg: 0, out: 0, low: 0, ok: 0 });
+        return { rows: rows, totals: totals, seeCost: seeCost };
+      });
+    });
+  }
+
+  // Gəlir-xərc. İki AYRI baxış (eyni pul iki dəfə sayılmasın deyə):
+  //  1) Mənfəət: xalis gəlir (satış − qaytarma, endirimdən sonra) − maya (FIFO) = ümumi mənfəət; − kassadan məxaric (təchizatçı ödənişləri istisna) = xalis mənfəət.
+  //     Təchizatçı ödənişi mənfəətə daxil EDİLMİR: malın dəyəri artıq mayadadır.
+  //  2) Pul hərəkəti: satışdan daxil olan pul − qaytarılan − kassadan məxaric − təchizatçı ödənişləri (nağd və bank) + kassaya mədaxil.
+  // Təchizatçı ödənişi: dövrdə edilmiş və ləğv edilməmiş. Nağd ödənişin kassa hərəkəti ("supplierPayId") məxaric sayılmır, ödəniş kimi sayılır.
+  // Alış qiymətinə baxmaq ("product.cost.view") və təchizatçıları görmək icazəsi lazımdır; təchizatçı ödənişlərini görə bilməyən rol bu hesabatı açmır.
+  function financeReport(range) {
+    return requirePerm('report.view').then(function (user) {
+      return Promise.all([fifoState(), DB.getAll('cashMoves'), DB.getAll('supplierPays'), matrix()]).then(function (r) {
+        var st = r[0], m = r[3], rg = rangeOf(range);
+        if (!Rules.can(m, user.role, 'product.cost.view')) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [Rules.PERMISSIONS['product.cost.view']]), 'forbidden');
+        if (!(Rules.can(m, user.role, 'supplier.pay') || Rules.can(m, user.role, 'supplier.view'))) throw err(_t('Bu əməliyyata icazəniz yoxdur: {0}', [Rules.PERMISSIONS['supplier.view']]), 'forbidden');
+        var sales = st.sales.filter(function (s) { return inRange(s.at, rg); }), rets = st.returns.filter(function (x) { return inRange(x.at, rg); });
+        var sum = Rules.shiftSummary(sales, rets);
+        var salesTotal = sales.reduce(function (a, s) { return a + s.totals.total; }, 0);
+        var rep = root.Fifo.productReport(st.res, st.sales, st.returns, rg.from, rg.to), cost = 0;
+        Object.keys(rep).forEach(function (k) { cost += rep[k].soldCost - rep[k].retCost; });
+        var items = [], opOut = 0, opIn = 0, supCash = 0, supBank = 0;
+        r[1].forEach(function (mv) {
+          if (!inRange(mv.at, rg) || mv.supplierPayId) return;
+          if (mv.type === 'out') { opOut += mv.amount; items.push({ kind: 'expense', at: mv.at, title: mv.reason || '', amount: mv.amount }); }
+          else if (mv.type === 'in') opIn += mv.amount;
+        });
+        r[2].forEach(function (p) {
+          if (!inRange(p.at, rg) || p.voidedAt) return;
+          if (p.method === 'cash') supCash += p.amount; else supBank += p.amount;
+          items.push({ kind: 'supplier', at: p.at, title: p.supplierName || '', note: p.note || '', method: p.method, amount: p.amount });
+        });
+        items.sort(function (a, b) { return a.at < b.at ? 1 : a.at > b.at ? -1 : 0; });
+        var netRevenue = salesTotal - sum.returns, grossProfit = netRevenue - cost, supTotal = supCash + supBank;
+        return {
+          sales: { count: sales.length, gross: sum.gross, discount: sum.discount, total: salesTotal, cash: sum.cash, pos: sum.pos, transfer: sum.transfer },
+          returns: { count: rets.length, total: sum.returns },
+          netRevenue: netRevenue, cost: cost, grossProfit: grossProfit, expense: opOut, netProfit: grossProfit - opOut,
+          supplierPaid: { total: supTotal, cash: supCash, bank: supBank }, cashIn: opIn,
+          flow: { salesIn: salesTotal, returnsOut: sum.returns, expenseOut: opOut, supplierOut: supTotal, cashIn: opIn, net: salesTotal - sum.returns - opOut - supTotal + opIn },
+          items: items
+        };
+      });
+    });
+  }
+
+  /* ---------- Bölmələrin sırası (Admin təyin edir, hamı üçün) ---------- */
+  function getTabOrder() { return DB.get('meta', 'tabOrder').then(function (m) { return Rules.tabOrder(m && m.value); }); }
+  function setTabOrder(list) {
+    return requirePerm('admin.permissions').then(function (user) {
+      if (!Array.isArray(list) || list.some(function (id) { return !Rules.TABS.some(function (t) { return t.id === id; }); })) throw err(_t('Bölmələrin sırası səhvdir'));
+      var next = Rules.tabOrder(list), at = now();
+      return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
+        return t.get('meta', 'tabOrder').then(function (old) {
+          var before = Rules.tabOrder(old && old.value);
+          if (JSON.stringify(before) === JSON.stringify(next)) return { order: next, unchanged: true };
+          return t.put('meta', { key: 'tabOrder', value: next }).then(function () { return t.put('meta', { key: 'tabOrderAt', value: at }); })
+            .then(function () { return log(t, 'admin.tab_order_changed', { before: before, after: next }, user, at); })
+            .then(function () { return { order: next }; });
+        });
       });
     });
   }
@@ -1609,6 +1765,7 @@
     return requirePerm('admin.permissions').then(function (user) {
       // Admin özünü icazə idarəsindən kənarlaşdıra bilməz
       if (m.admin.indexOf('admin.permissions') === -1) throw err(_t('Admin icazə idarəsini özündən götürə bilməz'));
+      if (m.admin.indexOf('tab.permissions') === -1) m.admin.push('tab.permissions');     // İcazələr bölməsi Admin-də həmişə açıqdır: yoxsa özünü kilidləyə bilər
       var at = now();
       return DB.atomic(['meta', 'audit', 'outbox'], function (t) {
         return t.get('meta', 'matrix').then(function (old) {
@@ -1807,7 +1964,8 @@
     MAX_CART_LINES: MAX_CART_LINES, EVENT_MAX_CHARS: EVENT_MAX_CHARS,
     init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin, changeCredential: changeCredential,
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
-    approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix,
+    approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix, getTabOrder: whenLoggedIn(getTabOrder), setTabOrder: setTabOrder,
+    productSalesReport: productSalesReport, stockReport: stockReport, financeReport: financeReport,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct, importProducts: importProducts, validateProductInput: validateProductInput, IMPORT_MAX_ROWS: IMPORT_MAX_ROWS,
     receiveStock: receiveStock, createPurchase: createPurchase, listPurchases: listPurchases, returnableLots: returnableLots, createSupplierReturn: createSupplierReturn, cancelPurchase: cancelPurchase, listSupplierReturns: listSupplierReturns, MAX_PURCHASE_LINES: MAX_PURCHASE_LINES, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,

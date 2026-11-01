@@ -22,9 +22,10 @@
     { key: 'mfrBarcode', alias: ['istehsalci barkodu', 'istehsalci barkod', 'istehsalci kodu', 'barkod', 'barcode', 'mfr', 'mfr barcode', 'manufacturer barcode', 'uretici barkodu', 'штрихкод', 'штрихкод производителя'] },
     { key: 'price', required: true, alias: ['satis qiymeti', 'satis', 'qiymet', 'price', 'sale price', 'satis fiyati', 'fiyat', 'цена', 'цена продажи'] },
     { key: 'cost', alias: ['alis qiymeti', 'alis', 'maya', 'cost', 'purchase price', 'alis fiyati', 'maliyet', 'себестоимость', 'закупочная цена'] },
+    { key: 'supplier', alias: ['techizatci', 'tedarikci', 'supplier', 'vendor', 'supplier name', 'поставщик'] },
     { key: 'minStock', alias: ['minimum qaliq', 'min qaliq', 'minimum', 'min', 'min stock', 'minimum stock', 'minimum stok', 'минимальный остаток', 'мин остаток'] },
-    { key: 'maxDiscount', alias: ['max endirim', 'maksimum endirim', 'endirim', 'max discount', 'maksimum indirim', 'макс скидка', 'максимальная скидка'] },
-    { key: 'opening', alias: ['acilis qaliqi', 'qaliq', 'say', 'miqdar', 'stock', 'qty', 'quantity', 'opening stock', 'adet', 'stok', 'остаток', 'количество', 'начальный остаток'] }
+    { key: 'maxDiscount', alias: ['max endirim', 'maks endirim', 'maksimum endirim', 'endirim', 'maks indirim', 'max discount', 'maksimum indirim', 'макс скидка', 'максимальная скидка'] },
+    { key: 'opening', alias: ['acilis qaliqi', 'acilis qaligi', 'acilis stoku', 'qaliq', 'say', 'miqdar', 'stock', 'qty', 'quantity', 'opening stock', 'adet', 'stok', 'остаток', 'количество', 'начальный остаток'] }
   ];
   function normHeader(h) { return R.foldAz(h).replace(/[^a-z0-9а-я]+/g, ' ').trim(); }
   var ALIAS = {};
@@ -281,6 +282,8 @@
       function get(key) { return col[key] == null ? '' : cleanName(cells[col[key]]); }
       var errors = [], warnings = [], d = { line: r + 1 };
       d.name = get('name'); d.category = get('category'); d.brand = get('brand'); d.ageGroup = get('ageGroup');
+      d.supplier = get('supplier');
+      if (d.supplier.length > 60) errors.push(_t('Təchizatçının adı 60 simvoldan uzun ola bilməz'));
       var mfr = col.mfrBarcode == null ? '' : String(cells[col.mfrBarcode] == null ? '' : cells[col.mfrBarcode]).replace(/\s+/g, '');
       if (/^\d+([.,]\d+)?e[+-]?\d+$/i.test(mfr)) { errors.push(_t('İstehsalçı barkodu elmi yazıda ({0}). Excel-də sütunu "Mətn" formatına keçirin və barkodu yenidən yazın', [mfr])); mfr = ''; }
       d.mfrBarcode = mfr;
@@ -311,8 +314,11 @@
   /* Dublikat təsnifatı. existing: mövcud məhsullar. Ad + istehsalçı barkodu eynidirsə sətir atlanır (allowDup=true olarsa yüklənir);
      eyni istehsalçı barkodu fərqli adlı məhsulda varsa xəbərdarlıq (kassada seçim pəncərəsi çıxacaq), yüklənir (BR-01, FR-103).
      Hər sətrə status verilir: 'new' | 'skip' | 'error'. */
-  function classify(rows, existing, allowDup) {
+  function classify(rows, existing, allowDup, sup) {
     var key = function (name, mfr) { return R.foldAz(cleanName(name)) + '|' + (mfr || ''); };
+    // sup = {list: mövcud təchizatçılar (aktiv və passiv), create: yeni adları yarat}. Verilməyibsə təchizatçı sütunu nəzərə alınmır.
+    var supBy = {};
+    if (sup) (sup.list || []).forEach(function (x) { supBy[R.foldAz(cleanName(x.name))] = x; });
     var have = {}, byMfr = {};
     (existing || []).forEach(function (p) {
       have[key(p.name, p.mfrBarcode)] = p;
@@ -320,8 +326,19 @@
     });
     var inFile = {}, mfrInFile = {};
     rows.forEach(function (d) {
-      d.notes = [];
-      if (d.errors.length) { d.status = 'error'; return; }
+      d.notes = []; d.supplierId = null; d.supplierNew = null; d.supplierMissing = false;
+      // Təchizatçı: yalnız açılış qalığı ilə birlikdə mənalıdır (partiya təchizatçıya bağlanır, borc həmin partiyadan yaranır)
+      var supErr = null;
+      if (sup && d.supplier) {
+        var sk = R.foldAz(cleanName(d.supplier)), found = supBy[sk];
+        if (found && !found.active) supErr = _t('Təchizatçı söndürülüb: {0}', [d.supplier]);
+        else if (found) d.supplierId = found.id;
+        else if (sup.create) d.supplierNew = cleanName(d.supplier);
+        else { d.supplierMissing = true; supErr = _t('Təchizatçı tapılmadı: {0}. Əvvəlcə Təchizatçılar bölməsində əlavə edin, adı düzəldin və ya yeni təchizatçıların yaradılmasına icazə verin', [d.supplier]); }
+      }
+      if (supErr) d.notes.push(supErr);
+      if (d.errors.length || supErr) { d.status = 'error'; return; }
+      if ((d.supplierId || d.supplierNew) && !(d.opening > 0)) d.notes.push(_t('Təchizatçı yalnız açılış qalığı ilə birlikdə yazılır: qalıq yoxdur, təchizatçı nəzərə alınmayacaq'));
       var k = key(d.name, d.mfrBarcode);
       if (have[k] || inFile[k]) {
         d.dup = true;
@@ -337,6 +354,20 @@
       }
     });
     return rows;
+  }
+  /* Təchizatçı borcuna təsir: açılış qalığı təchizatçıya yazılanda həmin partiya "alınan mal" sayılır (qalıq × alış qiyməti).
+     Qaytarır: [{name, isNew, basis, products, qty, amount}] ad üzrə. basis 'sold' olan təchizatçıda borc yalnız satıldıqca yaranır (amount = 0). */
+  function supplierEffect(rows, suppliers) {
+    var byId = {}; (suppliers || []).forEach(function (x) { byId[x.id] = x; });
+    var out = {};
+    (rows || []).forEach(function (d) {
+      if (d.status !== 'new' || !(d.opening > 0) || !(d.supplierId || d.supplierNew)) return;
+      var sp = d.supplierId ? byId[d.supplierId] : null, name = sp ? sp.name : d.supplierNew, k = R.foldAz(cleanName(name));
+      var o = out[k] = out[k] || { name: name, isNew: !sp, basis: sp ? (sp.debtBasis || 'received') : 'received', products: 0, qty: 0, amount: 0 };
+      o.products++; o.qty += d.opening;
+      if (o.basis !== 'sold') o.amount += Math.round(d.opening * (d.cost || 0));
+    });
+    return Object.keys(out).map(function (k) { return out[k]; });
   }
   function summary(rows) {
     var s = { total: rows.length, new: 0, skip: 0, error: 0, opening: 0 };
@@ -380,7 +411,7 @@
   function colName(i) { return String.fromCharCode(65 + i); }
   // rows: massiv massivi; sətir = mətn (inlineStr) və ya {n: ədəd}
   function xlsxFromRows(rows) {
-    var sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="34" customWidth="1"/><col min="2" max="10" width="20" customWidth="1"/></cols><sheetData>' +
+    var sheet = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="34" customWidth="1"/><col min="2" max="11" width="20" customWidth="1"/></cols><sheetData>' +
       rows.map(function (r, ri) {
         return '<row r="' + (ri + 1) + '">' + r.map(function (c, ci) {
           var ref = colName(ci) + (ri + 1);
@@ -399,16 +430,16 @@
   // Şablonun başlıqları interfeys dilindədir; yükləmə həmişə dörd dildəki adları tanıyır
   function templateRows() {
     return [
-      [_t('Ad *'), _t('Kateqoriya'), _t('Brend'), _t('Yaş qrupu'), _t('İstehsalçı barkodu'), _t('Satış qiyməti *'), _t('Alış qiyməti'), _t('Minimum qalıq'), _t('Max endirim %'), _t('Açılış qalığı')],
-      [_t('Konstruktor dəsti, 120 hissə'), _t('Oyuncaq'), 'Lego', '6+', '4006381333931', { n: 14.5 }, { n: 9 }, { n: 2 }, { n: 10 }, { n: 6 }],
-      [_t('Maqnit «Bakı»'), _t('Suvenir'), '', '', '', { n: 2.25 }, { n: 0.9 }, { n: 5 }, { n: 0 }, { n: 40 }]
+      [_t('Ad *'), _t('Kateqoriya'), _t('Brend'), _t('Yaş qrupu'), _t('İstehsalçı barkodu'), _t('Satış qiyməti *'), _t('Alış qiyməti'), _t('Minimum qalıq'), _t('Max endirim %'), _t('Açılış qalığı'), _t('Təchizatçı')],
+      [_t('Konstruktor dəsti, 120 hissə'), _t('Oyuncaq'), 'Lego', '6+', '4006381333931', { n: 14.5 }, { n: 9 }, { n: 2 }, { n: 10 }, { n: 6 }, _t('Nümunə MMC')],
+      [_t('Maqnit «Bakı»'), _t('Suvenir'), '', '', '', { n: 2.25 }, { n: 0.9 }, { n: 5 }, { n: 0 }, { n: 40 }, '']
     ];
   }
   function templateXlsx() { return xlsxFromRows(templateRows()); }
 
   var Import = {
     MAX_ROWS: MAX_ROWS, MAX_FILE: MAX_FILE, FIELDS: FIELDS,
-    readFile: readFile, readXlsx: readXlsx, parseCsv: parseCsv, mapRows: mapRows, classify: classify, summary: summary,
+    readFile: readFile, readXlsx: readXlsx, parseCsv: parseCsv, mapRows: mapRows, classify: classify, summary: summary, supplierEffect: supplierEffect,
     templateXlsx: templateXlsx, templateRows: templateRows, xlsxFromRows: xlsxFromRows, zipStore: zipStore, plainNumber: plainNumber, normHeader: normHeader
   };
   root.Import = Import;

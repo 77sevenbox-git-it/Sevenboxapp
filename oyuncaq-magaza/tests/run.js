@@ -57,9 +57,9 @@ t('mal qəbulu ayrıca icazədir: Menecer və Admin-də var, Kassir və Mühasib
 t('köhnə matris yenilənir: product.edit olan rola stock.receive əlavə olunur, təkrar çağırış dəyişmir, orijinal dəyişmir', () => {
   const old = { menecer: ['product.edit'], kassir: ['pos.sell'], muhasib: ['report.view'] };
   const up = Rules.upgradeMatrix(old);
-  assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive', 'supplier.manage', 'supplier.view']);   // 4: təchizatçı icazələri
-  assert.deepStrictEqual(up.kassir, ['pos.sell', 'stock.request']);      // 5: kassir mal gəldi sorğusu göndərə bilir
-  assert.deepStrictEqual(up.muhasib, ['report.view', 'supplier.view']);      // hesabata baxan təchizatçı hesabatını görür, dəyişə bilmir
+  assert.deepStrictEqual(up.menecer, ['product.edit', 'stock.receive', 'supplier.manage', 'supplier.view', 'tab.suppliers']);   // 4: təchizatçı icazələri; 7: əvvəl açdığı bölmə
+  assert.deepStrictEqual(up.kassir, ['pos.sell', 'stock.request', 'tab.pos']);      // 5: kassir mal gəldi sorğusu göndərə bilir
+  assert.deepStrictEqual(up.muhasib, ['report.view', 'supplier.view', 'tab.suppliers', 'tab.reports', 'tab.sales']);      // hesabata baxan təchizatçı hesabatını görür, dəyişə bilmir
   assert.deepStrictEqual(old.menecer, ['product.edit']);
   assert.deepStrictEqual(Rules.upgradeMatrix(up), up);
 });

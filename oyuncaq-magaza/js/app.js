@@ -4,29 +4,39 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.10.11-7';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.11.01-1';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
+  // Bölmə görünür, əgər rolun bölmə icazəsi ("tab.*") varsa. Sıra: Admin-in Ayarlar bölməsində təyin etdiyi (hamı üçün eyni), çatmayanlar ilkin sıra ilə sonda.
   var ROUTES = [
-    { id: 'pos', label: _t('Kassa'), perm: 'pos.sell', render: function (el) { return root.POS.mount(el); } },
-    { id: 'returns', label: _t('Qaytarma'), perm: 'pos.return.request', render: function (el) { root.Screens.returns(el); } },
-    { id: 'products', label: _t('Məhsullar'), perm: 'product.view', render: function (el) { root.Screens.products(el); } },
-    { id: 'suppliers', label: _t('Təchizatçılar'), perm: 'supplier.view', render: function (el) { root.Screens.suppliers(el); } },
-    { id: 'sales', label: _t('Çeklər'), perm: 'report.view', render: function (el) { root.Screens.sales(el); } },
-    { id: 'shift', label: _t('Növbə'), perm: 'shift.open_close', render: function (el) { root.Screens.shift(el); } },
-    { id: 'admin', label: _t('İcazələr'), perm: 'admin.permissions', render: function (el) { root.Screens.admin(el); } }
+    { id: 'pos', label: _t('Kassa'), perm: 'tab.pos', render: function (el) { return root.POS.mount(el); } },
+    { id: 'returns', label: _t('Qaytarma'), perm: 'tab.returns', render: function (el) { root.Screens.returns(el); } },
+    { id: 'products', label: _t('Məhsullar'), perm: 'tab.products', render: function (el) { root.Screens.products(el); } },
+    { id: 'suppliers', label: _t('Təchizatçılar'), perm: 'tab.suppliers', render: function (el) { root.Screens.suppliers(el); } },
+    { id: 'reports', label: _t('Hesabatlar'), perm: 'tab.reports', render: function (el) { root.Screens.reports(el); } },
+    { id: 'sales', label: _t('Çeklər'), perm: 'tab.sales', render: function (el) { root.Screens.sales(el); } },
+    { id: 'shift', label: _t('Növbə'), perm: 'tab.shift', render: function (el) { root.Screens.shift(el); } },
+    { id: 'permissions', label: _t('İcazələr'), perm: 'tab.permissions', render: function (el) { root.Screens.permissions(el); } },
+    { id: 'settings', label: _t('Ayarlar'), perm: 'tab.settings', render: function (el) { root.Screens.settings(el); } }
   ];
+  var ALIASES = { admin: 'permissions' };      // köhnə ünvan (#admin) İcazələr bölməsinə aparır
 
-  var app = { matrix: null, route: null };
-  var shell, nav, main, sysEl, reqSlot, menuWrap, headerEl;      // sysEl: yalnız Admin üçün sistem zolağı (FR-108)
+  var app = { matrix: null, route: null, order: null };
+  var shell, nav, main, sysEl, reqSlot, menuWrap, headerEl, chromeEl;      // sysEl: yalnız Admin üçün sistem zolağı (FR-108)
   var installEvt = null;                                            // brauzerin "quraşdır" təklifi (Chrome kompüterdə/Android)
   var revoked = false, stopLock = null;                             // Admin bu cihazı bloklayıb (Code.gs v9): tətbiq kilidlənir
 
-  function allowed() { var u = S.currentUser(); return ROUTES.filter(function (r) { return u && R.can(app.matrix, u.role, r.perm); }); }
+  function allowed() {
+    var u = S.currentUser(), order = R.tabOrder(app.order);
+    return ROUTES.filter(function (r) { return u && R.can(app.matrix, u.role, r.perm); }).sort(function (a, b) { return order.indexOf(a.id) - order.indexOf(b.id); });
+  }
+  // Bölmələrin sırası bazadan oxunur (Admin başqa cihazda dəyişibsə sinxrondan sonra yenilənir)
+  function reloadOrder() { return S.getTabOrder().then(function (o) { app.order = o; renderNav(); }); }
 
   // Ekran açılanda yumşaq giriş animasiyası (sinif təkrar verilir ki, animasiya hər keçiddə yenidən oynasın)
   function animateIn(el, cls) { if (!el) return; var c = cls || 'screen-in'; el.classList.remove(c); void el.offsetWidth; el.classList.add(c); }
 
   function go(id) {
+    id = ALIASES[id] || id;
     var list = allowed();
     var r = list.find(function (x) { return x.id === id; }) || list[0];
     if (!r) { UI.clear(main).appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, _t('Bu rol üçün açıq ekran yoxdur.')))); return; }
@@ -94,7 +104,7 @@
   function drawSysbar(u, shift, unsent) {
     var admin = isAdmin(u);
     if (!admin) { if (sysEl) { sysEl.remove(); sysEl = null; } return; }
-    if (!sysEl) { sysEl = h('div', { class: 'sysbar', role: 'status', 'aria-label': _t('Sistem vəziyyəti') }); shell.insertBefore(sysEl, headerEl); }
+    if (!sysEl) { sysEl = h('div', { class: 'sysbar', role: 'status', 'aria-label': _t('Sistem vəziyyəti') }); chromeEl.insertBefore(sysEl, headerEl); }
     var online = navigator.onLine, sy = root.Sync.status();
     UI.clear(sysEl);
     sysEl.appendChild(h('b', { class: 'sys-title', title: _t('Bu zolağı yalnız Admin görür') }, _t('Sistem')));
@@ -103,7 +113,7 @@
     sysEl.appendChild(h('span', { class: 'muted', title: _t('Tətbiq versiyası. İki cihazda eyni olmalıdır; fərqlidirsə Ctrl+F5 basın') }, 'v' + BUILD));
     if (unsent) sysEl.appendChild(h('span', { class: 'badge', title: _t('Serverə göndərilməmiş qeydlər') }, _t('{0} sinxron gözləyir', [unsent])));
     if (sy.ok === false) sysEl.appendChild(h('span', { class: 'badge bad', title: sy.error || '' }, _t('Sinxron xətası')));
-    if (sy.kind === 'legacy') sysEl.appendChild(h('span', { class: 'badge', title: _t('Bu cihaz köhnə ümumi açarla işləyir. İcazələr → Cihazlar bölməsində ona ayrıca açar verin') }, _t('Ümumi açar')));
+    if (sy.kind === 'legacy') sysEl.appendChild(h('span', { class: 'badge', title: _t('Bu cihaz köhnə ümumi açarla işləyir. Ayarlar → Cihazlar bölməsində ona ayrıca açar verin') }, _t('Ümumi açar')));
     if (Math.abs(sy.skewMs || 0) > 120000) sysEl.appendChild(h('span', { class: 'badge bad', title: _t('Bu cihazın saatı serverdən {0} dəq. fərqlənir. Çek tarixləri avtomatik düzəldilir, amma cihazın saatını "avtomatik" rejimə keçirin', [Math.round(Math.abs(sy.skewMs) / 60000)]) }, _t('Saat səhvdir')));
     sysEl.appendChild(h('span', { class: 'sys-end' }, shift ? _t('Növbə açıq · {0}', [UI.fmtTime(shift.openedAt)]) : _t('Növbə bağlı')));
     sysEl.appendChild(h('span', null, u.name + ' · ' + R.ROLE_NAMES[u.role]));
@@ -166,6 +176,10 @@
     }
     chain = chain.then(function (ok) {
       if (!ok) return false;
+      return t.tabs ? reloadOrder().then(function () { return true; }) : true;
+    });
+    chain = chain.then(function (ok) {
+      if (!ok) return false;
       if (!t.matrix) return true;
       return S.getMatrix().then(function (m) {
         app.matrix = m;
@@ -196,20 +210,24 @@
     menuWrap = h('div', { class: 'menu-wrap' }, menuBtn);
     main = h('main', { id: 'main' });
     headerEl = h('header', { class: 'topbar' }, h('div', { class: 'brand' }, h('b', null, ''), h('span', { class: 'muted' }, '')), nav, h('div', { class: 'top-actions' }, reqSlot, menuWrap));
-    shell.appendChild(headerEl);
+    chromeEl = h('div', { class: 'chrome' }, headerEl);          // sistem zolağı + başlıq + tablar: ekran sürüşəndə yerində qalır
+    shell.appendChild(chromeEl);
     shell.appendChild(main);
-    animateIn(shell.firstChild, 'fade-in');
+    animateIn(chromeEl, 'fade-in');
     refreshStatus();
     // Sheets tutumu dolmağa yaxınlaşırsa Admin xəbərdar olur (sinxron 10 milyon xanada dayanır). Köhnə skript və ya oflayn: səssiz keçilir
     if (app.matrix && S.currentUser() && R.can(app.matrix, S.currentUser().role, 'admin.permissions')) {
       root.Sync.archiveStatus().then(function (st) {
-        if (st && st.pct >= 70) UI.toast(_t('Cədvəl tutumunun {0}%-i dolub. Rollar və icazələr → Arxiv bölməsində arxivləşdirin', [st.pct]), 'bad');
+        if (st && st.pct >= 70) UI.toast(_t('Cədvəl tutumunun {0}%-i dolub. Ayarlar → Arxiv bölməsində arxivləşdirin', [st.pct]), 'bad');
       }).catch(function () { /* vacib deyil */ });
     }
     var wantApprovals = location.hash === '#approvals';       // bildirişə klikdən açılıb
-    go(wantApprovals ? 'pos' : location.hash.slice(1) || 'pos');
-    root.Notify.sync();
-    if (wantApprovals) openApprovals();
+    S.getTabOrder().catch(function () { return null; }).then(function (o) {
+      app.order = o;
+      go(wantApprovals ? 'pos' : location.hash.slice(1) || 'pos');
+      root.Notify.sync();
+      if (wantApprovals) openApprovals();
+    });
   }
 
   // Bildirişə klik: sessiya açıqdırsa sorğular pəncərəsi dərhal açılır (təsdiq/rədd bir toxunuşla). Sessiya yoxdursa kod soruşulmadan
@@ -251,7 +269,8 @@
     });
   }
 
-  app.go = go; app.renderNav = renderNav; app.refreshStatus = refreshStatus;
+  app.go = go; app.renderNav = renderNav; app.refreshStatus = refreshStatus; app.reloadOrder = reloadOrder;
+  app.tabs = function () { return ROUTES.map(function (r) { return { id: r.id, label: r.label }; }); };      // Ayarlar → Bölmələrin sırası üçün
   root.App = app;
 
   root.Notify.onOpen(openApprovals);

@@ -174,6 +174,10 @@ try:
             nav_click(pg, 'Çeklər'); pg.wait_for_timeout(300); clean(pg, f'[{L}] çeklər')
             nav_click(pg, 'Təchizatçılar'); pg.wait_for_timeout(300); clean(pg, f'[{L}] təchizatçılar')
             nav_click(pg, 'İcazələr'); pg.wait_for_selector('#user-add'); clean(pg, f'[{L}] icazələr')
+            nav_click(pg, 'Hesabatlar'); pg.wait_for_selector('#rs-table'); clean(pg, f'[{L}] hesabat: məhsul üzrə satış')
+            pg.click('#rpt-tab-stock'); pg.wait_for_selector('#st-table tbody tr'); clean(pg, f'[{L}] hesabat: stok')
+            pg.click('#rpt-tab-finance'); pg.wait_for_selector('#fn-profit'); clean(pg, f'[{L}] hesabat: gəlir-xərc')
+            nav_click(pg, 'Ayarlar'); pg.wait_for_selector('#tab-order li'); clean(pg, f'[{L}] ayarlar')
             pg.click('#menu-btn'); pg.wait_for_selector('.menu-pop')
             if pg.locator('#notify-btn').count():
                 pg.click('#notify-btn'); pg.wait_for_selector('#nt-out'); clean(pg, f'[{L}] bildiriş pəncərəsi'); close_modals(pg)

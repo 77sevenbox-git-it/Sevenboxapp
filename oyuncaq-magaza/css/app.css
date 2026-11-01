@@ -27,6 +27,9 @@ html.modal-open, html.modal-open body { overflow: hidden; }          /* pəncər
 .hidden { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* Sistem zolağı + başlıq + tablar bir yerdə sabitdir (ekran sürüşəndə yuxarıda qalır) */
+.chrome { position: sticky; top: 0; z-index: 30; }
+
 /* Başlıq (FR-107/111): marka | bölmə tabları | sorğular + menyu. Status məlumatı yalnız Admin üçün ayrıca tünd zolaqdadır (FR-108). */
 .topbar { display: flex; align-items: stretch; gap: 20px; padding: 0 24px; min-height: 56px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand { display: flex; flex-direction: column; justify-content: center; line-height: 1.2; min-width: 0; flex: none; max-width: 240px; }
@@ -350,3 +353,10 @@ input.input.changed { border-color: var(--warn); background: var(--warn-soft); }
 .device-id { font-size: 13px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .device-id code { word-break: break-all; user-select: all; }
 #dev-token { font-size: 13px; letter-spacing: .02em; }
+
+/* Hesabatlar: qaytarma sətirləri qırmızı (rəngdən əlavə «Qaytarma» nişanı və mənfi say/məbləğ də var), icazə cədvəlində qrup başlıqları, gəlir-xərc cədvəli */
+tr.ret td, tr.ret th { background: var(--bad-soft); color: var(--bad); }
+tr.grp th { background: var(--ground); color: var(--ink-2); font-size: 13px; text-transform: none; padding-top: 14px; }
+.fin table { width: 100%; }
+.fin tr.bold td { border-top: 1px solid var(--line); background: var(--ground); }
+tfoot th { border-top: 2px solid var(--line); background: var(--ground); color: var(--ink); }

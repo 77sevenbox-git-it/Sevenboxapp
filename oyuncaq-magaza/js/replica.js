@@ -71,6 +71,18 @@
     });
   };
 
+  // Bölmələrin sırası: matris kimi "son yazan qalib". Köhnə cihaz bu hadisəni tanımır və atlayır (səhv deyil).
+  H['admin.tab_order_changed'] = function (t, ev, d, sum) {
+    if (!d.after) return;
+    var after = Rules.tabOrder(d.after);
+    return Promise.all([t.get('meta', 'tabOrderAt'), t.get('meta', 'tabOrder')]).then(function (r) {
+      var m = r[0];
+      if (m && !newer(ev.at, after, m.value, r[1] && r[1].value)) return;
+      sum.touched.tabs = true;
+      return t.put('meta', { key: 'tabOrder', value: after }).then(function () { return t.put('meta', { key: 'tabOrderAt', value: ev.at }); });
+    });
+  };
+
   H['admin.store_changed'] = function (t, ev, d, sum) {
     if (!d.store) return;
     return Promise.all([t.get('meta', 'storeAt'), t.get('meta', 'store')]).then(function (r) {
@@ -359,6 +371,9 @@
   var CHECK = {
     'user.upserted': function (d) {
       var u = d.user; return isObj(u) && idOk(u.id) && nameOk(u.name, 80) && typeof u.role === 'string' && own.call(Rules.ROLE_NAMES, u.role) && sOk(u.salt, 200) && sOk(u.pinHash, 200) && hashOk(u.pinHash) && oB(u, 'active') && oB(u, 'mustChangePin') && oS(u, 'updatedAt', 40);
+    },
+    'admin.tab_order_changed': function (d) {
+      return arr(d.after, 0, 20, function (x) { return typeof x === 'string' && /^[a-z_]{1,30}$/.test(x); });
     },
     'admin.auth_policy_changed': function (d) {
       var a = d.after; if (!isObj(a)) return false;

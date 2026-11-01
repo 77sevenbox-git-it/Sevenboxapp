@@ -444,8 +444,11 @@
     var file = h('input', { type: 'file', id: 'imp-file', accept: '.xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     var dup = h('input', { type: 'checkbox', id: 'imp-dup' });
     var dupRow = h('label', { class: 'check-row', hidden: true }, dup, h('span', null, _t('Təkrar sətirləri də yüklə (eyni ad və istehsalçı barkodu ilə məhsul artıq var)')));
+    var canNewSup = can('supplier.manage');
+    var newSup = h('input', { type: 'checkbox', id: 'imp-newsup' });
+    var newSupRow = h('label', { class: 'check-row', hidden: true }, newSup, h('span', null, _t('Faylda olan, amma sistemdə olmayan təchizatçıları yarat')));
     var out = h('div', { id: 'imp-out', 'aria-live': 'polite' });
-    var existing = [], res = null, goBtn = null;
+    var existing = [], supList = [], res = null, goBtn = null;
     function fieldLabel(k) { return { name: _t('Ad *'), price: _t('Satış qiyməti *') }[k] || k; }
     function say(text, cls) { UI.clear(out); out.appendChild(h('p', { class: cls || 'muted', role: cls ? 'alert' : null, style: 'margin:0' }, text)); }
 
@@ -457,29 +460,37 @@
 
     function draw() {
       if (!res) return;
-      UI.clear(out); dupRow.hidden = true;
+      UI.clear(out); dupRow.hidden = true; newSupRow.hidden = true;
       if (res.empty) return say(_t('Faylda məlumat tapılmadı'), 'warn-text');
       if (res.missing.length) return say(_t('Məcburi sütun tapılmadı: {0}. Şablonu yükləyib başlıqları yoxlayın', [res.missing.map(fieldLabel).join(', ')]), 'warn-text');
       if (res.tooMany) return say(_t('Faylda {0}-dən çox məhsul sətri var. Faylı hissələrə bölüb ayrı-ayrı yükləyin', [Imp.MAX_ROWS]), 'warn-text');
-      Imp.classify(res.rows, existing, dup.checked);
+      Imp.classify(res.rows, existing, dup.checked, { list: supList, create: canNewSup && newSup.checked });
       var sm = Imp.summary(res.rows);
       dupRow.hidden = !res.rows.some(function (d) { return d.dup; });
+      var hasSup = res.rows.some(function (d) { return d.supplier; });
+      newSupRow.hidden = !(canNewSup && (newSup.checked || res.rows.some(function (d) { return d.supplierMissing; })));
       out.appendChild(h('div', { class: 'imp-sum' },
         h('span', { class: 'badge ok' }, _t('Yüklənəcək: {0}', [sm.new])),
         sm.skip ? h('span', { class: 'badge off' }, _t('Atlanacaq: {0}', [sm.skip])) : null,
         sm.error ? h('span', { class: 'badge bad' }, _t('Səhvli: {0}', [sm.error])) : null,
         sm.opening ? h('span', { class: 'badge' }, _t('Açılış qalığı ilə: {0}', [sm.opening])) : null));
+      Imp.supplierEffect(res.rows, supList).forEach(function (e) {
+        var txt = (e.isNew ? _t('{0} (yeni)', [e.name]) : e.name) + ': ' + _t('{0} məhsul, {1} ədəd', [e.products, e.qty]) + ' · ' +
+          (e.basis === 'sold' ? _t('borc satıldıqca yaranacaq') : _t('borca +{0} ₼', [M.format(e.amount)]));
+        out.appendChild(h('p', { class: 'muted', 'data-sup-effect': e.name, style: 'margin:6px 0 0;font-size:13px' }, txt));
+      });
       if (res.unknown.length) out.appendChild(h('p', { class: 'muted', style: 'margin:8px 0 0;font-size:13px' }, _t('Tanınmayan sütunlar (yüklənmir): {0}', [res.unknown.join(', ')])));
       var STATUS = { new: [_t('Yüklənəcək'), 'ok'], skip: [_t('Atlanacaq'), 'off'], error: [_t('Səhv'), 'bad'] };
       out.appendChild(h('div', { class: 'table-wrap imp-table', tabindex: '0' }, h('table', null,
         h('thead', null, h('tr', null, h('th', null, '#'), h('th', null, _t('Məhsul')), h('th', { class: 'num' }, _t('Satış ₼')), showCost ? h('th', { class: 'num' }, _t('Alış ₼')) : null,
-          h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Nəticə')))),
+          h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Qalıq')), hasSup ? h('th', null, _t('Təchizatçı')) : null, h('th', null, _t('Nəticə')))),
         h('tbody', null, res.rows.map(function (d) {
           var st = STATUS[d.status], msgs = d.errors.concat(d.notes || [], d.warnings);
           return h('tr', { 'data-line': String(d.line), 'data-state': d.status },
             h('td', { class: 'muted' }, String(d.line)), h('td', null, d.name),
             h('td', { class: 'num' }, d.price != null ? M.format(d.price) : ''), showCost ? h('td', { class: 'num muted' }, d.cost ? M.format(d.cost) : '') : null,
             h('td', { class: 'mono' }, d.mfrBarcode), h('td', { class: 'num' }, d.opening ? String(d.opening) : ''),
+            hasSup ? h('td', null, d.supplier || '') : null,
             h('td', null, h('span', { class: 'badge ' + st[1] }, st[0]), msgs.map(function (m) { return h('div', { class: 'muted', style: 'font-size:12px' }, m); })));
         })))));
     }
@@ -487,24 +498,25 @@
     function pick() {
       var f = file.files && file.files[0]; if (!f) return;
       dup.checked = false; res = null; setGo(); say(_t('Fayl oxunur…'));
-      Promise.all([Imp.readFile(f), S.listProducts()]).then(function (r) {
-        existing = r[1];
+      Promise.all([Imp.readFile(f), S.listProducts(), S.listSuppliers({ all: true }).catch(function () { return []; })]).then(function (r) {
+        existing = r[1]; supList = r[2]; newSup.checked = false;
         res = Imp.mapRows(r[0], { validate: S.validateProductInput, canCost: showCost });
         draw(); setGo();
       }).catch(function (e) { res = null; setGo(); say(e.message || String(e), 'warn-text'); });
     }
     file.addEventListener('change', pick);
     dup.addEventListener('change', function () { draw(); setGo(); });
+    newSup.addEventListener('change', function () { draw(); setGo(); });
 
     var body = h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
       h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('Fayl .xlsx və ya .csv olmalıdır, ilk sətir başlıqdır, ən çox {0} sətir. Ad və satış qiyməti məcburidir. Mağaza barkodları avtomatik verilir.', [Imp.MAX_ROWS])),
-      h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('"Açılış qalığı" sütunu doldurulubsa qalıq təchizatçısız yazılır: təchizatçı borcu yaranmır. İstehsalçı barkodunu Excel-də "Mətn" formatında yazın (uzun rəqəmlər elmi yazıya keçməsin).')),
+      h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('"Açılış qalığı" olan sətirdə "Təchizatçı" boşdursa qalıq təchizatçısız yazılır: borc yaranmır. Təchizatçı yazılıbsa, qalıq o təchizatçıdan alınmış mal sayılır və onun borcuna əlavə olunur ("Alınan mal" əsasında). İstehsalçı barkodunu Excel-də "Mətn" formatında yazın (uzun rəqəmlər elmi yazıya keçməsin).')),
       h('div', { class: 'row' },
         h('button', { class: 'btn small', type: 'button', id: 'imp-tpl', onclick: function () {
           blobDownload('mehsullar-sablon.xlsx', new Blob([Imp.templateXlsx()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
         } }, _t('Şablonu yüklə (.xlsx)')),
         h('label', { class: 'sr-only', for: 'imp-file' }, _t('Fayl seçin')), file),
-      dupRow, out);
+      dupRow, newSupRow, out);
 
     var m = UI.modal({
       title: _t('Məhsulları Excel-dən yüklə'), wide: true, noGuard: true, body: body,
@@ -513,6 +525,7 @@
         var sm = Imp.summary(res.rows);
         return S.importProducts(res.rows).then(function (r) {
           UI.toast(_t('{0} məhsul yükləndi, {1}-də açılış qalığı yazıldı', [r.created, r.opening]));
+          if (r.suppliers) UI.toast(_t('{0} yeni təchizatçı yaradıldı', [r.suppliers]));
           if (sm.skip || sm.error) UI.toast(_t('Atlandı: {0}, səhvli: {1}', [sm.skip, sm.error]), 'warn');
           close(); onDone();
         });
@@ -1055,6 +1068,8 @@
     var preset = h('select', { class: 'input', id: 'rp-preset' }, [['month', _t('Bu ay')], ['today', _t('Bu gün')], ['yesterday', _t('Dünən')], ['prev', _t('Keçən ay')], ['all', _t('Bütün vaxt')], ['custom', _t('Seçilmiş tarixlər')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
     var from = h('input', { class: 'input', id: 'rp-from', type: 'date' }), to = h('input', { class: 'input', id: 'rp-to', type: 'date' });
     var last = null, warnBox = h('div', { id: 'rp-warn', class: 'warn-text', role: 'alert', hidden: true, style: 'font-size:14px' });
+    var repQ = h('input', { class: 'input', id: 'rp-q', type: 'search', autocomplete: 'off', placeholder: _t('Axtarış: təchizatçı və ya məhsul adı'), 'aria-label': _t('Axtarış: təchizatçı və ya məhsul adı') });
+    repQ.addEventListener('input', drawReport);
     var canPurchase = can('stock.receive'), docTb = h('tbody'), retTb = h('tbody'), docHead = h('thead'), retHead = h('thead');
 
     function range() {
@@ -1091,26 +1106,37 @@
       });
     }
 
-    function loadReport() {
-      return S.supplierReport(range()).then(function (rep) {
-        last = rep;
+    function loadReport() { return S.supplierReport(range()).then(function (rep) { last = rep; drawReport(); }); }
+    function drawReport() {
+      var rep = last; if (!rep) return;
+      {
         var cost = rep.seeCost;
         warnBox.hidden = !rep.excessReturnQty;
         warnBox.textContent = rep.excessReturnQty ? _t('Diqqət: {0} ədəd mal satılandan artıq qaytarılıb (məsələn, iki cihaz eyni çekin eyni sətrini oflayn qaytarıb). Qaytarmalar bölməsində həmin çeki yoxlayın; pul iki dəfə qaytarılmış ola bilər.', [rep.excessReturnQty]) : '';
         UI.clear(repHead); UI.clear(repBody); UI.clear(repFoot);
         repHead.appendChild(h('tr', null, h('th', null, _t('Təchizatçı')), h('th', { class: 'num' }, _t('Satılan')), h('th', { class: 'num' }, _t('Qaytarılan')), h('th', { class: 'num' }, _t('Xalis ədəd')), h('th', { class: 'num' }, _t('Gəlir ₼')),
           cost ? [h('th', { class: 'num' }, _t('Maya (FIFO) ₼')), h('th', { class: 'num' }, _t('Mənfəət ₼'))] : null, h('th', { class: 'num' }, _t('Qalıq (ədəd)')), cost ? h('th', { class: 'num' }, _t('Qalığın dəyəri ₼')) : null, h('th', null, '')));
-        if (!rep.rows.length) repBody.appendChild(h('tr', null, h('td', { colspan: cost ? '10' : '7', class: 'empty' }, _t('Bu dövrdə məlumat yoxdur'))));
-        rep.rows.forEach(function (x) {
+        var rows = visibleRows();
+        if (!rows.length) repBody.appendChild(h('tr', null, h('td', { colspan: cost ? '10' : '7', class: 'empty' }, rep.rows.length ? _t('Axtarışa uyğun sətir yoxdur') : _t('Bu dövrdə məlumat yoxdur'))));
+        rows.forEach(function (x) {
           repBody.appendChild(h('tr', { 'data-rep': x.name }, h('td', null, x.name), h('td', { class: 'num' }, String(x.soldQty)), h('td', { class: 'num' }, String(x.returnedQty)), h('td', { class: 'num' }, h('b', null, String(x.qty))),
             h('td', { class: 'num' }, M.format(x.revenue)), cost ? [h('td', { class: 'num muted' }, M.format(x.cost)), h('td', { class: 'num' }, M.format(x.profit))] : null,
             h('td', { class: 'num' }, String(x.onHandQty)), cost ? h('td', { class: 'num muted' }, M.format(x.onHandValue)) : null,
             h('td', null, x.products.length ? h('button', { class: 'btn small', type: 'button', 'data-act': 'detail', onclick: function () { detail(x); } }, _t('Məhsullar')) : null)));
         });
-        var t = rep.totals;
-        repFoot.appendChild(h('tr', null, h('th', null, _t('Cəmi')), h('th', { class: 'num' }, String(t.soldQty)), h('th', { class: 'num' }, String(t.returnedQty)), h('th', { class: 'num' }, String(t.qty)), h('th', { class: 'num' }, M.format(t.revenue)),
+        var t = repQ.value.trim() ? rows.reduce(function (a, x) {
+          a.soldQty += x.soldQty; a.returnedQty += x.returnedQty; a.qty += x.qty; a.revenue += x.revenue; a.onHandQty += x.onHandQty;
+          if (cost) { a.cost += x.cost; a.profit += x.profit; a.onHandValue += x.onHandValue; }
+          return a;
+        }, { soldQty: 0, returnedQty: 0, qty: 0, revenue: 0, cost: 0, profit: 0, onHandQty: 0, onHandValue: 0 }) : rep.totals;
+        repFoot.appendChild(h('tr', null, h('th', null, repQ.value.trim() ? _t('Cəmi (göstərilən sətirlər)') : _t('Cəmi')), h('th', { class: 'num' }, String(t.soldQty)), h('th', { class: 'num' }, String(t.returnedQty)), h('th', { class: 'num' }, String(t.qty)), h('th', { class: 'num' }, M.format(t.revenue)),
           cost ? [h('th', { class: 'num' }, M.format(t.cost)), h('th', { class: 'num' }, M.format(t.profit))] : null, h('th', { class: 'num' }, String(t.onHandQty)), cost ? h('th', { class: 'num' }, M.format(t.onHandValue)) : null, h('th', null, '')));
-      });
+      }
+    }
+    // Axtarış: təchizatçı adı və ya onun məhsullarının adı (Azərbaycan hərfləri və böyük-kiçik fərqi nəzərə alınmır)
+    function visibleRows() {
+      var f = R.foldAz(repQ.value.trim());
+      return last ? last.rows.filter(function (x) { return !f || R.foldAz(x.name + ' ' + x.products.map(function (p) { return p.name; }).join(' ')).indexOf(f) !== -1; }) : [];
     }
     // Alış qaimələri və təchizatçıya qaytarmalar (FR-104/105)
     function loadDocs() {
@@ -1158,7 +1184,7 @@
       var cost = last.seeCost;
       var rows = [[_t('Təchizatçı'), _t('Məhsul'), _t('Satılan'), _t('Qaytarılan'), _t('Xalis ədəd'), _t('Gəlir'), cost ? _t('Maya (FIFO)') : null, cost ? _t('Mənfəət') : null].filter(function (c) { return c !== null; })];
       function num(q) { return (q / 100).toFixed(2).replace('.', ','); }
-      last.rows.forEach(function (x) {
+      visibleRows().forEach(function (x) {
         x.products.forEach(function (p) { rows.push([x.name, p.name, p.soldQty, p.returnedQty, p.qty, num(p.revenue)].concat(cost ? [num(p.cost), num(p.profit)] : [])); });
       });
       csvDownload('techizatci-hesabati.csv', rows);
@@ -1187,6 +1213,7 @@
           h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Hansı təchizatçının malından nə qədər satılıb')),
             h('button', { class: 'btn small', type: 'button', id: 'rp-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
           warnBox,
+          h('div', { class: 'field' }, h('label', { for: 'rp-q' }, _t('Axtarış')), repQ),
           h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: 'rp-preset' }, _t('Dövr')), preset), h('div', { class: 'field' }, h('label', { for: 'rp-from' }, _t('Başlanğıc')), from), h('div', { class: 'field' }, h('label', { for: 'rp-to' }, _t('Son')), to)),
           h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Satış FIFO ilədir: hər çek ən köhnə partiyadan çıxır. Gəlir endirimdən sonrakı məbləğdir, qaytarmalar çıxılır. "Təchizatçısız" — sistemə köçməzdən əvvəlki qalıq və ya qəbuldan əvvəl (mənfi qalıqla) satılan mal. Oflayn cihaz sonra sinxronlaşanda bölgü təchizatçılar arasında düzələ bilər, cəmlər dəyişmir.'))),
         h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'rep-table' }, repHead, repBody, repFoot)))));
@@ -1433,18 +1460,238 @@
     }
   }
 
-  /* ================= Admin ================= */
-  function admin(el) {
+  /* ================= Hesabatlar ================= */
+  var reportsView = null;     // son açılan hesabat (səhifə açıq qaldıqca yadda qalır)
+
+  // Dövr seçimi (Bu gün, Bu ay, …, seçilmiş tarixlər). onChange: seçim dəyişəndə. range(): {from, to} ISO vaxt, [from, to)
+  function periodBar(idp, onChange) {
+    var preset = h('select', { class: 'input', id: idp + '-preset' }, [['month', _t('Bu ay')], ['today', _t('Bu gün')], ['yesterday', _t('Dünən')], ['prev', _t('Keçən ay')], ['all', _t('Bütün vaxt')], ['custom', _t('Seçilmiş tarixlər')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    var from = h('input', { class: 'input', id: idp + '-from', type: 'date' }), to = h('input', { class: 'input', id: idp + '-to', type: 'date' });
+    function range() {
+      var t = todayBaku(), v = preset.value, f = '', e = '';
+      if (v === 'today') { f = t; e = addDays(t, 1); }
+      else if (v === 'yesterday') { f = addDays(t, -1); e = t; }
+      else if (v === 'month') { f = monthStart(t, 0); e = monthStart(t, 1); }
+      else if (v === 'prev') { f = monthStart(t, -1); e = monthStart(t, 0); }
+      else if (v === 'custom') { f = from.value; e = to.value ? addDays(to.value, 1) : ''; }
+      if (v !== 'custom') { from.value = f; to.value = e ? addDays(e, -1) : ''; }
+      return { from: dayIso(f), to: dayIso(e) };
+    }
+    [preset, from, to].forEach(function (c) { c.addEventListener('change', function () { if (c !== preset && preset.value !== 'custom') preset.value = 'custom'; onChange(); }); });
+    range();
+    return { range: range, el: h('div', { class: 'row' }, h('div', { class: 'field' }, h('label', { for: idp + '-preset' }, _t('Dövr')), preset), h('div', { class: 'field' }, h('label', { for: idp + '-from' }, _t('Başlanğıc')), from), h('div', { class: 'field' }, h('label', { for: idp + '-to' }, _t('Son')), to)) };
+  }
+  function searchBox(id, placeholder, onInput) {
+    var q = h('input', { class: 'input', id: id, type: 'search', autocomplete: 'off', placeholder: placeholder, 'aria-label': placeholder });
+    q.addEventListener('input', onInput);
+    return q;
+  }
+  function qtyText(n) { return (n < 0 ? '−' : '') + Math.abs(n); }
+  function csvMoney(q) { return q == null ? '' : (q / 100).toFixed(2).replace('.', ','); }
+
+  function reports(el) {
+    UI.clear(el);
+    var views = [];
+    if (can('report.view')) views.push('sales');
+    if (can('product.view')) views.push('stock');
+    if (can('report.view') && can('product.cost.view') && (can('supplier.pay') || can('supplier.view'))) views.push('finance');
+    if (!views.length) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, _t('Bu rol üçün hesabat yoxdur')))); return; }
+    var labels = { sales: _t('Məhsul üzrə satış'), stock: _t('Stok'), finance: _t('Gəlir-xərc') };
+    var body = h('div', { id: 'rpt-body' }), seg = h('div', { class: 'seg', role: 'group', 'aria-label': _t('Hesabat növü'), style: 'max-width:620px' });
+    function open(id) {
+      reportsView = id;
+      Array.prototype.forEach.call(seg.children, function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-view') === id ? 'true' : 'false'); });
+      UI.clear(body);
+      var v = id === 'sales' ? salesView() : id === 'stock' ? stockView() : financeView();
+      body.appendChild(v.el); root.Screens._refresh = v.load; v.load();
+    }
+    views.forEach(function (id) { seg.appendChild(h('button', { type: 'button', 'data-view': id, id: 'rpt-tab-' + id, 'aria-pressed': 'false', onclick: function () { open(id); } }, labels[id])); });
+    el.appendChild(h('div', { class: 'page' }, h('h1', null, _t('Hesabatlar')), seg, h('div', { style: 'margin-top:16px' }, body)));
+    open(views.indexOf(reportsView) !== -1 ? reportsView : views[0]);
+  }
+
+  // Məhsul üzrə satış: dövrdə hər məhsuldan nə qədər satılıb və nə qədər gəlir gətirib. Qaytarma varsa onun ayrıca (qırmızı) sətri olur.
+  function salesView() {
+    var data = null, head = h('thead'), tb = h('tbody'), foot = h('tfoot');
+    var period = periodBar('rs', load);
+    var q = searchBox('rs-q', _t('Axtarış: məhsul adı və ya barkod'), draw);
+    function load() { return S.productSalesReport(period.range()).then(function (r) { data = r; draw(); }).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    function visible() {
+      var f = R.foldAz(q.value.trim());
+      return (data ? data.rows : []).filter(function (x) { return !f || R.foldAz(x.name + ' ' + (x.barcode || '')).indexOf(f) !== -1; });
+    }
+    function draw() {
+      if (!data) return;
+      var cost = data.seeCost, rows = visible(), t = { sq: 0, sr: 0, sc: 0, rq: 0, rr: 0, rc: 0 };
+      UI.clear(head); UI.clear(tb); UI.clear(foot);
+      head.appendChild(h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Barkod')), h('th', { class: 'num' }, _t('Say')), h('th', { class: 'num' }, _t('Orta qiymət ₼')), h('th', { class: 'num' }, _t('Gəlir ₼')),
+        cost ? [h('th', { class: 'num' }, _t('Maya (FIFO) ₼')), h('th', { class: 'num' }, _t('Mənfəət ₼'))] : null));
+      if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: cost ? '7' : '5', class: 'empty' }, data.rows.length ? _t('Axtarışa uyğun sətir yoxdur') : _t('Bu dövrdə satış yoxdur'))));
+      rows.forEach(function (x) {
+        var ret = x.kind === 'ret';
+        if (ret) { t.rq += -x.qty; t.rr += -x.revenue; t.rc += cost ? -x.cost : 0; } else { t.sq += x.qty; t.sr += x.revenue; t.sc += cost ? x.cost : 0; }
+        tb.appendChild(h('tr', { class: ret ? 'ret' : '', 'data-kind': x.kind, 'data-name': x.name },
+          h('td', null, x.name, ret ? [' ', h('span', { class: 'badge bad' }, _t('Qaytarma'))] : null), h('td', { class: 'mono muted' }, x.barcode || ''),
+          h('td', { class: 'num' }, qtyText(x.qty)), h('td', { class: 'num' }, M.format(x.unit)), h('td', { class: 'num' }, M.format(x.revenue)),
+          cost ? [h('td', { class: 'num muted' }, M.format(x.cost)), h('td', { class: 'num' }, M.format(x.profit))] : null));
+      });
+      var net = { q: t.sq - t.rq, r: t.sr - t.rr, c: t.sc - t.rc };
+      foot.appendChild(h('tr', { id: 'rs-sold' }, h('th', { colspan: '2' }, _t('Satılan')), h('th', { class: 'num' }, String(t.sq)), h('th', null, ''), h('th', { class: 'num' }, M.format(t.sr)), cost ? [h('th', { class: 'num' }, M.format(t.sc)), h('th', { class: 'num' }, M.format(t.sr - t.sc))] : null));
+      foot.appendChild(h('tr', { class: 'ret', id: 'rs-ret' }, h('th', { colspan: '2' }, _t('Qaytarılan')), h('th', { class: 'num' }, qtyText(-t.rq)), h('th', null, ''), h('th', { class: 'num' }, M.format(-t.rr)), cost ? [h('th', { class: 'num' }, M.format(-t.rc)), h('th', { class: 'num' }, M.format(-(t.rr - t.rc)))] : null));
+      foot.appendChild(h('tr', { id: 'rs-net' }, h('th', { colspan: '2' }, q.value.trim() ? _t('Xalis (göstərilən sətirlər)') : _t('Xalis')), h('th', { class: 'num' }, String(net.q)), h('th', null, ''), h('th', { class: 'num' }, M.format(net.r)), cost ? [h('th', { class: 'num' }, M.format(net.c)), h('th', { class: 'num' }, M.format(net.r - net.c))] : null));
+    }
+    function exportCsv() {
+      if (!data) return;
+      var cost = data.seeCost, rows = [[_t('Məhsul'), _t('Barkod'), _t('Növ'), _t('Say'), _t('Orta qiymət'), _t('Gəlir')].concat(cost ? [_t('Maya (FIFO)'), _t('Mənfəət')] : [])];
+      visible().forEach(function (x) { rows.push([x.name, x.barcode || '', x.kind === 'ret' ? _t('Qaytarma') : _t('Satış'), x.qty, csvMoney(x.unit), csvMoney(x.revenue)].concat(cost ? [csvMoney(x.cost), csvMoney(x.profit)] : [])); });
+      csvDownload('mehsul-uzre-satis.csv', rows);
+    }
+    return { load: load, el: h('div', { class: 'card', id: 'rs-card' },
+      h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Məhsul üzrə satış')), h('button', { class: 'btn small', type: 'button', id: 'rs-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
+        period.el, h('div', { class: 'field' }, h('label', { for: 'rs-q' }, _t('Axtarış')), q),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Hər məhsul bir sətirdir. Həmin dövrdə qaytarma olubsa, ondan sonra ayrıca qırmızı sətir çıxır (say və məbləğ mənfi). Gəlir endirimdən sonrakı məbləğdir.'))),
+      h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'rs-table' }, head, tb, foot))) };
+  }
+
+  var STOCK_STATUS = { neg: [_t('Mənfi qalıq'), 'bad'], out: [_t('Qalıq yoxdur'), 'off'], low: [_t('Azdır'), ''], ok: [_t('Normal'), 'ok'] };
+
+  // Stok hesabatı: qalıq, minimum qalıq, qiymət, qalığın dəyəri və qalığın hansı təchizatçının malından olduğu
+  function stockView() {
+    var data = null, head = h('thead'), tb = h('tbody'), foot = h('tfoot');
+    var q = searchBox('st-q', _t('Axtarış: ad, barkod, kateqoriya, marka, təchizatçı'), draw);
+    var status = h('select', { class: 'input', id: 'st-status', 'aria-label': _t('Vəziyyət') }, [['all', _t('Hamısı')], ['problem', _t('Diqqət tələb edənlər (mənfi, qalıqsız, azalan)')], ['neg', _t('Mənfi qalıq')], ['out', _t('Qalıq yoxdur')], ['low', _t('Minimum qalığa çatıb')], ['in', _t('Qalığı olanlar')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    status.addEventListener('change', draw);
+    function load() { return S.stockReport().then(function (r) { data = r; draw(); }).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    function supText(x) { return x.suppliers.map(function (s) { return (s.name || _t('Təchizatçısız')) + ' × ' + s.qty; }).join(', '); }
+    function visible() {
+      var f = R.foldAz(q.value.trim()), st = status.value;
+      return (data ? data.rows : []).filter(function (x) {
+        if (st === 'problem' && x.status === 'ok') return false;
+        if ((st === 'neg' || st === 'out' || st === 'low') && x.status !== st) return false;
+        if (st === 'in' && !(x.qty > 0)) return false;
+        return !f || R.foldAz([x.name, x.barcode, x.mfrBarcode, x.category, x.brand, x.suppliers.map(function (s) { return s.name || ''; }).join(' ')].join(' ')).indexOf(f) !== -1;
+      });
+    }
+    function draw() {
+      if (!data) return;
+      var cost = data.seeCost, rows = visible(), t = { qty: 0, cost: 0, retail: 0 };
+      UI.clear(head); UI.clear(tb); UI.clear(foot);
+      head.appendChild(h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Barkod')), h('th', { class: 'num' }, _t('Qalıq')), h('th', { class: 'num' }, _t('Minimum')), h('th', null, _t('Vəziyyət')), h('th', { class: 'num' }, _t('Satış qiyməti ₼')),
+        cost ? h('th', { class: 'num' }, _t('Qalığın maya dəyəri ₼')) : null, h('th', { class: 'num' }, _t('Qalığın satış dəyəri ₼')), h('th', null, _t('Hansı təchizatçıdan'))));
+      if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: cost ? '9' : '8', class: 'empty' }, data.rows.length ? _t('Axtarışa uyğun məhsul yoxdur') : _t('Hələ məhsul yoxdur'))));
+      rows.forEach(function (x) {
+        var s = STOCK_STATUS[x.status];
+        if (x.qty > 0) { t.qty += x.qty; t.retail += x.retailValue; if (cost) t.cost += x.costValue; }
+        tb.appendChild(h('tr', { class: (x.status === 'neg' ? 'neg ' : '') + (x.active ? '' : 'inactive'), 'data-status': x.status, 'data-name': x.name },
+          h('td', null, x.name, x.active ? null : [' ', h('span', { class: 'badge off' }, _t('Söndürülüb'))]), h('td', { class: 'mono muted' }, x.barcode || ''),
+          h('td', { class: 'num' }, h('b', null, qtyText(x.qty))), h('td', { class: 'num' }, x.minStock ? String(x.minStock) : '—'),
+          h('td', null, h('span', { class: 'badge' + (s[1] ? ' ' + s[1] : '') }, s[0])), h('td', { class: 'num' }, M.format(x.price)),
+          cost ? h('td', { class: 'num muted' }, x.qty > 0 ? M.format(x.costValue) : '—') : null, h('td', { class: 'num' }, x.qty > 0 ? M.format(x.retailValue) : '—'),
+          h('td', { class: 'muted', style: 'min-width:160px' }, supText(x) || '—')));
+      });
+      foot.appendChild(h('tr', { id: 'st-total' }, h('th', { colspan: '2' }, q.value.trim() || status.value !== 'all' ? _t('Cəmi (göstərilən sətirlər)') : _t('Cəmi')), h('th', { class: 'num' }, String(t.qty)), h('th', { colspan: '3' }, ''),
+        cost ? h('th', { class: 'num' }, M.format(t.cost)) : null, h('th', { class: 'num' }, M.format(t.retail)), h('th', null, '')));
+    }
+    function exportCsv() {
+      if (!data) return;
+      var cost = data.seeCost, rows = [[_t('Məhsul'), _t('Barkod'), _t('Qalıq'), _t('Minimum'), _t('Vəziyyət'), _t('Satış qiyməti')].concat(cost ? [_t('Qalığın maya dəyəri')] : []).concat([_t('Qalığın satış dəyəri'), _t('Hansı təchizatçıdan')])];
+      visible().forEach(function (x) { rows.push([x.name, x.barcode || '', x.qty, x.minStock || '', STOCK_STATUS[x.status][0], csvMoney(x.price)].concat(cost ? [x.qty > 0 ? csvMoney(x.costValue) : ''] : []).concat([x.qty > 0 ? csvMoney(x.retailValue) : '', supText(x)])); });
+      csvDownload('stok-hesabati.csv', rows);
+    }
+    return { load: load, el: h('div', { class: 'card', id: 'st-card' },
+      h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Stok hesabatı')), h('button', { class: 'btn small', type: 'button', id: 'st-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
+        h('div', { class: 'row' }, h('div', { class: 'field', style: 'flex:1;min-width:220px' }, h('label', { for: 'st-q' }, _t('Axtarış')), q), h('div', { class: 'field' }, h('label', { for: 'st-status' }, _t('Vəziyyət')), status)),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Qalıq hazırkı vəziyyətdir (dövr seçilmir). Maya dəyəri FIFO ilədir: hər partiyanın qalığı öz alış qiymətinə vurulur. "Təchizatçısız" — sistemə köçməzdən əvvəlki qalıq.'))),
+      h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'st-table' }, head, tb, foot))) };
+  }
+
+  // Gəlir-xərc: mənfəət hesabı və pul hərəkəti AYRI göstərilir (təchizatçı ödənişi malın dəyəri ilə təkrar sayılmasın)
+  function financeView() {
+    var data = null, sumBox = h('div', { class: 'grid2', style: 'align-items:start' }), head = h('thead'), tb = h('tbody'), foot = h('tfoot');
+    var period = periodBar('fn', load);
+    var q = searchBox('fn-q', _t('Axtarış: səbəb, təchizatçı, qeyd'), drawList);
+    function load() { return S.financeReport(period.range()).then(function (r) { data = r; drawSummary(); drawList(); }).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    function line(label, value, o) {
+      o = o || {};
+      return h('tr', { class: (o.bold ? 'bold ' : '') + (o.red ? 'ret' : ''), 'data-line': o.id || '' },
+        h('td', { style: o.indent ? 'padding-left:28px' : '' }, label, o.note ? h('div', { class: 'muted', style: 'font-size:12px;font-weight:400' }, o.note) : null),
+        h('td', { class: 'num', style: o.bold ? 'font-weight:700' : '' }, value));
+    }
+    function drawSummary() {
+      var d = data; UI.clear(sumBox);
+      var profit = h('table', { id: 'fn-profit' }, h('tbody', null,
+        line(_t('Satış (endirimdən sonra)'), M.format(d.sales.total), { id: 'sales', note: _t('{0} çek, endirim {1} ₼', [d.sales.count, M.format(d.sales.discount)]) }),
+        line(_t('Qaytarmalar'), M.format(-d.returns.total), { id: 'returns', red: true, note: _t('{0} qaytarma', [d.returns.count]) }),
+        line(_t('Xalis gəlir'), M.format(d.netRevenue), { id: 'net', bold: true }),
+        line(_t('Maya (FIFO)'), M.format(-d.cost), { id: 'cost', indent: true }),
+        line(_t('Ümumi mənfəət'), M.format(d.grossProfit), { id: 'gross', bold: true }),
+        line(_t('Kassadan məxaric'), M.format(-d.expense), { id: 'expense', indent: true, note: _t('Aşağıdakı siyahıda səbəbi ilə') }),
+        line(_t('Xalis mənfəət'), M.format(d.netProfit), { id: 'profit', bold: true })));
+      var f = d.flow;
+      var flow = h('table', { id: 'fn-flow' }, h('tbody', null,
+        line(_t('Satışdan daxil olan pul'), M.format(f.salesIn), { id: 'in', note: _t('nağd {0}, kart {1}, köçürmə {2}', [M.format(d.sales.cash), M.format(d.sales.pos), M.format(d.sales.transfer)]) }),
+        line(_t('Qaytarılan pul'), M.format(-f.returnsOut), { id: 'retout', red: true }),
+        line(_t('Kassadan məxaric'), M.format(-f.expenseOut), { id: 'exp2' }),
+        line(_t('Təchizatçılara ödəniş'), M.format(-f.supplierOut), { id: 'sup', note: _t('nağd {0}, bank {1}', [M.format(d.supplierPaid.cash), M.format(d.supplierPaid.bank)]) }),
+        line(_t('Kassaya mədaxil'), M.format(f.cashIn), { id: 'cin' }),
+        line(_t('Xalis pul hərəkəti'), M.format(f.net), { id: 'flownet', bold: true })));
+      sumBox.appendChild(h('div', { class: 'card' }, h('div', { style: 'padding:16px 20px 4px' }, h('h3', { style: 'margin:0;font-size:16px' }, _t('Mənfəət'))), h('div', { class: 'table-wrap fin' }, profit)));
+      sumBox.appendChild(h('div', { class: 'card' }, h('div', { style: 'padding:16px 20px 4px' }, h('h3', { style: 'margin:0;font-size:16px' }, _t('Pul hərəkəti'))), h('div', { class: 'table-wrap fin' }, flow)));
+    }
+    function visible() {
+      var f = R.foldAz(q.value.trim());
+      return (data ? data.items : []).filter(function (x) { return !f || R.foldAz([x.title, x.note || '', x.kind === 'supplier' ? _t('Təchizatçıya ödəniş') : _t('Kassadan məxaric')].join(' ')).indexOf(f) !== -1; });
+    }
+    function kindText(x) { return x.kind === 'supplier' ? _t('Təchizatçıya ödəniş') + ' (' + (x.method === 'cash' ? _t('nağd') : _t('bank')) + ')' : _t('Kassadan məxaric'); }
+    function drawList() {
+      if (!data) return;
+      var rows = visible(), total = 0;
+      UI.clear(head); UI.clear(tb); UI.clear(foot);
+      head.appendChild(h('tr', null, h('th', null, _t('Tarix')), h('th', null, _t('Növ')), h('th', null, _t('Təsvir')), h('th', { class: 'num' }, _t('Məbləğ ₼'))));
+      if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: '4', class: 'empty' }, data.items.length ? _t('Axtarışa uyğun sətir yoxdur') : _t('Bu dövrdə xərc və ödəniş yoxdur'))));
+      rows.forEach(function (x) {
+        total += x.amount;
+        tb.appendChild(h('tr', { 'data-kind': x.kind }, h('td', null, UI.fmtDate(x.at)), h('td', null, kindText(x)), h('td', null, x.title, x.note ? h('div', { class: 'muted', style: 'font-size:12px' }, x.note) : null), h('td', { class: 'num' }, M.format(x.amount))));
+      });
+      foot.appendChild(h('tr', { id: 'fn-total' }, h('th', { colspan: '3' }, q.value.trim() ? _t('Cəmi (göstərilən sətirlər)') : _t('Cəmi')), h('th', { class: 'num' }, M.format(total))));
+    }
+    function exportCsv() {
+      if (!data) return;
+      var d = data, rows = [[_t('Göstərici'), _t('Məbləğ')],
+        [_t('Satış (endirimdən sonra)'), csvMoney(d.sales.total)], [_t('Qaytarmalar'), csvMoney(-d.returns.total)], [_t('Xalis gəlir'), csvMoney(d.netRevenue)], [_t('Maya (FIFO)'), csvMoney(-d.cost)],
+        [_t('Ümumi mənfəət'), csvMoney(d.grossProfit)], [_t('Kassadan məxaric'), csvMoney(-d.expense)], [_t('Xalis mənfəət'), csvMoney(d.netProfit)],
+        [_t('Təchizatçılara ödəniş'), csvMoney(-d.supplierPaid.total)], [_t('Kassaya mədaxil'), csvMoney(d.cashIn)], [_t('Xalis pul hərəkəti'), csvMoney(d.flow.net)],
+        [], [_t('Tarix'), _t('Növ'), _t('Təsvir'), _t('Məbləğ')]];
+      visible().forEach(function (x) { rows.push([UI.fmtDate(x.at), kindText(x), x.title + (x.note ? ' — ' + x.note : ''), csvMoney(x.amount)]); });
+      csvDownload('gelir-xerc.csv', rows);
+    }
+    return { load: load, el: h('div', { style: 'display:flex;flex-direction:column;gap:16px', id: 'fn-card' },
+      h('div', { class: 'card', style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Gəlir-xərc')), h('button', { class: 'btn small', type: 'button', id: 'fn-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
+        period.el,
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Mənfəət: xalis gəlir − FIFO maya − kassadan məxaric. Təchizatçıya ödəniş mənfəətə daxil edilmir, çünki malın dəyəri artıq mayadadır; o, yalnız pul hərəkətində görünür. Kassadan məxaricə hər cür çıxarılan pul daxildir (sahibin çıxardığı pul da): səbəbinə siyahıdan baxın.'))),
+      sumBox,
+      h('div', { class: 'card' },
+        h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' }, h('h3', { style: 'margin:0;font-size:16px' }, _t('Xərclər və ödənişlər')), h('div', { class: 'field' }, h('label', { for: 'fn-q' }, _t('Axtarış')), q)),
+        h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'fn-table' }, head, tb, foot)))) };
+  }
+
+  /* ================= İcazələr və Ayarlar (əvvəl bir "Admin" ekranı idi) ================= */
+  // İcazələr: rol-icazə cədvəli (bölmələr + əməliyyatlar), giriş forması, istifadəçilər
+  function permissions(el) {
     UI.clear(el);
     S.requirePerm('admin.permissions').then(function () {
-      return Promise.all([S.getMatrix(), S.storeInfo()]);
-    }).then(function (r) {
-      var m = JSON.parse(JSON.stringify(r[0]));
+      return S.getMatrix();
+    }).then(function (m0) {
+      var m = JSON.parse(JSON.stringify(m0));
       var roles = Object.keys(R.ROLE_NAMES);
       var tb = h('tbody');
-      Object.keys(R.PERMISSIONS).forEach(function (perm) {
-        tb.appendChild(h('tr', null, h('td', null, R.PERMISSIONS[perm]), roles.map(function (role) {
-          var locked = role === 'admin' && perm === 'admin.permissions';
+      function group(title) { tb.appendChild(h('tr', { class: 'grp' }, h('th', { colspan: String(roles.length + 1), scope: 'colgroup' }, title))); }
+      function permRow(perm) {
+        tb.appendChild(h('tr', { 'data-perm': perm }, h('td', null, R.PERMISSIONS[perm]), roles.map(function (role) {
+          var locked = role === 'admin' && (perm === 'admin.permissions' || perm === 'tab.permissions');
           var cb = h('input', { type: 'checkbox', checked: (m[role] || []).indexOf(perm) !== -1, disabled: locked, 'aria-label': R.ROLE_NAMES[role] + ': ' + R.PERMISSIONS[perm] });
           cb.addEventListener('change', function () {
             m[role] = m[role] || [];
@@ -1452,22 +1699,70 @@
           });
           return h('td', { style: 'text-align:center' }, cb);
         })));
-      });
+      }
+      var keys = Object.keys(R.PERMISSIONS), isTab = function (k) { return k.indexOf('tab.') === 0; };
+      group(_t('Bölmələr (tablar): rol hansı bölməni görür'));
+      keys.filter(isTab).forEach(permRow);
+      group(_t('Əməliyyatlar: bölmənin içində nə edə bilər'));
+      keys.filter(function (k) { return !isTab(k); }).forEach(permRow);
       el.appendChild(h('div', { class: 'page', style: 'max-width:1000px' },
         h('h1', null, _t('Rollar və icazələr')),
-        h('p', { class: 'muted' }, _t('Hansı rolun hansı əməliyyata icazəsi olduğunu yalnız Admin dəyişir. Hər dəyişiklik audit jurnalına yazılır.')),
-        h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', null,
+        h('p', { class: 'muted' }, _t('Hansı rolun hansı bölməni görəcəyini və hansı əməliyyata icazəsi olduğunu yalnız Admin dəyişir. Hər dəyişiklik audit jurnalına yazılır. Bölməni açmaq üçün bölmə icazəsi, orada işləmək üçün isə əməliyyat icazəsi lazımdır.')),
+        h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { id: 'perm-table' },
           h('thead', null, h('tr', null, h('th', null, _t('İcazə')), roles.map(function (role) { return h('th', { style: 'text-align:center' }, R.ROLE_NAMES[role]); }))), tb)),
-        h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', onclick: function () {
-          S.setMatrix(m).then(function () { root.App.matrix = m; UI.toast(_t('İcazələr yadda saxlanıldı')); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+        h('div', { style: 'margin-top:14px' }, h('button', { class: 'btn primary', id: 'perm-save', onclick: function () {
+          S.setMatrix(m).then(function () { return S.getMatrix(); }).then(function (saved) { root.App.matrix = saved; UI.toast(_t('İcazələr yadda saxlanıldı')); root.App.renderNav(); }).catch(function (e) { UI.toast(e.message, 'bad'); });
         } }, _t('Yadda saxla'))),
         authPolicyCard(),
-        can('admin.users') ? usersCard() : null,
-        can('admin.users') ? discountCapsCard(r[1]) : null,
-        settingsCard(r[1]),
+        can('admin.users') ? usersCard() : null));
+    }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
+  }
+
+  // Ayarlar: bölmələrin sırası, endirim həddi, mağaza və sinxron, cihazlar, arxiv
+  function settings(el) {
+    UI.clear(el);
+    S.requirePerm(['admin.permissions', 'admin.users']).then(function () {
+      return S.storeInfo();
+    }).then(function (store) {
+      el.appendChild(h('div', { class: 'page', style: 'max-width:1000px' },
+        h('h1', null, _t('Ayarlar')),
+        can('admin.permissions') ? tabOrderCard() : null,
+        can('admin.users') ? discountCapsCard(store) : null,
+        settingsCard(store),
         devicesCard(),
         archiveCard()));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
+  }
+
+  // Bölmələrin (tabların) sırası: Admin təyin edir, bütün cihazlarda və rollarda eyni olur (rolun görmədiyi bölmə sadəcə göstərilmir)
+  function tabOrderCard() {
+    var labels = {}; root.App.tabs().forEach(function (x) { labels[x.id] = x.label; });
+    var order = [], list = h('ol', { id: 'tab-order', style: 'list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px' });
+    function draw(focusId, focusDir) {
+      UI.clear(list);
+      order.forEach(function (id, i) {
+        function move(d) { var j = i + d; if (j < 0 || j >= order.length) return; var x = order[i]; order[i] = order[j]; order[j] = x; draw(id, d); }
+        list.appendChild(h('li', { 'data-tab': id, class: 'row', style: 'justify-content:space-between;align-items:center;padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface)' },
+          h('span', null, h('b', { class: 'muted', style: 'display:inline-block;width:26px' }, String(i + 1)), labels[id] || id),
+          h('span', { class: 'row' },
+            h('button', { class: 'btn small', type: 'button', 'data-act': 'up', disabled: i === 0, 'aria-label': _t('{0} bölməsini yuxarı apar', [labels[id] || id]), onclick: function () { move(-1); } }, '↑'),
+            h('button', { class: 'btn small', type: 'button', 'data-act': 'down', disabled: i === order.length - 1, 'aria-label': _t('{0} bölməsini aşağı apar', [labels[id] || id]), onclick: function () { move(1); } }, '↓'))));
+      });
+      if (focusId) {         // düyməni basandan sonra fokus həmin bölmədə qalır (klaviaturadan ardıcıl sürüşdürmək üçün)
+        var btn = list.querySelector('[data-tab="' + focusId + '"] [data-act="' + (focusDir < 0 ? 'up' : 'down') + '"]') || list.querySelector('[data-tab="' + focusId + '"] button:not([disabled])');
+        if (btn) btn.focus();
+      }
+    }
+    S.getTabOrder().then(function (o) { order = o.slice(); draw(); });
+    return h('div', { class: 'card', id: 'tab-order-card', style: 'margin-top:24px;padding:20px;display:flex;flex-direction:column;gap:14px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('Bölmələrin sırası')),
+      h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Yuxarıdakı bölmə menyuda birinci görünür. Sıra hamı üçün eynidir və bütün cihazlara yayılır; rolun görmədiyi bölmələr göstərilmir.')),
+      list,
+      h('div', { class: 'row' },
+        h('button', { class: 'btn primary', type: 'button', id: 'tab-order-save', onclick: function () {
+          S.setTabOrder(order).then(function (r) { order = r.order.slice(); draw(); return root.App.reloadOrder(); }).then(function () { UI.toast(_t('Bölmələrin sırası yadda saxlanıldı')); }).catch(function (e) { UI.toast(e.message, 'bad'); });
+        } }, _t('Yadda saxla')),
+        h('button', { class: 'btn', type: 'button', id: 'tab-order-reset', onclick: function () { order = R.TABS.map(function (x) { return x.id; }); draw(); } }, _t('İlkin sıra'))));
   }
 
   // Admin: bütün çek üçün endirim həddi (həm faiz, həm məbləğ). Məhsul üzrə hədd məhsulun kartındadır.
@@ -1783,7 +2078,7 @@
       body: h('div', { style: 'display:flex;flex-direction:column;gap:10px' },
         h('p', { style: 'margin:0' }, _t('«{0}» cihazı üçün açar yaradıldı. Açar yalnız indi göstərilir: kopyalayın.', [r.name || shortId(r.id)])),
         tok,
-        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Həmin cihazda "Rollar və icazələr → Mağaza və server" bölməsindəki açar sahəsinə (və ya giriş ekranında "Bu cihazı serverə qoş"a) yazın. Açar itərsə, yeni açar yaradılır; köhnəsi dayanır.'))),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Həmin cihazda "Ayarlar → Mağaza və server" bölməsindəki açar sahəsinə (və ya giriş ekranında "Bu cihazı serverə qoş"a) yazın. Açar itərsə, yeni açar yaradılır; köhnəsi dayanır.'))),
       buttons: buttons
     });
   }
@@ -1961,7 +2256,7 @@
         S.verifyAdminCode(code.value).then(function () { return root.Sync.exportOutbox(); }).then(function (r) {
           blobDownload('7boxs-novbe-' + shortId(S.deviceId()) + '-' + new Date().toISOString().slice(0, 10) + '.json', new Blob([r.text], { type: 'application/json' }));
           code.value = '';
-          msg.textContent = _t('{0} qeyd faylda saxlanıldı. Admin faylı İcazələr → Cihazlar bölməsindən işləyən cihaza yükləsin.', [r.count]);
+          msg.textContent = _t('{0} qeyd faylda saxlanıldı. Admin faylı Ayarlar → Cihazlar bölməsindən işləyən cihaza yükləsin.', [r.count]);
         }).catch(function (e) { msg.textContent = e.message; });
       } }, _t('Qeydləri fayla yüklə')));
     function stop() { if (timer) { clearInterval(timer); timer = null; } }
@@ -1990,6 +2285,6 @@
     return stop;
   }
 
-  root.Screens = { login: login, revokedLock: revokedLock, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, admin: admin,
+  root.Screens = { login: login, revokedLock: revokedLock, forcePinChange: forcePinChange, products: products, suppliers: suppliers, returns: returns, shift: shift, sales: sales, reports: reports, permissions: permissions, settings: settings,
     pendingForMe: pendingForMe, approvalsModal: approvalsModal, _refresh: null };
 })(window);
