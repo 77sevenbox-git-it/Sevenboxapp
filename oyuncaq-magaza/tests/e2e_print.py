@@ -113,6 +113,11 @@ try:
                 check('YEKUN' in txt and 'Elvin Babayev' in txt and 'Oyuncaq Dünyası' in txt and ('Maqnit' in txt or 'Çox uzun' in txt), 'çek %s: mətn tamdır' % tag)
                 if n_lines == 30: check(txt.count('120 hissəli') >= 30 or txt.replace('\n', ' ').count('hissəli') >= 30, 'çek %s: bütün sətirlər çapdadır (%d)' % (tag, txt.replace('\n', ' ').count('hissəli')))
 
+        # kalibrləmə: çap sahəsinin eni 66 mm, 3 mm sola sürüşdürülüb → mürəkkəb (80−66)/2−3 = 4 mm-dən 70 mm-ə qədər
+        do_print("{ receipt: { paper: 80, mode: 'exact', dpi: 203, feedMm: 8, widthMm: 66, shiftMm: -3 } }", "Print.receiptHtml(%s, %s)" % (sale_js(2, False), store), 'receipt')
+        img = rasterize(to_pdf('rec_cal'), 203)[0]; bb = ink_bbox(img); px_mm = 203 / 25.4
+        check(bb and bb[0] / px_mm >= 4 - 0.6 and bb[2] / px_mm <= 70 + 0.6 and bb[2] / px_mm < 74, 'çek kalibrləməsi: en 66 mm, −3 mm sürüşmə (%.1f–%.1f mm)' % (bb[0] / px_mm, bb[2] / px_mm))
+        check(decode(img) == [pg.evaluate("() => Barcode.receiptBarcode(123)")], 'çek kalibrləməsi: barkod daralmış sahədə də oxunur')
         # çek barkodunun zolaq eni nöqtənin tam sayıdır
         w = pg.evaluate("() => { Print._reset(); Print.save({ receipt: { paper: 80, dpi: 203 } }); const m = Barcode.svgMm(Barcode.receiptBarcode(5), { dpi: 203, maxWidthMm: 70, heightMm: 12, maxMod: 4 }); return [m.mod, m.modMm, m.svg]; }")
         xs = re.findall(r'<rect x="(\d+)" y="0" width="(\d+)"', w[2])

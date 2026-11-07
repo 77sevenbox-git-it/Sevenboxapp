@@ -1193,6 +1193,10 @@
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Чтобы видеть прибыль, нужно право просматривать закупочные цены.",
     "o cümlədən nağd": "в т.ч. наличными",
     "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Наличные в кассе ± = продажи наличными − возвраты наличными + внесения − изъятия − оплата поставщику наличными (без размена на начало смены). Расхождение смены: разница между пересчитанной и ожидаемой суммой в сменах, закрытых в этот день. Прибыль считается так же, как в отчёте «Доходы-расходы».",
-    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Спасибо, что выбрали нас!"
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Спасибо, что выбрали нас!",
+    "sürüşmə {0} mm": "сдвиг {0} мм",
+    "Çap sahəsinin eni, mm": "Ширина области печати, мм",
+    "Sağa (+) / sola (−) sürüşdür, mm": "Сдвиг вправо (+) / влево (−), мм",
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Если обрезается правый или левый край чека: посмотрите на тестовом чеке, какая сторона рамки не видна. Если обрезан правый край, сначала сдвиньте влево (напр. −2), если всё ещё обрезается — уменьшите ширину (напр. 70). После каждого изменения печатайте тестовый чек."
   });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -7,16 +7,20 @@
   var KEY = 'mag.print';
   var PAPER = { 80: { content: 72, fs: 3.1 }, 58: { content: 48, fs: 2.9 } };   // kağız eni → çap sahəsi (mm) və şrift (mm)
   var LABEL_PRESETS = [[30, 20], [40, 30], [50, 30], [58, 40], [60, 40], [70, 50], [100, 50], [100, 100]];
-  var DEFAULTS = { receipt: { paper: 80, mode: 'exact', dpi: 203, feedMm: 8, lang: 'az' }, label: { w: 58, h: 40, dpi: 203, mode: 'exact' } };
+  var DEFAULTS = { receipt: { paper: 80, mode: 'exact', dpi: 203, feedMm: 8, lang: 'az', widthMm: null, shiftMm: 0 }, label: { w: 58, h: 40, dpi: 203, mode: 'exact' } };
 
   // kiosk: bu kompüterdə Chrome "--kiosk-printing" ilə açılır, çap pəncərəsi çıxmır və hər çap defolt printerə gedir (FR-112).
   // Bu rejimdə YALNIZ çek (satış, qaytarma, Z, təkrar çap) çap olunur; etiket və A4 sənəd bağlıdır ki, çek printerinə səhvən getməsin.
   function clamp(n, lo, hi, d) { n = Number(n); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d; }
   function sanitize(s) {
     s = s || {}; var r = s.receipt || {}, l = s.label || {};
+    var paper = Number(r.paper) === 58 ? 58 : 80;
+    // Çap sahəsinin eni və yerdəyişməsi: printerin sürücüsü kağızın kənarını kəsirsə əl ilə düzəltmək üçün (null = kağıza görə standart)
+    var w = r.widthMm == null || r.widthMm === '' || !isFinite(Number(r.widthMm)) ? null : Math.round(clamp(r.widthMm, 40, paper, PAPER[paper].content) * 2) / 2;
+    if (w === PAPER[paper].content) w = null;
     return {
       kiosk: s.kiosk === true,
-      receipt: { paper: Number(r.paper) === 58 ? 58 : 80, mode: r.mode === 'driver' ? 'driver' : 'exact', dpi: Number(r.dpi) === 300 ? 300 : 203, feedMm: Math.round(clamp(r.feedMm, 0, 40, DEFAULTS.receipt.feedMm)), lang: ['az', 'ru', 'en', 'tr'].indexOf(r.lang) !== -1 ? r.lang : 'az' },
+      receipt: { paper: paper, widthMm: w, shiftMm: Math.round(clamp(r.shiftMm, -10, 10, 0) * 2) / 2, mode: r.mode === 'driver' ? 'driver' : 'exact', dpi: Number(r.dpi) === 300 ? 300 : 203, feedMm: Math.round(clamp(r.feedMm, 0, 40, DEFAULTS.receipt.feedMm)), lang: ['az', 'ru', 'en', 'tr'].indexOf(r.lang) !== -1 ? r.lang : 'az' },
       label: { w: Math.round(clamp(l.w, 20, 120, DEFAULTS.label.w) * 10) / 10, h: Math.round(clamp(l.h, 12, 200, DEFAULTS.label.h) * 10) / 10, dpi: Number(l.dpi) === 300 ? 300 : 203, mode: l.mode === 'driver' ? 'driver' : 'exact' }
     };
   }
@@ -44,14 +48,15 @@
   }
 
   /* ---------- Çek ---------- */
+  function contentMm(cfg) { var r = (cfg || settings()).receipt; return r.widthMm || PAPER[r.paper].content; }
   function wrap(inner, cfg) {
     var r = (cfg || settings()).receipt, p = PAPER[r.paper];
-    return '<div class="receipt" style="width:' + p.content + 'mm;font-size:' + p.fs + 'mm">' + inner + '</div>';
+    return '<div class="receipt" style="width:' + contentMm(cfg) + 'mm;font-size:' + p.fs + 'mm' + (r.shiftMm ? ';position:relative;left:' + r.shiftMm + 'mm' : '') + '">' + inner + '</div>';
   }
 
   function receiptBarcode(code, cfg) {
     var r = cfg.receipt, p = PAPER[r.paper];
-    return '<div class="bc">' + root.Barcode.svgMm(code, { dpi: r.dpi, maxWidthMm: p.content - 2, heightMm: 12, maxMod: 4 }).svg + '</div>';
+    return '<div class="bc">' + root.Barcode.svgMm(code, { dpi: r.dpi, maxWidthMm: contentMm(cfg) - 2, heightMm: 12, maxMod: 4 }).svg + '</div>';
   }
 
   function receiptHtml(sale, store, opts) {
@@ -264,12 +269,12 @@
   function testReceiptHtml() {
     var cfg = settings(), p = PAPER[cfg.receipt.paper], M = root.Money, _t = rt(cfg);
     return wrap('<div class="c"><b>' + _t('ÇAP SINAĞI') + '</b></div><div class="frame-box">' +
-      '<div class="c">' + _t('Kağız {0} mm · çap sahəsi {1} mm', [cfg.receipt.paper, p.content]) + '</div>' +
+      '<div class="c">' + _t('Kağız {0} mm · çap sahəsi {1} mm', [cfg.receipt.paper, contentMm(cfg)]) + (cfg.receipt.shiftMm ? ' · ' + _t('sürüşmə {0} mm', [cfg.receipt.shiftMm]) : '') + '</div>' +
       '<div class="r"><span>Konstruktor dəsti, 120 hissə</span><span>' + M.format(1450) + '</span></div>' +
       '<div class="r"><span>ƏÖÜĞŞİÇ əöüğşıç</span><span>12,50</span></div></div>' +
       '<div class="c">' + _t('← bütün çərçivə görünməlidir →') + '</div>' +
       receiptBarcode(root.Barcode.receiptBarcode(1), cfg) +
-      '<div class="c">' + _t('{0} dpi · zolaq {1} mm', [cfg.receipt.dpi, root.Barcode.svgMm(root.Barcode.receiptBarcode(1), { dpi: cfg.receipt.dpi, maxWidthMm: p.content - 2, heightMm: 12, maxMod: 4 }).modMm.toFixed(3)]) + '</div>', cfg);
+      '<div class="c">' + _t('{0} dpi · zolaq {1} mm', [cfg.receipt.dpi, root.Barcode.svgMm(root.Barcode.receiptBarcode(1), { dpi: cfg.receipt.dpi, maxWidthMm: contentMm(cfg) - 2, heightMm: 12, maxMod: 4 }).modMm.toFixed(3)]) + '</div>', cfg);
   }
   function testLabelHtml() {
     return labelsHtml([{ product: { name: 'Sınaq məhsulu — uzun ad nümunəsi ƏÖÜĞŞİÇ', price: 1250, storeBarcode: root.Barcode.storeBarcode(1) }, count: 1 }], { frame: true });
@@ -285,6 +290,8 @@
     var rdpi = sel('pr-rdpi', [[203, _t('203 dpi (adətən)')], [300, _t('300 dpi')]], cur.receipt.dpi);
     var rmode = sel('pr-rmode', [['exact', _t('Tətbiq kağız ölçüsünü verir (tövsiyə)')], ['driver', _t('Çap sürücüsünün ölçüsü')]], cur.receipt.mode);
     var feed = num('pr-feed', cur.receipt.feedMm, 0, 40);
+    var rwidth = num('pr-width', contentMm(cur), 40, cur.receipt.paper, 0.5), rshift = num('pr-shift', cur.receipt.shiftMm, -10, 10, 0.5);
+    paper.addEventListener('change', function () { rwidth.value = String(PAPER[Number(paper.value)].content); rwidth.max = paper.value; });
     var rlang = sel('pr-lang', (root.I18n ? root.I18n.langs : [{ code: 'az', name: 'Azərbaycanca' }]).map(function (l) { return [l.code, l.name]; }), cur.receipt.lang);
     var preset = sel('pl-preset', LABEL_PRESETS.map(function (p) { return [p[0] + 'x' + p[1], p[0] + ' × ' + p[1] + ' mm']; }).concat([['custom', _t('Digər ölçü…')]]),
       LABEL_PRESETS.some(function (p) { return p[0] === cur.label.w && p[1] === cur.label.h; }) ? cur.label.w + 'x' + cur.label.h : 'custom');
@@ -302,7 +309,7 @@
     var kiosk = h('input', { type: 'checkbox', id: 'pr-kiosk', checked: cur.kiosk });
     var cmd = 'chrome.exe --kiosk-printing --app=' + (root.location ? root.location.origin + root.location.pathname : '');
     function collect() {
-      return { kiosk: kiosk.checked, receipt: { paper: Number(paper.value), dpi: Number(rdpi.value), mode: rmode.value, feedMm: Number(feed.value), lang: rlang.value },
+      return { kiosk: kiosk.checked, receipt: { paper: Number(paper.value), dpi: Number(rdpi.value), mode: rmode.value, feedMm: Number(feed.value), lang: rlang.value, widthMm: Number(rwidth.value), shiftMm: Number(rshift.value) },
         label: { w: Number(lw.value), h: Number(lh.value), dpi: Number(ldpi.value), mode: lmode.value } };
     }
     function refreshInfo() {
@@ -319,7 +326,9 @@
       title: _t('Çap ayarları (bu cihaz üçün)'), wide: true, onClose: onClose,
       body: h('div', { style: 'display:flex;flex-direction:column;gap:16px' },
         h('div', { class: 'card', style: 'padding:14px;display:flex;flex-direction:column;gap:12px' }, h('b', null, _t('Çek printeri (termo)')),
-          h('div', { class: 'grid2' }, fld(_t('Kağız eni'), paper, 'pr-paper'), fld(_t('Çap sıxlığı'), rdpi, 'pr-rdpi'), fld(_t('Kağız ölçüsü'), rmode, 'pr-rmode'), fld(_t('Çekdən sonra boşluq, mm'), feed, 'pr-feed'), fld(_t('Çekin dili'), rlang, 'pr-lang')),
+          h('div', { class: 'grid2' }, fld(_t('Kağız eni'), paper, 'pr-paper'), fld(_t('Çap sıxlığı'), rdpi, 'pr-rdpi'), fld(_t('Kağız ölçüsü'), rmode, 'pr-rmode'), fld(_t('Çekdən sonra boşluq, mm'), feed, 'pr-feed'), fld(_t('Çekin dili'), rlang, 'pr-lang'),
+            fld(_t('Çap sahəsinin eni, mm'), rwidth, 'pr-width'), fld(_t('Sağa (+) / sola (−) sürüşdür, mm'), rshift, 'pr-shift')),
+          h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.')),
           h('div', null, h('button', { class: 'btn small', type: 'button', id: 'pr-test', onclick: function () { persist(); print(testReceiptHtml(), 'receipt'); } }, _t('Test çeki çap et')))),
         h('div', { class: 'card', style: 'padding:14px;display:flex;flex-direction:column;gap:12px' }, h('b', null, _t('Etiket printeri')),
           h('div', { class: 'grid2' }, fld(_t('Etiket ölçüsü'), preset, 'pl-preset'), fld(_t('Çap sıxlığı'), ldpi, 'pl-dpi'), fld(_t('Kağız ölçüsü'), lmode, 'pl-mode')), customRow, info,

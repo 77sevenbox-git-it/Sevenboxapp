@@ -1193,6 +1193,10 @@
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Kârı görmek için alış fiyatını görme izni gerekir.",
     "o cümlədən nağd": "bunun nakit kısmı",
     "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Kasadaki nakit ± = nakit satış − nakit iade + kasaya giriş − kasadan çıkış − tedarikçiye nakit ödeme (vardiya açılış parası dahil değil). Vardiya farkı: o gün kapanan vardiyalarda sayılan ile beklenen nakit arasındaki fark. Kâr, Gelir-gider raporuyla aynı kurala göre hesaplanır.",
-    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Bizi tercih ettiğiniz için teşekkür ederiz!"
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Bizi tercih ettiğiniz için teşekkür ederiz!",
+    "sürüşmə {0} mm": "kaydırma {0} mm",
+    "Çap sahəsinin eni, mm": "Baskı alanı genişliği, mm",
+    "Sağa (+) / sola (−) sürüşdür, mm": "Sağa (+) / sola (−) kaydır, mm",
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Fişin sağ veya sol kenarı kesiliyorsa: test fişinde çerçevenin hangi tarafının görünmediğine bakın. Sağ kenar kesiliyorsa önce sola kaydırın (örn. −2), hâlâ kesiliyorsa genişliği azaltın (örn. 70). Her değişiklikten sonra test fişi yazdırın."
   });
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1193,6 +1193,10 @@
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Viewing profit requires permission to see purchase prices.",
     "o cümlədən nağd": "of which cash",
     "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Cash in drawer ± = cash sales − cash refunds + cash in − cash out − cash paid to suppliers (opening float not included). Shift difference: counted minus expected cash in shifts closed that day. Profit uses the same rules as the Income-expense report.",
-    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Thank you for choosing us!"
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Thank you for choosing us!",
+    "sürüşmə {0} mm": "shift {0} mm",
+    "Çap sahəsinin eni, mm": "Print area width, mm",
+    "Sağa (+) / sola (−) sürüşdür, mm": "Shift right (+) / left (−), mm",
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "If the right or left edge of the receipt is cut off, check which side of the frame is missing on the test receipt. If the right edge is cut, first shift left (e.g. −2); if it is still cut, reduce the width (e.g. 70). Print a test receipt after each change."
   });
 })(typeof window !== 'undefined' ? window : globalThis);
