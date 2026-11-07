@@ -38,7 +38,7 @@
     }
     var form = h('form', { class: 'card', id: 'connect-gate' },
       h('div', { class: 'lang-row' }, UI.langSwitch()),
-      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Yeni cihaz: əvvəlcə serverə qoşun'))),
+      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7 BOX'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Yeni cihaz: əvvəlcə serverə qoşun'))),
       msg,
       h('div', { class: 'field' }, h('label', { for: 'g-url' }, _t('Apps Script veb tətbiq ünvanı')), url),
       h('div', { class: 'field' }, h('label', { for: 'g-tok' }, _t('Sinxron açarı')), tok),
@@ -94,7 +94,7 @@
     }
     var form = h('form', { class: 'card' },
       h('div', { class: 'lang-row' }, UI.langSwitch()),
-      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7BOXS'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
+      h('div', null, h('div', { class: 'muted', style: 'font-size:14px' }, h('b', { class: 'wordmark' }, '7 BOX'), ' · ', _t('Mağaza idarəetmə sistemi')), h('h1', { style: 'margin:4px 0 0;font-size:24px' }, _t('Daxil olun'))),
       list,
       h('div', { class: 'field' }, pinLabel, pin),
       rememberRow,
@@ -2391,7 +2391,7 @@
       h('label', { for: 'rv-code' }, _t('Admin PIN / şifrəsi')), code,
       h('button', { class: 'btn', id: 'rv-export', type: 'button', style: 'margin-top:8px', onclick: function () {
         S.verifyAdminCode(code.value).then(function () { return root.Sync.exportOutbox(); }).then(function (r) {
-          blobDownload('7boxs-novbe-' + shortId(S.deviceId()) + '-' + new Date().toISOString().slice(0, 10) + '.json', new Blob([r.text], { type: 'application/json' }));
+          blobDownload('7box-novbe-' + shortId(S.deviceId()) + '-' + new Date().toISOString().slice(0, 10) + '.json', new Blob([r.text], { type: 'application/json' }));
           code.value = '';
           msg.textContent = _t('{0} qeyd faylda saxlanıldı. Admin faylı Ayarlar → Cihazlar bölməsindən işləyən cihaza yükləsin.', [r.count]);
         }).catch(function (e) { msg.textContent = e.message; });

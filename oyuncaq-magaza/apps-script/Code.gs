@@ -1,5 +1,5 @@
 /**
- * 7BOXS — Google Apps Script backend (v9).
+ * 7 BOX — Google Apps Script backend (v9).
  * Kassaların hadisələrini (outbox) qəbul edib Google Sheets-ə yazır və digər cihazların hadisələrini geri verir (pull).
  *
  * Quraşdırma / yeniləmə:
@@ -824,7 +824,7 @@ function archiveRun(opts) {
     var maxReceipt = derivedMax(ss, 'receiptSeq');      // silinəcək çeklərin ən böyük nömrəsi yadda qalır (nömrə təkrarlanmasın)
 
     // 2) Tam nüsxə (Drive-da yeni fayl) və yoxlama: nüsxə tam deyilsə HEÇ NƏ silinmir
-    var name = '7BOXS — Arxiv ' + at.slice(0, 10) + ' (hadisə ' + (st.base + 1) + '–' + (st.base + live) + ')';
+    var name = '7 BOX — Arxiv ' + at.slice(0, 10) + ' (hadisə ' + (st.base + 1) + '–' + (st.base + live) + ')';
     var copy = ss.copy(name);
     ['Events', 'Sales', 'SaleLines'].forEach(function (n) {
       var a = sheet(ss, n).getLastRow(), cs = copy.getSheetByName(n), b = cs ? cs.getLastRow() : -1;

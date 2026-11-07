@@ -365,8 +365,8 @@
   // Fayldakı hadisələr bu cihazın göndərmə növbəsinə qoyulur; server onları ilkin cihazın adı ilə yazır, hamı (bu cihaz da) normal yolla alır.
   function importOutbox(text) {
     var data;
-    try { data = JSON.parse(String(text)); } catch (e) { return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7BOXS növbə faylı deyil'))); }
-    if (!data || data.format !== OUTBOX_FORMAT || !Array.isArray(data.items)) return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7BOXS növbə faylı deyil')));
+    try { data = JSON.parse(String(text)); } catch (e) { return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7 BOX növbə faylı deyil'))); }
+    if (!data || data.format !== OUTBOX_FORMAT || !Array.isArray(data.items)) return Promise.reject(new Error(_t('Fayl oxunmadı: bu, 7 BOX növbə faylı deyil')));
     if (data.items.length > 20000) return Promise.reject(new Error(_t('Fayl çox böyükdür')));
     var good = data.items.filter(function (it) {
       return it && typeof it === 'object' && typeof it.id === 'string' && it.id.length > 0 && it.id.length <= 200 && typeof it.at === 'string' && it.at.length <= 40 &&

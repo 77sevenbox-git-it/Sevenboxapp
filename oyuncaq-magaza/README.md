@@ -1,4 +1,4 @@
-# 7BOXS — Kassa (MVP, mərhələ 1)
+# 7 BOX — Kassa (MVP, mərhələ 1)
 
 Oyuncaq-suvenir mağazası üçün veb kassa. BRD v1.2 və BRD v1.1 (2026-10-11) əlavələri (FR-101…FR-114) əsasındadır. Build addımı yoxdur: fayllar GitHub Pages və ya istənilən statik hostda olduğu kimi işləyir.
 
@@ -170,7 +170,7 @@ Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında h
 1. Bütün kassalarda internet olsun, üst paneldə "göndərilməmiş" qeyd qalmasın (Admin kartında "İndi sinxronlaşdır").
 2. Admin → Ayarlar → Arxiv → **Köhnə qeydləri arxivləşdir** → təsdiq. Pəncərəni bağlamayın (1–5 dəq).
 3. "Arxivləşdirildi: N hadisə köçürüldü. Cədvəl tutumu: X%" çıxmalıdır; siyahıda yeni arxiv faylı görünür (linkə klik → Drive-da açılır).
-4. Drive-da `7BOXS — Arxiv …` faylını bir dəfə açıb baxın; istəsəniz şəxsi qovluğa köçürün (fayl ID-si dəyişmir, sinxron pozulmur).
+4. Drive-da `7 BOX — Arxiv …` faylını bir dəfə açıb baxın; istəsəniz şəxsi qovluğa köçürün (fayl ID-si dəyişmir, sinxron pozulmur).
 5. Hər şey qaydasındadır: cihazlarda heç nə etmək lazım deyil.
 
 **Nə dəyişir.** `Events`, `Sales`, `SaleLines`, `Returns`, `StockReceipts`, `Shifts`, `CashMoves`, `Audit` vərəqlərindən son **45 gündən** köhnə sətirlər arxiv faylına (cədvəlin tam nüsxəsi) köçür; `Events`-də həm də ən azı son **1500** hadisə canlı qalır. `Products`, `Suppliers`, `Users`, `Settings`, `Push` toxunulmur. Cihazlar öz yerli bazasını saxlayır; kursor hadisənin **mütləq nömrəsidir**, ona görə mövcud cihazlar heç nə hiss etmir. Uzun müddət oflayn qalmış və ya yeni qoşulan cihaz çatışan hadisələri arxiv faylından oxuyur. Çek nömrələri arxivdən sonra da təkrarlanmır (ən böyük nömrə yadda saxlanılır).

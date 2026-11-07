@@ -268,7 +268,7 @@ tr.inactive td { color: var(--faint); }
 .lang-sel { width: auto; min-height: 0; padding: 4px 8px; font-size: 14px; }
 .lang-row { display: flex; justify-content: flex-end; margin: -4px 0 -8px; }
 
-/* Açılış (yükləmə) ekranı: 7 oyuncaq blok yuxarıdan düşüb yığılır, sonra dalğa kimi atlanır; "7BOXS" hərf-hərf yüksəlir.
+/* Açılış (yükləmə) ekranı: 7 oyuncaq blok yuxarıdan düşüb yığılır, sonra dalğa kimi atlanır; "7 BOX" hərf-hərf yüksəlir.
    Hərəkət azaldılıbsa (prefers-reduced-motion) hamısı sakit və görünən qalır. */
 .boot { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; animation: fade-in .3s ease backwards; }
 .boot-blocks { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 8px; }
@@ -285,7 +285,7 @@ tr.inactive td { color: var(--faint); }
 .boot-blocks > div:nth-child(1) i:nth-child(3) { --c: #17A2B8; --d: .7s; }
 .boot-name { display: flex; font-size: 32px; font-weight: 700; letter-spacing: .1em; color: var(--ink); padding-left: .1em; }
 .boot-name b { display: inline-block; font-weight: inherit; animation: letter-rise .5s cubic-bezier(.2, .8, .2, 1) backwards; }
-.boot-name b:nth-child(1) { color: var(--accent); animation-delay: .9s; }
+.boot-name b:nth-child(1) { color: var(--accent); animation-delay: .9s; margin-right: .35em; }
 .boot-name b:nth-child(2) { animation-delay: .96s; }
 .boot-name b:nth-child(3) { animation-delay: 1.02s; }
 .boot-name b:nth-child(4) { animation-delay: 1.08s; }
