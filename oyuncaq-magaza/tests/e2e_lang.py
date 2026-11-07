@@ -175,6 +175,8 @@ try:
             nav_click(pg, 'Təchizatçılar'); pg.wait_for_timeout(300); clean(pg, f'[{L}] təchizatçılar')
             nav_click(pg, 'İcazələr'); pg.wait_for_selector('#user-add'); clean(pg, f'[{L}] icazələr')
             nav_click(pg, 'Hesabatlar'); pg.wait_for_selector('#rs-table'); clean(pg, f'[{L}] hesabat: məhsul üzrə satış')
+            pg.click('#rpt-tab-movement'); pg.wait_for_selector('#mv-table tbody tr'); clean(pg, f'[{L}] hesabat: malın hərəkəti')
+            pg.click('#rpt-tab-daily'); pg.wait_for_selector('#dy-cash tbody tr'); clean(pg, f'[{L}] hesabat: günlər üzrə')
             pg.click('#rpt-tab-stock'); pg.wait_for_selector('#st-table tbody tr'); clean(pg, f'[{L}] hesabat: stok')
             pg.click('#rpt-tab-finance'); pg.wait_for_selector('#fn-profit'); clean(pg, f'[{L}] hesabat: gəlir-xərc')
             nav_click(pg, 'Ayarlar'); pg.wait_for_selector('#tab-order li'); clean(pg, f'[{L}] ayarlar')

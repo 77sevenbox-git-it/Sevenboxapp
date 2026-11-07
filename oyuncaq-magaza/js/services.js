@@ -1304,6 +1304,117 @@
     });
   }
 
+  /* ---------- Mağaza hesabatı: tarix üzrə malın hərəkəti və günlər üzrə kassa / mənfəət ----------
+     Gün Bakı vaxtı ilə təqvim günüdür (Rules.localDate). Say hərəkəti "stockMoves"dan (hər qalıq dəyişikliyi orada qeyd olunur, başqa cihazdan gələn də),
+     gəlir və maya FIFO-dan (Məhsul üzrə satış və Gəlir-xərc hesabatı ilə eyni ədədlər). */
+  var MOVE_KEYS = ['received', 'sold', 'returned', 'supplierReturned', 'corrected'];
+
+  // Malın hərəkəti: hər gün × məhsul bir sətir. Sətir: günün əvvəlindəki qalıq, alınan (say və alış məbləği), satılan, müştəri qaytarması,
+  // təchizatçıya qaytarılan, düzəliş, günün sonundakı qalıq; gəlir (satış − qaytarma, endirimdən sonra), maya (FIFO), mənfəət.
+  // Qalıq hazırkı qalıqdan geriyə hesablanır: günün sonu = indiki qalıq − həmin gündən sonrakı hərəkətlər. Hərəkəti olmayan gün göstərilmir.
+  function movementReport(range) {
+    return requirePerm('report.view').then(function (user) {
+      return Promise.all([fifoState(), DB.getAll('stockMoves'), matrix()]).then(function (r) {
+        var st = r[0], moves = r[1], seeCost = Rules.can(r[2], user.role, 'product.cost.view'), rg = rangeOf(range);
+        var byId = {}; st.products.forEach(function (p) { byId[p.id] = p; });
+        var rows = {}, after = {};          // after[pid]: dövrün sonundan sonrakı hərəkətlərin cəmi (qalığı geri hesablamaq üçün)
+        function row(day, pid) {
+          var k = day + '|' + pid;
+          return rows[k] || (rows[k] = { day: day, productId: pid, delta: 0, received: 0, receivedCost: 0, sold: 0, returned: 0, supplierReturned: 0, corrected: 0, revenue: 0, cost: 0 });
+        }
+        moves.forEach(function (mv) {
+          if (!mv || !mv.productId || !mv.at || typeof mv.qty !== 'number') return;
+          if (rg.to && mv.at >= rg.to) { after[mv.productId] = (after[mv.productId] || 0) + mv.qty; return; }
+          if (rg.from && mv.at < rg.from) return;
+          var x = row(Rules.localDate(mv.at), mv.productId);
+          x.delta += mv.qty;
+          if (mv.type === 'receipt') { x.received += mv.qty; x.receivedCost += mv.qty * (mv.unitCost || 0); }
+          else if (mv.type === 'sale') x.sold += -mv.qty;
+          else if (mv.type === 'return') x.returned += mv.qty;
+          else if (mv.type === 'supplier_return') x.supplierReturned += -mv.qty;
+          else x.corrected += mv.qty;
+        });
+        root.Fifo.walkParts(st.res, st.sales, st.returns, rg.from, rg.to, function (kind, doc, i, l, p, rev, cost) {
+          var x = row(Rules.localDate(doc.at), l.productId), sg = kind === 'sale' ? 1 : -1;
+          x.revenue += sg * rev; x.cost += sg * cost;
+          if (!x.name && l.name) x.name = l.name;
+        });
+        var list = Object.keys(rows).map(function (k) { return rows[k]; });
+        // Qalıq: hər məhsul üçün günləri sondan əvvələ gəzirik
+        var perP = {};
+        list.forEach(function (x) { (perP[x.productId] || (perP[x.productId] = [])).push(x); });
+        Object.keys(perP).forEach(function (pid) {
+          var p = byId[pid], bal = (p ? p.stock : 0) - (after[pid] || 0);
+          perP[pid].sort(function (a, b) { return a.day < b.day ? 1 : a.day > b.day ? -1 : 0; }).forEach(function (x) { x.closing = bal; bal -= x.delta; x.opening = bal; });
+        });
+        var out = list.map(function (x) {
+          var p = byId[x.productId], revenue = Math.round(x.revenue), cost = Math.round(x.cost);
+          return { day: x.day, productId: x.productId, name: p ? p.name : (x.name || x.productId), barcode: p ? p.storeBarcode : '', opening: x.opening, closing: x.closing,
+            received: x.received, receivedCost: seeCost ? Math.round(x.receivedCost) : null, sold: x.sold, returned: x.returned, supplierReturned: x.supplierReturned, corrected: x.corrected,
+            revenue: revenue, cost: seeCost ? cost : null, profit: seeCost ? revenue - cost : null };
+        }).sort(function (a, b) { return a.day < b.day ? -1 : a.day > b.day ? 1 : a.name.localeCompare(b.name, 'az'); });
+        var totals = out.reduce(function (t, x) {
+          MOVE_KEYS.forEach(function (k) { t[k] += x[k]; }); t.revenue += x.revenue;
+          if (seeCost) { t.receivedCost += x.receivedCost; t.cost += x.cost; t.profit += x.profit; }
+          return t;
+        }, { received: 0, sold: 0, returned: 0, supplierReturned: 0, corrected: 0, revenue: 0, receivedCost: seeCost ? 0 : null, cost: seeCost ? 0 : null, profit: seeCost ? 0 : null });
+        return { rows: out, totals: totals, seeCost: seeCost };
+      });
+    });
+  }
+
+  // Günlər üzrə: hər gün kassa (satış ödəniş növünə görə, qaytarma, mədaxil, məxaric, təchizatçıya nağd, kassada nağdın dəyişməsi, bağlanan növbələrin fərqi)
+  // və mənfəət (xalis gəlir − FIFO maya − kassadan məxaric; Gəlir-xərc hesabatı ilə eyni qayda). Təchizatçıya nağd ödəniş kassa hərəkətindən götürülür:
+  // ləğv edilibsə ləğv günü kassaya geri qayıdır (Z hesabatı kimi). Maya/mənfəət yalnız "product.cost.view" olanlara.
+  function dailyReport(range) {
+    return requirePerm('report.view').then(function (user) {
+      return Promise.all([fifoState(), DB.getAll('cashMoves'), DB.getAll('shifts'), DB.getAll('supplierPays'), matrix()]).then(function (r) {
+        var st = r[0], seeCost = Rules.can(r[4], user.role, 'product.cost.view'), rg = rangeOf(range), days = {};
+        function day(at) {
+          var k = Rules.localDate(at);
+          return days[k] || (days[k] = { day: k, count: 0, gross: 0, discount: 0, total: 0, cash: 0, pos: 0, transfer: 0, retCount: 0, returns: 0, retCash: 0,
+            cashIn: 0, expense: 0, supplierCash: 0, supplierBank: 0, cost: 0, shifts: 0, shiftDiff: 0 });
+        }
+        st.sales.forEach(function (s) {
+          if (!inRange(s.at, rg)) return;
+          var d = day(s.at), sum = Rules.shiftSummary([s], []);
+          d.count++; d.gross += sum.gross; d.discount += sum.discount; d.total += s.totals.total; d.cash += sum.cash; d.pos += sum.pos; d.transfer += sum.transfer;
+        });
+        st.returns.forEach(function (x) {
+          if (!inRange(x.at, rg)) return;
+          var d = day(x.at); d.retCount++; d.returns += x.amount; d.retCash += x.cashAmount || 0;
+        });
+        root.Fifo.walkParts(st.res, st.sales, st.returns, rg.from, rg.to, function (kind, doc, i, l, p, rev, cost) { day(doc.at).cost += kind === 'sale' ? cost : -cost; });
+        r[1].forEach(function (mv) {
+          if (!inRange(mv.at, rg)) return;
+          var d = day(mv.at);
+          if (mv.supplierPayId) d.supplierCash += mv.type === 'out' ? mv.amount : -mv.amount;
+          else if (mv.type === 'out') d.expense += mv.amount;
+          else if (mv.type === 'in') d.cashIn += mv.amount;
+        });
+        r[3].forEach(function (p) { if (p.method !== 'cash' && !p.voidedAt && inRange(p.at, rg)) day(p.at).supplierBank += p.amount; });
+        r[2].forEach(function (s) {
+          if (s.status !== 'closed' || !s.closedAt || !inRange(s.closedAt, rg)) return;
+          var d = day(s.closedAt); d.shifts++; d.shiftDiff += s.diff || 0;
+        });
+        var rows = Object.keys(days).sort().map(function (k) {
+          var d = days[k], cost = Math.round(d.cost), net = d.total - d.returns;
+          d.cost = seeCost ? cost : null;
+          d.netRevenue = net;
+          d.grossProfit = seeCost ? net - cost : null;
+          d.netProfit = seeCost ? net - cost - d.expense : null;
+          d.cashChange = d.cash - d.retCash + d.cashIn - d.expense - d.supplierCash;      // günün sonunda kassada nağdın dəyişməsi
+          return d;
+        });
+        var keys = ['count', 'gross', 'discount', 'total', 'cash', 'pos', 'transfer', 'retCount', 'returns', 'retCash', 'cashIn', 'expense', 'supplierCash', 'supplierBank', 'shifts', 'shiftDiff', 'netRevenue', 'cashChange'];
+        var totals = {}; keys.concat(['cost', 'grossProfit', 'netProfit']).forEach(function (k) { totals[k] = 0; });
+        rows.forEach(function (d) { keys.forEach(function (k) { totals[k] += d[k]; }); if (seeCost) { totals.cost += d.cost; totals.grossProfit += d.grossProfit; totals.netProfit += d.netProfit; } });
+        if (!seeCost) { totals.cost = null; totals.grossProfit = null; totals.netProfit = null; }
+        return { rows: rows, totals: totals, seeCost: seeCost };
+      });
+    });
+  }
+
   /* ---------- Bölmələrin sırası (Admin təyin edir, hamı üçün) ---------- */
   function getTabOrder() { return DB.get('meta', 'tabOrder').then(function (m) { return Rules.tabOrder(m && m.value); }); }
   function setTabOrder(list) {
@@ -1965,7 +2076,7 @@
     init: init, storeInfo: storeInfo, setStoreInfo: setStoreInfo, listUsers: listUsers, login: login, logout: logout, currentUser: currentUser, changePin: changePin, changeCredential: changeCredential,
     getAuthPolicy: whenLoggedIn(getAuthPolicy), setAuthPolicy: setAuthPolicy, myCredTarget: myCredTarget, approverForm: whenLoggedIn(approverForm),
     approveWithPin: approveWithPin, requirePerm: requirePerm, getMatrix: getMatrix, setMatrix: setMatrix, getTabOrder: whenLoggedIn(getTabOrder), setTabOrder: setTabOrder,
-    productSalesReport: productSalesReport, stockReport: stockReport, financeReport: financeReport,
+    productSalesReport: productSalesReport, stockReport: stockReport, financeReport: financeReport, movementReport: movementReport, dailyReport: dailyReport,
     listProducts: listProducts, sanitizeForRole: sanitizeForRole, createProduct: createProduct, updateProduct: updateProduct, importProducts: importProducts, validateProductInput: validateProductInput, IMPORT_MAX_ROWS: IMPORT_MAX_ROWS,
     receiveStock: receiveStock, createPurchase: createPurchase, listPurchases: listPurchases, returnableLots: returnableLots, createSupplierReturn: createSupplierReturn, cancelPurchase: cancelPurchase, listSupplierReturns: listSupplierReturns, MAX_PURCHASE_LINES: MAX_PURCHASE_LINES, lookupForPos: lookupForPos, searchProducts: whenLoggedIn(searchProducts), seedDemoProducts: seedDemoProducts,
     currentShift: currentShift, lastClosedShift: lastClosedShift, openShift: openShift, closeShift: closeShift, shiftReport: shiftReport, cashMove: cashMove,

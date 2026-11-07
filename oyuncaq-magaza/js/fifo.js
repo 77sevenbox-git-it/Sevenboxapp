@@ -318,7 +318,7 @@
       reversed: reversed, reversedTotal: revTotal, closing: closing, receipts: receipts, sales: tot, unpricedLots: unpriced, supReturns: supReturns };
   }
 
-  var Fifo = { replay: replay, onHand: onHand, productLots: productLots, supplierReport: supplierReport, productReport: productReport, supplierReceipts: supplierReceipts, supplierStatement: supplierStatement, debtAt: debtAt, payActive: payActive };
+  var Fifo = { replay: replay, onHand: onHand, productLots: productLots, supplierReport: supplierReport, productReport: productReport, walkParts: walkParts, supplierReceipts: supplierReceipts, supplierStatement: supplierStatement, debtAt: debtAt, payActive: payActive };
   root.Fifo = Fifo;
   if (typeof module !== 'undefined') module.exports = Fifo;
 })(typeof window !== 'undefined' ? window : globalThis);

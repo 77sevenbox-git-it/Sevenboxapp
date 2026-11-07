@@ -360,3 +360,6 @@ tr.grp th { background: var(--ground); color: var(--ink-2); font-size: 13px; tex
 .fin table { width: 100%; }
 .fin tr.bold td { border-top: 1px solid var(--line); background: var(--ground); }
 tfoot th { border-top: 2px solid var(--line); background: var(--ground); color: var(--ink); }
+.seg.wrap { flex-wrap: wrap; }
+.seg.wrap button { flex: 1 1 130px; }
+td.minus, th.minus { color: var(--bad); }

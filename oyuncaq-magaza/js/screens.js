@@ -1492,17 +1492,18 @@
   function reports(el) {
     UI.clear(el);
     var views = [];
-    if (can('report.view')) views.push('sales');
+    if (can('report.view')) views.push('sales', 'movement', 'daily');
     if (can('product.view')) views.push('stock');
     if (can('report.view') && can('product.cost.view') && (can('supplier.pay') || can('supplier.view'))) views.push('finance');
     if (!views.length) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, _t('Bu rol üçün hesabat yoxdur')))); return; }
-    var labels = { sales: _t('Məhsul üzrə satış'), stock: _t('Stok'), finance: _t('Gəlir-xərc') };
-    var body = h('div', { id: 'rpt-body' }), seg = h('div', { class: 'seg', role: 'group', 'aria-label': _t('Hesabat növü'), style: 'max-width:620px' });
+    var labels = { sales: _t('Məhsul üzrə satış'), movement: _t('Malın hərəkəti'), daily: _t('Günlər üzrə'), stock: _t('Stok'), finance: _t('Gəlir-xərc') };
+    var makers = { sales: salesView, movement: movementView, daily: dailyView, stock: stockView, finance: financeView };
+    var body = h('div', { id: 'rpt-body' }), seg = h('div', { class: 'seg wrap', role: 'group', 'aria-label': _t('Hesabat növü'), style: 'max-width:900px' });
     function open(id) {
       reportsView = id;
       Array.prototype.forEach.call(seg.children, function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-view') === id ? 'true' : 'false'); });
       UI.clear(body);
-      var v = id === 'sales' ? salesView() : id === 'stock' ? stockView() : financeView();
+      var v = makers[id]();
       body.appendChild(v.el); root.Screens._refresh = v.load; v.load();
     }
     views.forEach(function (id) { seg.appendChild(h('button', { type: 'button', 'data-view': id, id: 'rpt-tab-' + id, 'aria-pressed': 'false', onclick: function () { open(id); } }, labels[id])); });
@@ -1554,7 +1555,143 @@
       h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'rs-table' }, head, tb, foot))) };
   }
 
-  var STOCK_STATUS = { neg: [_t('Mənfi qalıq'), 'bad'], out: [_t('Qalıq yoxdur'), 'off'], low: [_t('Azdır'), ''], ok: [_t('Normal'), 'ok'] };
+  function dayText(k) { return k ? k.split('-').reverse().join('.') : ''; }
+  function moneyCell(v, o) { return h('td', { class: 'num' + (v < 0 && !(o && o.plain) ? ' minus' : '') + (o && o.muted ? ' muted' : '') }, v == null ? '—' : M.format(v)); }
+  function qtyCell(v, o) { return h('td', { class: 'num' + (o && o.red && v ? ' minus' : '') + (!v ? ' muted' : '') }, v ? qtyText(v) : '·'); }
+
+  // Malın hərəkəti: hansı gün hansı məhsuldan nə qədər alınıb, satılıb, qaytarılıb; günün əvvəli/sonu qalığı; gəlir, maya, mənfəət
+  function movementView() {
+    var data = null, head = h('thead'), tb = h('tbody'), foot = h('tfoot');
+    var period = periodBar('mv', load);
+    var q = searchBox('mv-q', _t('Axtarış: məhsul adı və ya barkod'), draw);
+    var group = h('select', { class: 'input', id: 'mv-group' }, [['day', _t('Gün və məhsul üzrə')], ['product', _t('Məhsul üzrə (dövrün cəmi)')]].map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    group.addEventListener('change', draw);
+    function load() { return S.movementReport(period.range()).then(function (r) { data = r; draw(); }).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    function visible() {
+      var f = R.foldAz(q.value.trim());
+      var rows = (data ? data.rows : []).filter(function (x) { return !f || R.foldAz(x.name + ' ' + (x.barcode || '')).indexOf(f) !== -1; });
+      if (group.value !== 'product') return rows;
+      var by = {}, out = [];
+      rows.forEach(function (x) {      // sətirlər günə görə artan sıradadır: ilk sətrin "əvvəl"i, sonuncunun "qalıq"ı
+        var a = by[x.productId];
+        if (!a) { a = by[x.productId] = Object.assign({}, x, { day: '' }); out.push(a); return; }
+        ['received', 'sold', 'returned', 'supplierReturned', 'corrected', 'revenue'].forEach(function (k) { a[k] += x[k]; });
+        if (data.seeCost) ['receivedCost', 'cost', 'profit'].forEach(function (k) { a[k] += x[k]; });
+        a.closing = x.closing;
+      });
+      return out.sort(function (a, b) { return (b.revenue - a.revenue) || a.name.localeCompare(b.name, 'az'); });
+    }
+    function draw() {
+      if (!data) return;
+      var cost = data.seeCost, rows = visible(), byDay = group.value !== 'product';
+      var showSr = rows.some(function (x) { return x.supplierReturned; }), showCor = rows.some(function (x) { return x.corrected; });
+      var cols = 7 + (cost ? 3 : 0) + (showSr ? 1 : 0) + (showCor ? 1 : 0);
+      var t = { received: 0, receivedCost: 0, sold: 0, returned: 0, supplierReturned: 0, corrected: 0, revenue: 0, cost: 0, profit: 0 };
+      UI.clear(head); UI.clear(tb); UI.clear(foot);
+      head.appendChild(h('tr', null, h('th', null, _t('Məhsul')), h('th', { class: 'num' }, byDay ? _t('Günün əvvəli') : _t('Dövrün əvvəli')),
+        h('th', { class: 'num' }, _t('Alındı')), cost ? h('th', { class: 'num' }, _t('Alış məbləği ₼')) : null, h('th', { class: 'num' }, _t('Satıldı')), h('th', { class: 'num' }, _t('Qaytarıldı')),
+        showSr ? h('th', { class: 'num' }, _t('Təchizatçıya qaytarıldı')) : null, showCor ? h('th', { class: 'num' }, _t('Düzəliş')) : null,
+        h('th', { class: 'num' }, byDay ? _t('Günün sonu') : _t('Dövrün sonu')), h('th', { class: 'num' }, _t('Gəlir ₼')),
+        cost ? [h('th', { class: 'num' }, _t('Maya (FIFO) ₼')), h('th', { class: 'num' }, _t('Mənfəət ₼'))] : null));
+      if (!rows.length) tb.appendChild(h('tr', null, h('td', { colspan: String(cols), class: 'empty' }, data.rows.length ? _t('Axtarışa uyğun sətir yoxdur') : _t('Bu dövrdə mal hərəkəti yoxdur'))));
+      var lastDay = null;
+      rows.forEach(function (x) {
+        Object.keys(t).forEach(function (k) { t[k] += x[k] || 0; });
+        if (byDay && x.day !== lastDay) {
+          lastDay = x.day;
+          var dr = 0, dp = 0; rows.forEach(function (y) { if (y.day === x.day) { dr += y.revenue; dp += y.profit || 0; } });
+          tb.appendChild(h('tr', { class: 'grp', 'data-day': x.day }, h('th', { colspan: String(cols) }, dayText(x.day), ' · ', _t('gəlir {0} ₼', [M.format(dr)]), cost ? [' · ', _t('mənfəət {0} ₼', [M.format(dp)])] : null)));
+        }
+        tb.appendChild(h('tr', { 'data-pid': x.productId, 'data-day': x.day || '', 'data-name': x.name },
+          h('td', null, x.name, x.barcode ? h('div', { class: 'mono muted', style: 'font-size:12px' }, x.barcode) : null),
+          h('td', { class: 'num muted' }, qtyText(x.opening)), qtyCell(x.received), cost ? moneyCell(x.received ? x.receivedCost : null, { muted: true }) : null,
+          qtyCell(x.sold), qtyCell(x.returned, { red: true }), showSr ? qtyCell(x.supplierReturned) : null, showCor ? qtyCell(x.corrected) : null,
+          h('td', { class: 'num' + (x.closing < 0 ? ' minus' : '') }, h('b', null, qtyText(x.closing))), moneyCell(x.revenue),
+          cost ? [moneyCell(x.cost, { muted: true }), moneyCell(x.profit)] : null));
+      });
+      foot.appendChild(h('tr', { id: 'mv-total' }, h('th', null, q.value.trim() ? _t('Cəmi (göstərilən sətirlər)') : _t('Cəmi')), h('th', null, ''),
+        h('th', { class: 'num' }, String(t.received)), cost ? h('th', { class: 'num' }, M.format(t.receivedCost)) : null, h('th', { class: 'num' }, String(t.sold)), h('th', { class: 'num' }, String(t.returned)),
+        showSr ? h('th', { class: 'num' }, String(t.supplierReturned)) : null, showCor ? h('th', { class: 'num' }, qtyText(t.corrected)) : null, h('th', null, ''),
+        h('th', { class: 'num' }, M.format(t.revenue)), cost ? [h('th', { class: 'num' }, M.format(t.cost)), h('th', { class: 'num' }, M.format(t.profit))] : null));
+    }
+    function exportCsv() {
+      if (!data) return;
+      var cost = data.seeCost, byDay = group.value !== 'product';
+      var rows = [(byDay ? [_t('Tarix')] : []).concat([_t('Məhsul'), _t('Barkod'), _t('Əvvəl'), _t('Alındı')]).concat(cost ? [_t('Alış məbləği')] : [])
+        .concat([_t('Satıldı'), _t('Qaytarıldı'), _t('Təchizatçıya qaytarıldı'), _t('Düzəliş'), _t('Qalıq'), _t('Gəlir')]).concat(cost ? [_t('Maya (FIFO)'), _t('Mənfəət')] : [])];
+      visible().forEach(function (x) {
+        rows.push((byDay ? [dayText(x.day)] : []).concat([x.name, x.barcode || '', x.opening, x.received]).concat(cost ? [csvMoney(x.receivedCost)] : [])
+          .concat([x.sold, x.returned, x.supplierReturned, x.corrected, x.closing, csvMoney(x.revenue)]).concat(cost ? [csvMoney(x.cost), csvMoney(x.profit)] : []));
+      });
+      csvDownload('malin-hereketi.csv', rows);
+    }
+    return { load: load, el: h('div', { class: 'card', id: 'mv-card' },
+      h('div', { style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Malın hərəkəti')), h('button', { class: 'btn small', type: 'button', id: 'mv-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
+        period.el,
+        h('div', { class: 'row' }, h('div', { class: 'field', style: 'flex:1;min-width:220px' }, h('label', { for: 'mv-q' }, _t('Axtarış')), q), h('div', { class: 'field' }, h('label', { for: 'mv-group' }, _t('Qruplaşdırma')), group)),
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Hər gün hərəkəti olan hər məhsul bir sətirdir: günün əvvəlindəki qalıq, alınan, satılan, müştərinin qaytardığı, günün sonundakı qalıq. Gəlir endirimdən sonradır, qaytarma çıxılıb; mənfəət = gəlir − FIFO maya. Gün Bakı vaxtı ilədir.'))),
+      h('div', { class: 'table-wrap', tabindex: '0' }, h('table', { id: 'mv-table' }, head, tb, foot))) };
+  }
+
+  // Günlər üzrə: hər gün kassada nə qədər pul olub (ödəniş növünə görə) və həmin günün mənfəəti
+  function dailyView() {
+    var data = null, cashT = h('table', { id: 'dy-cash' }), profT = h('table', { id: 'dy-profit' }), profBox = h('div');
+    var period = periodBar('dy', load);
+    function load() { return S.dailyReport(period.range()).then(function (r) { data = r; draw(); }).catch(function (e) { UI.toast(e.message, 'bad'); }); }
+    function draw() {
+      if (!data) return;
+      var rows = data.rows, T = data.totals;
+      UI.clear(cashT); UI.clear(profT); UI.clear(profBox);
+      cashT.appendChild(h('thead', null, h('tr', null, h('th', null, _t('Tarix')), h('th', { class: 'num' }, _t('Çek')), h('th', { class: 'num' }, _t('Satış ₼')), h('th', { class: 'num' }, _t('Nağd')),
+        h('th', { class: 'num' }, _t('Kart')), h('th', { class: 'num' }, _t('Köçürmə')), h('th', { class: 'num' }, _t('Qaytarma')), h('th', { class: 'num' }, _t('Mədaxil')), h('th', { class: 'num' }, _t('Məxaric')),
+        h('th', { class: 'num' }, _t('Təchizatçıya (nağd)')), h('th', { class: 'num' }, _t('Kassada nağd ±')), h('th', { class: 'num' }, _t('Növbə fərqi')))));
+      var cb = h('tbody');
+      if (!rows.length) cb.appendChild(h('tr', null, h('td', { colspan: '12', class: 'empty' }, _t('Bu dövrdə əməliyyat yoxdur'))));
+      function retCell(d) { return h('td', { class: 'num' + (d.returns ? ' minus' : ' muted') }, d.returns ? M.format(-d.returns) : '·', d.returns && d.retCash !== d.returns ? h('div', { class: 'muted', style: 'font-size:12px' }, _t('nağd {0}', [M.format(d.retCash)])) : null); }
+      function diffCell(d) { return h('td', { class: 'num' + (d.shiftDiff < 0 ? ' minus' : '') + (!d.shifts ? ' muted' : '') }, d.shifts ? M.format(d.shiftDiff) : '·'); }
+      rows.forEach(function (d) {
+        cb.appendChild(h('tr', { 'data-day': d.day }, h('td', null, dayText(d.day)), h('td', { class: 'num' }, String(d.count)), moneyCell(d.total), moneyCell(d.cash), moneyCell(d.pos), moneyCell(d.transfer), retCell(d),
+          moneyCell(d.cashIn), moneyCell(d.expense ? -d.expense : 0, { plain: true }), moneyCell(d.supplierCash ? -d.supplierCash : 0, { plain: true }), h('td', { class: 'num' + (d.cashChange < 0 ? ' minus' : '') }, h('b', null, M.format(d.cashChange))), diffCell(d)));
+      });
+      cashT.appendChild(cb);
+      cashT.appendChild(h('tfoot', null, h('tr', { id: 'dy-cash-total' }, h('th', null, _t('Cəmi')), h('th', { class: 'num' }, String(T.count)), h('th', { class: 'num' }, M.format(T.total)), h('th', { class: 'num' }, M.format(T.cash)),
+        h('th', { class: 'num' }, M.format(T.pos)), h('th', { class: 'num' }, M.format(T.transfer)), h('th', { class: 'num' }, M.format(-T.returns)), h('th', { class: 'num' }, M.format(T.cashIn)), h('th', { class: 'num' }, M.format(-T.expense)),
+        h('th', { class: 'num' }, M.format(-T.supplierCash)), h('th', { class: 'num' }, M.format(T.cashChange)), h('th', { class: 'num' }, M.format(T.shiftDiff)))));
+      if (!data.seeCost) { profBox.appendChild(h('p', { class: 'muted', style: 'margin:0;padding:16px 20px' }, _t('Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.'))); return; }
+      profT.appendChild(h('thead', null, h('tr', null, h('th', null, _t('Tarix')), h('th', { class: 'num' }, _t('Satış ₼')), h('th', { class: 'num' }, _t('Qaytarma')), h('th', { class: 'num' }, _t('Xalis gəlir')),
+        h('th', { class: 'num' }, _t('Maya (FIFO) ₼')), h('th', { class: 'num' }, _t('Ümumi mənfəət')), h('th', { class: 'num' }, _t('Kassadan məxaric')), h('th', { class: 'num' }, _t('Xalis mənfəət')))));
+      var pb = h('tbody');
+      if (!rows.length) pb.appendChild(h('tr', null, h('td', { colspan: '8', class: 'empty' }, _t('Bu dövrdə əməliyyat yoxdur'))));
+      rows.forEach(function (d) {
+        pb.appendChild(h('tr', { 'data-day': d.day }, h('td', null, dayText(d.day)), moneyCell(d.total), moneyCell(d.returns ? -d.returns : 0), moneyCell(d.netRevenue), moneyCell(d.cost ? -d.cost : 0, { muted: true, plain: true }),
+          moneyCell(d.grossProfit), moneyCell(d.expense ? -d.expense : 0, { plain: true }), h('td', { class: 'num' + (d.netProfit < 0 ? ' minus' : '') }, h('b', null, M.format(d.netProfit)))));
+      });
+      profT.appendChild(pb);
+      profT.appendChild(h('tfoot', null, h('tr', { id: 'dy-profit-total' }, h('th', null, _t('Cəmi')), h('th', { class: 'num' }, M.format(T.total)), h('th', { class: 'num' }, M.format(-T.returns)), h('th', { class: 'num' }, M.format(T.netRevenue)),
+        h('th', { class: 'num' }, M.format(-T.cost)), h('th', { class: 'num' }, M.format(T.grossProfit)), h('th', { class: 'num' }, M.format(-T.expense)), h('th', { class: 'num' }, M.format(T.netProfit)))));
+      profBox.appendChild(h('div', { class: 'table-wrap', tabindex: '0' }, profT));
+    }
+    function exportCsv() {
+      if (!data) return;
+      var cost = data.seeCost, rows = [[_t('Tarix'), _t('Çek'), _t('Satış'), _t('Nağd'), _t('Kart'), _t('Köçürmə'), _t('Qaytarma'), _t('o cümlədən nağd'), _t('Mədaxil'), _t('Məxaric'), _t('Təchizatçıya (nağd)'), _t('Kassada nağd ±'), _t('Növbə fərqi')]
+        .concat(cost ? [_t('Xalis gəlir'), _t('Maya (FIFO)'), _t('Ümumi mənfəət'), _t('Xalis mənfəət')] : [])];
+      data.rows.forEach(function (d) {
+        rows.push([dayText(d.day), d.count, csvMoney(d.total), csvMoney(d.cash), csvMoney(d.pos), csvMoney(d.transfer), csvMoney(d.returns), csvMoney(d.retCash), csvMoney(d.cashIn), csvMoney(d.expense), csvMoney(d.supplierCash), csvMoney(d.cashChange), d.shifts ? csvMoney(d.shiftDiff) : '']
+          .concat(cost ? [csvMoney(d.netRevenue), csvMoney(d.cost), csvMoney(d.grossProfit), csvMoney(d.netProfit)] : []));
+      });
+      csvDownload('gunler-uzre.csv', rows);
+    }
+    return { load: load, el: h('div', { style: 'display:flex;flex-direction:column;gap:16px', id: 'dy-card' },
+      h('div', { class: 'card', style: 'padding:16px 20px;display:flex;flex-direction:column;gap:12px' },
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', { style: 'margin:0;font-size:18px' }, _t('Günlər üzrə')), h('button', { class: 'btn small', type: 'button', id: 'dy-csv', onclick: exportCsv }, _t('Excel üçün CSV'))),
+        period.el,
+        h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.'))),
+      h('div', { class: 'card' }, h('div', { style: 'padding:16px 20px 4px' }, h('h3', { style: 'margin:0;font-size:16px' }, _t('Kassa'))), h('div', { class: 'table-wrap', tabindex: '0' }, cashT)),
+      h('div', { class: 'card' }, h('div', { style: 'padding:16px 20px 4px' }, h('h3', { style: 'margin:0;font-size:16px' }, _t('Mənfəət'))), profBox)) };
+  }
+
+  var STOCK_STATUS = { neg:[_t('Mənfi qalıq'), 'bad'], out: [_t('Qalıq yoxdur'), 'off'], low: [_t('Azdır'), ''], ok: [_t('Normal'), 'ok'] };
 
   // Stok hesabatı: qalıq, minimum qalıq, qiymət, qalığın dəyəri və qalığın hansı təchizatçının malından olduğu
   function stockView() {

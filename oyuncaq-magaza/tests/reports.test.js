@@ -168,9 +168,54 @@ async function t(name, fn) {
     assert.strictEqual(f.cashIn, 700); assert.strictEqual(f.expense, 1500);
   });
 
+  await t('malın hərəkəti: alınan/satılan/qaytarılan say, günün əvvəli və sonu qalığı; gəlir və mənfəət məhsul hesabatı ilə eynidir', async () => {
+    const r = await A.Services.movementReport({});
+    const ps = await A.Services.productSalesReport({});
+    const prods = await A.Services.listProducts();
+    const stock = id => prods.find(p => p.id === id).stock;
+    const rowsOf = id => r.rows.filter(x => x.productId === id);
+    const sumOf = (rows, k) => rows.reduce((a, x) => a + x[k], 0);
+    const ra = rowsOf(pa.id);
+    assert.strictEqual(sumOf(ra, 'received'), 10); assert.strictEqual(sumOf(ra, 'sold'), 3 + 1 + 4); assert.strictEqual(sumOf(ra, 'returned'), 1 + 4);
+    assert.strictEqual(ra[0].opening, 0, 'dövrün əvvəli: məhsul yeni yaradılıb'); assert.strictEqual(ra[ra.length - 1].closing, stock(pa.id), 'son qalıq = indiki qalıq');
+    const rd = rowsOf(pd.id); assert.strictEqual(rd[rd.length - 1].closing, -1, 'mənfi qalıq da göstərilir');
+    assert.ok(!rowsOf(pc.id).length, 'hərəkəti olmayan məhsul yoxdur');
+    r.rows.forEach(x => assert.strictEqual(x.closing - x.opening, x.received - x.sold + x.returned - x.supplierReturned + x.corrected, 'hər sətirdə qalıq balansı: ' + x.name));
+    assert.strictEqual(r.rows[0].day, Rules.localDate(new Date()), 'gün Bakı vaxtı ilə');
+    assert.strictEqual(r.totals.revenue, ps.totals.netRevenue); assert.strictEqual(r.totals.profit, ps.totals.netProfit); assert.strictEqual(r.totals.cost, ps.totals.netCost);
+    assert.strictEqual(r.totals.receivedCost, 10 * 500 + 10 * 400);
+    const none = await A.Services.movementReport({ from: '2999-01-01T00:00:00.000Z' }); assert.strictEqual(none.rows.length, 0);
+  });
+
+  await t('malın hərəkəti: dövrün sonu keçmişdədirsə qalıq indiki qalıqdan geriyə hesablanır', async () => {
+    const moves = await A.DB.getAll('stockMoves');
+    const rec = moves.find(m => m.productId === pa.id && m.type === 'receipt'), firstSale = moves.filter(m => m.productId === pa.id && m.type === 'sale').sort((a, b) => a.at < b.at ? -1 : 1)[0];
+    if (!(rec.at < firstSale.at)) return;          // eyni millisaniyəyə düşübsə yoxlamaq olmur
+    const r = await A.Services.movementReport({ to: firstSale.at });
+    const ra = r.rows.filter(x => x.productId === pa.id);
+    assert.strictEqual(ra.length, 1); assert.strictEqual(ra[0].received, 10); assert.strictEqual(ra[0].sold, 0); assert.strictEqual(ra[0].closing, 10);
+  });
+
+  await t('günlər üzrə: kassa (ödəniş növü, qaytarma, mədaxil, məxaric, təchizatçıya nağd) və mənfəət Gəlir-xərc ilə uzlaşır', async () => {
+    const d = await A.Services.dailyReport({});
+    const f = await A.Services.financeReport({});
+    const T = d.totals;
+    assert.strictEqual(T.count, f.sales.count); assert.strictEqual(T.total, f.sales.total); assert.strictEqual(T.returns, f.returns.total);
+    assert.strictEqual(T.cash, f.sales.cash); assert.strictEqual(T.pos, f.sales.pos);
+    assert.strictEqual(T.netRevenue, f.netRevenue); assert.strictEqual(T.cost, f.cost); assert.strictEqual(T.grossProfit, f.grossProfit); assert.strictEqual(T.netProfit, f.netProfit);
+    assert.strictEqual(T.expense, 1500); assert.strictEqual(T.cashIn, 700, 'ləğvin kassaya qayıdan pulu mədaxil sayılmır');
+    assert.strictEqual(T.supplierCash, 0, 'nağd ödəniş eyni gün ləğv edilib: kassaya təsiri 0'); assert.strictEqual(T.supplierBank, 3000);
+    assert.strictEqual(T.cashChange, T.cash - T.retCash + 700 - 1500 - 0);
+    const sh = await A.Services.currentShift(); const z = await A.Services.shiftReport(sh);
+    assert.strictEqual(sh.openingCash + T.cashChange, z.expectedCash, 'açılış pulu + kassada nağd ± = növbənin gözlənilən nağdı');
+    assert.strictEqual(T.shifts, 0, 'növbə hələ bağlanmayıb');
+    assert.deepStrictEqual(J(d.rows.map(x => x.day)), [Rules.localDate(new Date())]);
+  });
+
   await t('icazələr: Kassir hesabatları görə bilmir; Mühasib maya görür; alış qiyməti icazəsi alınsa maya/mənfəət null', async () => {
     await sync(A, B); await loginAs(B, 'Kassir', '1111');
     await rejects(B.Services.productSalesReport({}), /icazəniz yoxdur/); await rejects(B.Services.financeReport({}), /icazəniz yoxdur/);
+    await rejects(B.Services.movementReport({}), /icazəniz yoxdur/); await rejects(B.Services.dailyReport({}), /icazəniz yoxdur/);
     const sr = await B.Services.stockReport(); assert.ok(sr.rows.length); assert.strictEqual(sr.seeCost, false); assert.strictEqual(sr.rows[0].costValue, null); assert.strictEqual(sr.totals.costValue, null);
     await loginAs(B, 'Mühasib 1', '3333');
     const ps = await B.Services.productSalesReport({}); assert.strictEqual(ps.seeCost, true); assert.ok(ps.totals.netProfit != null);
@@ -179,6 +224,8 @@ async function t(name, fn) {
     await loginAs(B, 'Mühasib 1', '3333');
     const ps2 = await B.Services.productSalesReport({});
     assert.strictEqual(ps2.seeCost, false); assert.strictEqual(ps2.totals.netProfit, null); assert.ok(ps2.rows.every(x => x.cost === null && x.profit === null));
+    const mv2 = await B.Services.movementReport({}); assert.ok(mv2.rows.length && mv2.rows.every(x => x.cost === null && x.profit === null && x.receivedCost === null)); assert.strictEqual(mv2.totals.profit, null);
+    const dy2 = await B.Services.dailyReport({}); assert.ok(dy2.rows.every(x => x.cost === null && x.netProfit === null)); assert.strictEqual(dy2.totals.netProfit, null); assert.ok(dy2.totals.total > 0, 'kassa hissəsi qalır');
     await rejects(B.Services.financeReport({}), /icazəniz yoxdur/);          // maya olmadan gəlir-xərc açılmır
     m.muhasib.push('product.cost.view'); await A.Services.setMatrix(m); await sync(A, B);
   });
