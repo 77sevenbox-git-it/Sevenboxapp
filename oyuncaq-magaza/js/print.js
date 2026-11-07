@@ -77,7 +77,7 @@
       (sale.totals.discount ? '<div class="r"><span>' + (sale.discount && sale.discount.type !== 'amount' && sale.discount.percent ? _t('Endirim {0}%', [sale.discount.percent]) : _t('Endirim')) + '</span><span>−' + M.format(sale.totals.discount) + '</span></div>' : '') +
       '<div class="r big"><span>' + _t('YEKUN') + '</span><span>' + M.format(sale.totals.total) + ' AZN</span></div>' + pay + '<hr>' +
       receiptBarcode(sale.receiptBarcode, cfg) +
-      '<div class="c">' + _t('Qaytarma {0} gün ərzində, çeklə', [root.Rules.RETURN_DAYS]) + '</div>' +
+      '<div class="c"><b>' + _t('Bizi seçdiyiniz üçün təşəkkür edirik!') + '</b></div>' +
       '<div class="c">' + _t('Bu çek fiskal çek deyil') + '</div>', cfg);
   }
 

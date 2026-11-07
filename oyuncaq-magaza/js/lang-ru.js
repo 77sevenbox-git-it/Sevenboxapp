@@ -156,7 +156,6 @@
     "Kassir": "Кассир",
     "Endirim {0}%": "Скидка {0}%",
     "YEKUN": "ИТОГО",
-    "Qaytarma {0} gün ərzində, çeklə": "Возврат в течение {0} дн. по чеку",
     "Bu çek fiskal çek deyil": "Это не фискальный чек",
     "QAYTARMA ÇEKİ": "ЧЕК ВОЗВРАТА",
     "İlkin çek №": "Исходный чек №",
@@ -1193,6 +1192,7 @@
     "nağd {0}": "наличными {0}",
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Чтобы видеть прибыль, нужно право просматривать закупочные цены.",
     "o cümlədən nağd": "в т.ч. наличными",
-    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Наличные в кассе ± = продажи наличными − возвраты наличными + внесения − изъятия − оплата поставщику наличными (без размена на начало смены). Расхождение смены: разница между пересчитанной и ожидаемой суммой в сменах, закрытых в этот день. Прибыль считается так же, как в отчёте «Доходы-расходы»."
+    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Наличные в кассе ± = продажи наличными − возвраты наличными + внесения − изъятия − оплата поставщику наличными (без размена на начало смены). Расхождение смены: разница между пересчитанной и ожидаемой суммой в сменах, закрытых в этот день. Прибыль считается так же, как в отчёте «Доходы-расходы».",
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Спасибо, что выбрали нас!"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

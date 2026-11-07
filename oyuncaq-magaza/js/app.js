@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.11.07-1';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.11.07-2';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   // Bölmə görünür, əgər rolun bölmə icazəsi ("tab.*") varsa. Sıra: Admin-in Ayarlar bölməsində təyin etdiyi (hamı üçün eyni), çatmayanlar ilkin sıra ilə sonda.
   var ROUTES = [

@@ -156,7 +156,6 @@
     "Kassir": "Kasiyer",
     "Endirim {0}%": "İndirim %{0}",
     "YEKUN": "TOPLAM",
-    "Qaytarma {0} gün ərzində, çeklə": "İade {0} gün içinde, fişle",
     "Bu çek fiskal çek deyil": "Bu fiş mali fiş değildir",
     "QAYTARMA ÇEKİ": "İADE FİŞİ",
     "İlkin çek №": "Asıl fiş No",
@@ -1193,6 +1192,7 @@
     "nağd {0}": "nakit {0}",
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Kârı görmek için alış fiyatını görme izni gerekir.",
     "o cümlədən nağd": "bunun nakit kısmı",
-    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Kasadaki nakit ± = nakit satış − nakit iade + kasaya giriş − kasadan çıkış − tedarikçiye nakit ödeme (vardiya açılış parası dahil değil). Vardiya farkı: o gün kapanan vardiyalarda sayılan ile beklenen nakit arasındaki fark. Kâr, Gelir-gider raporuyla aynı kurala göre hesaplanır."
+    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Kasadaki nakit ± = nakit satış − nakit iade + kasaya giriş − kasadan çıkış − tedarikçiye nakit ödeme (vardiya açılış parası dahil değil). Vardiya farkı: o gün kapanan vardiyalarda sayılan ile beklenen nakit arasındaki fark. Kâr, Gelir-gider raporuyla aynı kurala göre hesaplanır.",
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Bizi tercih ettiğiniz için teşekkür ederiz!"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

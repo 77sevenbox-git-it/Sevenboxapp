@@ -156,7 +156,6 @@
     "Kassir": "Cashier",
     "Endirim {0}%": "Discount {0}%",
     "YEKUN": "TOTAL",
-    "Qaytarma {0} gün ərzində, çeklə": "Returns within {0} days with the receipt",
     "Bu çek fiskal çek deyil": "This is not a fiscal receipt",
     "QAYTARMA ÇEKİ": "RETURN RECEIPT",
     "İlkin çek №": "Original receipt #",
@@ -1193,6 +1192,7 @@
     "nağd {0}": "cash {0}",
     "Mənfəəti görmək üçün alış qiymətinə baxmaq icazəsi lazımdır.": "Viewing profit requires permission to see purchase prices.",
     "o cümlədən nağd": "of which cash",
-    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Cash in drawer ± = cash sales − cash refunds + cash in − cash out − cash paid to suppliers (opening float not included). Shift difference: counted minus expected cash in shifts closed that day. Profit uses the same rules as the Income-expense report."
+    "Kassada nağd ± = nağd satış − nağd qaytarma + mədaxil − məxaric − təchizatçıya nağd ödəniş (növbənin açılış pulu daxil deyil). Növbə fərqi: həmin gün bağlanan növbələrdə sayılan ilə gözlənilən nağdın fərqi. Mənfəət Gəlir-xərc hesabatı ilə eyni qaydadır.": "Cash in drawer ± = cash sales − cash refunds + cash in − cash out − cash paid to suppliers (opening float not included). Shift difference: counted minus expected cash in shifts closed that day. Profit uses the same rules as the Income-expense report.",
+    "Bizi seçdiyiniz üçün təşəkkür edirik!": "Thank you for choosing us!"
   });
 })(typeof window !== 'undefined' ? window : globalThis);
