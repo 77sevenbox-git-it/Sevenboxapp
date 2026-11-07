@@ -1197,6 +1197,23 @@
     "sürüşmə {0} mm": "shift {0} mm",
     "Çap sahəsinin eni, mm": "Print area width, mm",
     "Sağa (+) / sola (−) sürüşdür, mm": "Shift right (+) / left (−), mm",
-    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "If the right or left edge of the receipt is cut off, check which side of the frame is missing on the test receipt. If the right edge is cut, first shift left (e.g. −2); if it is still cut, reduce the width (e.g. 70). Print a test receipt after each change."
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "If the right or left edge of the receipt is cut off, check which side of the frame is missing on the test receipt. If the right edge is cut, first shift left (e.g. −2); if it is still cut, reduce the width (e.g. 70). Print a test receipt after each change.",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi ({0} göndərilməmiş qeyd atıldı)": "Business data was deleted on the server: this device has been cleared ({0} unsent records discarded)",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi": "Business data was deleted on the server: this device has been cleared",
+    "Silinir… 1–2 dəqiqə çəkə bilər, pəncərəni bağlamayın.": "Deleting… this can take 1–2 minutes, do not close the window.",
+    "Bu cihazda serverə göndərilməmiş {0} qeyd var: əvvəl göndərilməyə cəhd ediləcək.": "This device has {0} records not yet sent to the server: they will be sent first if possible.",
+    "İş məlumatını sil": "Delete business data",
+    "Silinir:": "Deleted:",
+    "məhsullar, təchizatçılar və borclar, satışlar və çeklər, qaytarmalar, növbələr, kassa hərəkətləri, stok və partiyalar, təsdiq sorğuları.": "products, suppliers and debts, sales and receipts, returns, shifts, cash movements, stock and batches, approval requests.",
+    "Qalır:": "Kept:",
+    "istifadəçilər və PIN-lər, icazələr, ayarlar, cihaz açarları. Çek nömrələri və barkodlar davam edir (köhnə etiketlə qarışmasın).": "users and PINs, permissions, settings, device keys. Receipt numbers and barcodes continue (so they don't clash with old labels).",
+    "Silmədən əvvəl bütün cədvəlin nüsxəsi Drive-da «7 BOX — Ehtiyat» adı ilə saxlanılır. Bütün kompüter və telefonlar növbəti sinxronda özü təmizlənir. Geri qaytarmaq yalnız o nüsxədən əl ilə mümkündür.": "Before deleting, a copy of the whole spreadsheet is saved to Drive as «7 BOX — Ehtiyat». All computers and phones clear themselves on the next sync. Restoring is only possible manually from that copy.",
+    "Təsdiq üçün SIL yazın": "Type SIL to confirm",
+    "Hamısını sil": "Delete everything",
+    "Admin açarını yazın": "Enter the admin key",
+    "Silindi. Ehtiyat nüsxə: {0}": "Deleted. Backup copy: {0}",
+    "Sınaqdan sonra təmiz başlamaq üçün: məhsullar, təchizatçılar, satışlar, çeklər, növbələr və kassa silinir; istifadəçilər, icazələr və ayarlar qalır. Əvvəl Drive-da ehtiyat nüsxə çıxarılır.": "To start clean after testing: products, suppliers, sales, receipts, shifts and cash are deleted; users, permissions and settings stay. A backup copy is made in Drive first.",
+    "İş məlumatını sil…": "Delete business data…",
+    "Server cavab vermədi": "The server did not respond"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

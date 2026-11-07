@@ -1197,6 +1197,23 @@
     "sürüşmə {0} mm": "сдвиг {0} мм",
     "Çap sahəsinin eni, mm": "Ширина области печати, мм",
     "Sağa (+) / sola (−) sürüşdür, mm": "Сдвиг вправо (+) / влево (−), мм",
-    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Если обрезается правый или левый край чека: посмотрите на тестовом чеке, какая сторона рамки не видна. Если обрезан правый край, сначала сдвиньте влево (напр. −2), если всё ещё обрезается — уменьшите ширину (напр. 70). После каждого изменения печатайте тестовый чек."
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Если обрезается правый или левый край чека: посмотрите на тестовом чеке, какая сторона рамки не видна. Если обрезан правый край, сначала сдвиньте влево (напр. −2), если всё ещё обрезается — уменьшите ширину (напр. 70). После каждого изменения печатайте тестовый чек.",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi ({0} göndərilməmiş qeyd atıldı)": "Рабочие данные удалены на сервере: это устройство очищено (отброшено неотправленных записей: {0})",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi": "Рабочие данные удалены на сервере: это устройство очищено",
+    "Silinir… 1–2 dəqiqə çəkə bilər, pəncərəni bağlamayın.": "Удаление… может занять 1–2 минуты, не закрывайте окно.",
+    "Bu cihazda serverə göndərilməmiş {0} qeyd var: əvvəl göndərilməyə cəhd ediləcək.": "На этом устройстве {0} неотправленных записей: сначала будет попытка их отправить.",
+    "İş məlumatını sil": "Удалить рабочие данные",
+    "Silinir:": "Удаляется:",
+    "məhsullar, təchizatçılar və borclar, satışlar və çeklər, qaytarmalar, növbələr, kassa hərəkətləri, stok və partiyalar, təsdiq sorğuları.": "товары, поставщики и долги, продажи и чеки, возвраты, смены, кассовые операции, остатки и партии, запросы на подтверждение.",
+    "Qalır:": "Остаётся:",
+    "istifadəçilər və PIN-lər, icazələr, ayarlar, cihaz açarları. Çek nömrələri və barkodlar davam edir (köhnə etiketlə qarışmasın).": "пользователи и PIN-коды, права, настройки, ключи устройств. Номера чеков и штрихкоды продолжаются (чтобы не путаться со старыми этикетками).",
+    "Silmədən əvvəl bütün cədvəlin nüsxəsi Drive-da «7 BOX — Ehtiyat» adı ilə saxlanılır. Bütün kompüter və telefonlar növbəti sinxronda özü təmizlənir. Geri qaytarmaq yalnız o nüsxədən əl ilə mümkündür.": "Перед удалением копия всей таблицы сохраняется в Drive под именем «7 BOX — Ehtiyat». Все компьютеры и телефоны очистятся сами при следующей синхронизации. Восстановить можно только вручную из этой копии.",
+    "Təsdiq üçün SIL yazın": "Для подтверждения введите SIL",
+    "Hamısını sil": "Удалить всё",
+    "Admin açarını yazın": "Введите ключ администратора",
+    "Silindi. Ehtiyat nüsxə: {0}": "Удалено. Резервная копия: {0}",
+    "Sınaqdan sonra təmiz başlamaq üçün: məhsullar, təchizatçılar, satışlar, çeklər, növbələr və kassa silinir; istifadəçilər, icazələr və ayarlar qalır. Əvvəl Drive-da ehtiyat nüsxə çıxarılır.": "Чтобы начать с чистого листа после тестирования: удаляются товары, поставщики, продажи, чеки, смены и касса; пользователи, права и настройки остаются. Сначала в Drive создаётся резервная копия.",
+    "İş məlumatını sil…": "Удалить рабочие данные…",
+    "Server cavab vermədi": "Сервер не ответил"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

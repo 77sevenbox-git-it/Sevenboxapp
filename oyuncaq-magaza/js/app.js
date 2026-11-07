@@ -4,7 +4,7 @@
   var _t = (root.I18n || { t: function (s, p) { return String(s).replace(/@@.*$/, '').replace(/\{(\d+)\}/g, function (m, i) { return p && p[i] != null ? p[i] : m; }); } }).t;
   var UI = root.UI, S = root.Services, R = root.Rules;
   var h = UI.h;
-  var BUILD = '2026.11.07-4';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
+  var BUILD = '2026.11.07-5';   // hər buraxılışda artırılır; iki brauzerdə eyni görünməlidir
 
   // Bölmə görünür, əgər rolun bölmə icazəsi ("tab.*") varsa. Sıra: Admin-in Ayarlar bölməsində təyin etdiyi (hamı üçün eyni), çatmayanlar ilkin sıra ilə sonda.
   var ROUTES = [
@@ -279,7 +279,12 @@
   addEventListener('online', refreshStatus);
   addEventListener('offline', refreshStatus);
   setInterval(refreshStatus, 15000);   // sorğuların vaxtı bitməsi və növbə vəziyyəti üçün (lokal, şəbəkəsiz)
-  root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else if (kind === 'revoked') onRevoked(); else refreshStatus(); });
+  // Serverdə iş məlumatı silinib: bu cihazın yerli iş məlumatı artıq silinib (Sync.localReset); ekranlar və yaddaşdakı keşlər təzələnsin deyə səhifə yenidən açılır (sessiya qalır)
+  function onReset(d) {
+    UI.toast(d && d.dropped ? _t('İş məlumatı serverdə silinib: bu cihaz təmizləndi ({0} göndərilməmiş qeyd atıldı)', [d.dropped]) : _t('İş məlumatı serverdə silinib: bu cihaz təmizləndi'));
+    setTimeout(function () { location.reload(); }, 1800);
+  }
+  root.Sync.on(function (kind, data) { if (kind === 'applied') onApplied(data); else if (kind === 'revoked') onRevoked(); else if (kind === 'reset') onReset(data); else refreshStatus(); });
 
   document.title = _t('7 BOX — Kassa');
   // Başqa saytın <iframe>-i içində açılıbsa (clickjacking) işləmir: GitHub Pages X-Frame-Options göndərmir, <meta> CSP isə frame-ancestors-u dəstəkləmir

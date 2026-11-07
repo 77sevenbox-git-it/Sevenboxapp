@@ -1867,8 +1867,52 @@
         can('admin.users') ? discountCapsCard(store) : null,
         settingsCard(store),
         devicesCard(),
-        archiveCard()));
+        archiveCard(),
+        can('admin.permissions') ? resetCard() : null));
     }).catch(function (e) { el.appendChild(h('div', { class: 'page' }, h('div', { class: 'card empty' }, e.message))); });
+  }
+
+  // İş məlumatını sil (sınaq məlumatından sonra təmiz başlamaq üçün): serverdə ehtiyat nüsxə + silmə, sonra bütün cihazlar özü təmizlənir
+  function resetCard() {
+    function open() {
+      var key = h('input', { class: 'input mono', id: 'reset-key', type: 'password', autocomplete: 'off' });
+      var word = h('input', { class: 'input', id: 'reset-word', autocomplete: 'off', placeholder: 'SIL' });
+      var prog = h('p', { class: 'muted', id: 'reset-prog', hidden: true, role: 'status', style: 'margin:0' }, _t('Silinir… 1–2 dəqiqə çəkə bilər, pəncərəni bağlamayın.'));
+      var pend = h('p', { class: 'warn-text', style: 'margin:0', hidden: true });
+      root.DB.getAll('outbox').then(function (items) {
+        var n = items.filter(function (it) { return !/^(user|admin|auth)\./.test(String(it.type || '')); }).length;
+        if (n) { pend.hidden = false; pend.textContent = _t('Bu cihazda serverə göndərilməmiş {0} qeyd var: əvvəl göndərilməyə cəhd ediləcək.', [n]); }
+      });
+      UI.modal({
+        title: _t('İş məlumatını sil'), sticky: true,
+        body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+          h('div', null, h('b', null, _t('Silinir:')), ' ', _t('məhsullar, təchizatçılar və borclar, satışlar və çeklər, qaytarmalar, növbələr, kassa hərəkətləri, stok və partiyalar, təsdiq sorğuları.')),
+          h('div', null, h('b', null, _t('Qalır:')), ' ', _t('istifadəçilər və PIN-lər, icazələr, ayarlar, cihaz açarları. Çek nömrələri və barkodlar davam edir (köhnə etiketlə qarışmasın).')),
+          h('p', { style: 'margin:0' }, _t('Silmədən əvvəl bütün cədvəlin nüsxəsi Drive-da «7 BOX — Ehtiyat» adı ilə saxlanılır. Bütün kompüter və telefonlar növbəti sinxronda özü təmizlənir. Geri qaytarmaq yalnız o nüsxədən əl ilə mümkündür.')),
+          pend,
+          h('div', { class: 'field' }, h('label', { for: 'reset-key' }, _t('Admin açarı (ADMIN_KEY)')), key),
+          h('div', { class: 'field' }, h('label', { for: 'reset-word' }, _t('Təsdiq üçün SIL yazın')), word),
+          prog),
+        buttons: [{ text: _t('Ləğv et') }, { text: _t('Hamısını sil'), kind: 'danger', submit: true, onClick: function (close) {
+          var w = word.value.trim().replace(/İ/g, 'I').replace(/i̇/g, 'i').toUpperCase();
+          if (w !== 'SIL') { word.focus(); throw new Error(_t('Təsdiq üçün SIL yazın')); }
+          if (!key.value.trim()) { key.focus(); throw new Error(_t('Admin açarını yazın')); }
+          prog.hidden = false;
+          var me = S.currentUser();
+          return root.Sync.cycle().catch(function () { /* göndərilməsə də silmə təhlükəsizdir */ })
+            .then(function () { return root.Sync.resetData(key.value.trim(), me ? me.name : ''); })
+            .then(function (r) {
+              close();
+              UI.toast(_t('Silindi. Ehtiyat nüsxə: {0}', [r.backup.name]));
+              return root.Sync.cycle();
+            }, function (e) { prog.hidden = true; throw e; });
+        } }]
+      });
+    }
+    return h('div', { class: 'card', id: 'reset-card', style: 'padding:16px 20px;display:flex;flex-direction:column;gap:10px' },
+      h('h2', { style: 'margin:0;font-size:18px' }, _t('İş məlumatını sil')),
+      h('p', { class: 'muted', style: 'margin:0;font-size:14px' }, _t('Sınaqdan sonra təmiz başlamaq üçün: məhsullar, təchizatçılar, satışlar, çeklər, növbələr və kassa silinir; istifadəçilər, icazələr və ayarlar qalır. Əvvəl Drive-da ehtiyat nüsxə çıxarılır.')),
+      h('div', null, h('button', { class: 'btn danger', type: 'button', id: 'reset-open', onclick: open }, _t('İş məlumatını sil…'))));
   }
 
   // Bölmələrin (tabların) sırası: Admin təyin edir, bütün cihazlarda və rollarda eyni olur (rolun görmədiyi bölmə sadəcə göstərilmir)

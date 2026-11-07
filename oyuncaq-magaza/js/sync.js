@@ -30,8 +30,8 @@
     return DB.put('meta', { key: 'syncUrl', value: url }).then(function () { if (token) return DB.put('meta', { key: 'syncToken', value: token }); });
   }
   function config() {
-    return Promise.all([DB.get('meta', 'syncUrl'), DB.get('meta', 'syncToken'), DB.get('meta', 'deviceId'), Replica.cursor(), DB.get('meta', 'revoked')]).then(function (r) {
-      return { url: r[0] ? r[0].value : '', token: r[1] ? r[1].value : '', device: r[2] ? r[2].value : '', cursor: r[3], revoked: !!(r[4] && r[4].value) };
+    return Promise.all([DB.get('meta', 'syncUrl'), DB.get('meta', 'syncToken'), DB.get('meta', 'deviceId'), Replica.cursor(), DB.get('meta', 'revoked'), DB.get('meta', 'epoch')]).then(function (r) {
+      return { url: r[0] ? r[0].value : '', token: r[1] ? r[1].value : '', device: r[2] ? r[2].value : '', cursor: r[3], revoked: !!(r[4] && r[4].value), epoch: r[5] ? String(r[5].value || '') : '' };
     });
   }
 
@@ -262,12 +262,29 @@
     }, Promise.resolve());
   }
 
+  /* ---------- İş məlumatının sıfırlanması (server EPOCH dəyişib) ----------
+     Silinir: məhsul, satış, qaytarma, növbə, kassa, stok, təchizatçı, partiya, ödəniş, qaimə, təsdiq sorğusu, yerli jurnal.
+     Qalır: istifadəçilər, ayarlar (meta), nömrə aralıqları. Göndərilməmiş qeydlərdən yalnız istifadəçi/icazə/ayar dəyişiklikləri qalır
+     (köhnə satış yeni bazaya düşməsin). Qaytarır: atılan göndərilməmiş qeyd sayı. */
+  var KEEP_TYPES = /^(user|admin|auth)\./;
+  var WIPE = ['products', 'sales', 'returns', 'shifts', 'stockMoves', 'priceHistory', 'cashMoves', 'audit', 'approvals', 'suppliers', 'lots', 'supplierPays', 'purchases', 'supplierReturns'];
+  function localReset(epoch) {
+    var dropped = 0;
+    return DB.atomic(WIPE.concat(['outbox', 'meta']), function (t) {
+      return Promise.all(WIPE.map(function (s) { return t.clear(s); })).then(function () { return t.getAll('outbox'); }).then(function (items) {
+        return Promise.all(items.filter(function (it) { return !KEEP_TYPES.test(String(it.type || '')); }).map(function (it) { dropped++; return t.del('outbox', it.id); }));
+      }).then(function () {
+        return Promise.all([t.put('meta', { key: 'epoch', value: epoch }), t.put('meta', { key: 'syncCursor', value: 0 }), t.put('meta', { key: 'backfill', value: { upTo: 0, next: 0, done: true } })]);
+      });
+    }).then(function () { return dropped; });
+  }
+
   /* ---------- Bir dövr: göndər + al ---------- */
   function doCycle() {
     return config().then(function (c) {
       if (!c.url || c.revoked) return { sent: 0, received: 0, skipped: true };
       var bad = checkUrl(c.url); if (bad) throw new Error(bad);
-      var total = { sent: 0, received: 0 }, touched = {}, cursor = c.cursor, skew = null, legacy = false;
+      var total = { sent: 0, received: 0 }, touched = {}, cursor = c.cursor, skew = null, legacy = false, wasReset = null;
 
       function step(n) {
         return Promise.all([DB.getAll('outbox'), n === 0 ? neededAlloc() : Promise.resolve([])]).then(function (r) {
@@ -277,13 +294,21 @@
           var sentAt = Date.now();
           var handle = {};
           inflight = { pure: !batch.length && !alloc.length, abort: function () { if (handle.abort) handle.abort(); } };
-          var body = { action: 'sync', token: c.token, device: c.device, since: cursor, items: batch, limit: 500 };
+          var body = { action: 'sync', token: c.token, device: c.device, epoch: c.epoch, since: cursor, items: batch, limit: 500 };
           if (alloc.length) body.alloc = alloc;
           return post(c.url, body, { handle: handle }).then(function (res) {
             inflight = null;
             // Kompüterin saatı serverdən çox fərqlənirsə xəbərdarlıq (son yazan qalib qaydası saata əsaslanır)
             if (res.now) skew = Date.parse(res.now) - (sentAt + Date.now()) / 2;
             if (res.kind) state.kind = res.kind;
+            // Server iş məlumatını sıfırlayıb: yerli iş məlumatı silinir, kursor 0, sonra hər şey yenidən yüklənir
+            if (res.reset && res.epoch && res.epoch !== c.epoch && n < 60) {
+              return localReset(res.epoch).then(function (dropped) {
+                c.epoch = res.epoch; cursor = 0; wasReset = { dropped: dropped };
+                ['products', 'sales', 'shifts', 'suppliers', 'lots', 'purchases', 'approvals'].forEach(function (k) { touched[k] = true; });
+                return step(n + 1);
+              });
+            }
             if (alloc.length && !res.blocks) legacy = true;          // köhnə server aralığı bu sorğuda vermir
             var acked = res.acked || [];
             return Promise.all(acked.map(function (id) { return DB.del('outbox', id); })).then(function () {
@@ -309,7 +334,8 @@
       function backfillPass() {
         return DB.get('meta', 'backfill').then(function (m) {
           var b = m && m.value; if (!b || b.done) return;
-          return post(c.url, { action: 'sync', token: c.token, device: c.device, since: b.next, items: [], limit: 500 }).then(function (res) {
+          return post(c.url, { action: 'sync', token: c.token, device: c.device, epoch: c.epoch, since: b.next, items: [], limit: 500 }).then(function (res) {
+            if (res.reset) return;
             var events = res.events || [];
             return Replica.backfill(events).then(function (sum) {
               var next = res.next || b.next;
@@ -327,6 +353,7 @@
         if (skew !== null) { state.skewMs = Math.round(skew); if (root.Services && root.Services.setClockOffset) root.Services.setClockOffset(skew); }
         if (total.received) fastUntil = Math.max(fastUntil, Date.now() + T.boost);   // söhbət gedir: növbəti cavab tez gəlsin
         if (Object.keys(touched).length) emit('applied', touched);
+        if (wasReset) { total.reset = wasReset; emit('reset', wasReset); }
         return total;
       });
     });
@@ -462,10 +489,18 @@
     });
   }
 
+  // Admin: serverdə iş məlumatını sil (ADMIN_KEY + "SIL"). Sonra bu cihaz da növbəti dövrdə özünü sıfırlayır.
+  function resetData(adminKey, by) {
+    return api('data.reset', { adminKey: adminKey, confirm: 'SIL', by: by || '' }, { timeout: 60000 }).then(function (r) {
+      if (!r || !r.ok) { var e = new Error(r && r.error || _t('Server cavab vermədi')); e.code = r && r.code; throw e; }
+      return r;
+    });
+  }
+
   function flush() { return cycle(); }
   function status() { return Object.assign({}, state, { rtt: rtt.last, rttAvg: rtt.avg, fails: fails }); }
 
   root.Sync = { cycle: cycle, flush: flush, kick: kick, fast: fast, pullNow: pullNow, start: start, stop: stop, on: on, status: status,
-    test: test, api: api, deviceKey: deviceKey, reserve: reserve, isRevoked: isRevoked, recheck: recheck, exportOutbox: exportOutbox, importOutbox: importOutbox, archiveStatus: archiveStatus, archiveRun: archiveRun, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
+    test: test, api: api, deviceKey: deviceKey, reserve: reserve, isRevoked: isRevoked, recheck: recheck, exportOutbox: exportOutbox, importOutbox: importOutbox, archiveStatus: archiveStatus, archiveRun: archiveRun, resetData: resetData, localReset: localReset, verify: verify, connect: connect, checkUrl: checkUrl, endpoint: endpoint, setEndpoint: setEndpoint, explain: explain, timing: T };
   if (typeof module !== 'undefined') module.exports = root.Sync;
 })(typeof window !== 'undefined' ? window : globalThis);

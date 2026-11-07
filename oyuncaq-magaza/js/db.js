@@ -78,6 +78,7 @@
           put: function (s, v) { return wrap(tx.objectStore(s).put(v)); },
           del: function (s, k) { return wrap(tx.objectStore(s).delete(k)); },
           getAll: function (s) { return wrap(tx.objectStore(s).getAll()); },
+          clear: function (s) { return wrap(tx.objectStore(s).clear()); },
           byIndex: function (s, ix, v) { return wrap(tx.objectStore(s).index(ix).getAll(v)); },
           abort: function (err) { tx.__err = err; tx.abort(); }
         };

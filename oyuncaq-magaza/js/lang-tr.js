@@ -1197,6 +1197,23 @@
     "sürüşmə {0} mm": "kaydırma {0} mm",
     "Çap sahəsinin eni, mm": "Baskı alanı genişliği, mm",
     "Sağa (+) / sola (−) sürüşdür, mm": "Sağa (+) / sola (−) kaydır, mm",
-    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Fişin sağ veya sol kenarı kesiliyorsa: test fişinde çerçevenin hangi tarafının görünmediğine bakın. Sağ kenar kesiliyorsa önce sola kaydırın (örn. −2), hâlâ kesiliyorsa genişliği azaltın (örn. 70). Her değişiklikten sonra test fişi yazdırın."
+    "Çekin sağ və ya sol kənarı kəsilirsə: test çekində çərçivənin hansı tərəfi görünmür, ona baxın. Sağ kənar kəsilirsə əvvəl sola sürüşdürün (məs. −2), yenə kəsilirsə eni azaldın (məs. 70). Hər dəyişiklikdən sonra test çeki çap edin.": "Fişin sağ veya sol kenarı kesiliyorsa: test fişinde çerçevenin hangi tarafının görünmediğine bakın. Sağ kenar kesiliyorsa önce sola kaydırın (örn. −2), hâlâ kesiliyorsa genişliği azaltın (örn. 70). Her değişiklikten sonra test fişi yazdırın.",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi ({0} göndərilməmiş qeyd atıldı)": "İş verileri sunucuda silindi: bu cihaz temizlendi ({0} gönderilmemiş kayıt atıldı)",
+    "İş məlumatı serverdə silinib: bu cihaz təmizləndi": "İş verileri sunucuda silindi: bu cihaz temizlendi",
+    "Silinir… 1–2 dəqiqə çəkə bilər, pəncərəni bağlamayın.": "Siliniyor… 1–2 dakika sürebilir, pencereyi kapatmayın.",
+    "Bu cihazda serverə göndərilməmiş {0} qeyd var: əvvəl göndərilməyə cəhd ediləcək.": "Bu cihazda sunucuya gönderilmemiş {0} kayıt var: önce gönderilmeye çalışılacak.",
+    "İş məlumatını sil": "İş verilerini sil",
+    "Silinir:": "Silinir:",
+    "məhsullar, təchizatçılar və borclar, satışlar və çeklər, qaytarmalar, növbələr, kassa hərəkətləri, stok və partiyalar, təsdiq sorğuları.": "ürünler, tedarikçiler ve borçlar, satışlar ve fişler, iadeler, vardiyalar, kasa hareketleri, stok ve partiler, onay talepleri.",
+    "Qalır:": "Kalır:",
+    "istifadəçilər və PIN-lər, icazələr, ayarlar, cihaz açarları. Çek nömrələri və barkodlar davam edir (köhnə etiketlə qarışmasın).": "kullanıcılar ve PIN'ler, izinler, ayarlar, cihaz anahtarları. Fiş numaraları ve barkodlar devam eder (eski etiketlerle karışmasın).",
+    "Silmədən əvvəl bütün cədvəlin nüsxəsi Drive-da «7 BOX — Ehtiyat» adı ilə saxlanılır. Bütün kompüter və telefonlar növbəti sinxronda özü təmizlənir. Geri qaytarmaq yalnız o nüsxədən əl ilə mümkündür.": "Silmeden önce tüm tablonun kopyası Drive'da «7 BOX — Ehtiyat» adıyla kaydedilir. Tüm bilgisayar ve telefonlar sonraki senkronizasyonda kendini temizler. Geri almak yalnızca bu kopyadan elle mümkündür.",
+    "Təsdiq üçün SIL yazın": "Onaylamak için SIL yazın",
+    "Hamısını sil": "Hepsini sil",
+    "Admin açarını yazın": "Yönetici anahtarını yazın",
+    "Silindi. Ehtiyat nüsxə: {0}": "Silindi. Yedek kopya: {0}",
+    "Sınaqdan sonra təmiz başlamaq üçün: məhsullar, təchizatçılar, satışlar, çeklər, növbələr və kassa silinir; istifadəçilər, icazələr və ayarlar qalır. Əvvəl Drive-da ehtiyat nüsxə çıxarılır.": "Testten sonra temiz başlamak için: ürünler, tedarikçiler, satışlar, fişler, vardiyalar ve kasa silinir; kullanıcılar, izinler ve ayarlar kalır. Önce Drive'da yedek kopya alınır.",
+    "İş məlumatını sil…": "İş verilerini sil…",
+    "Server cavab vermədi": "Sunucu yanıt vermedi"
   });
 })(typeof window !== 'undefined' ? window : globalThis);

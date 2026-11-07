@@ -190,6 +190,14 @@ Admin **İcazələr** ekranındakı **Giriş forması (rol üzrə)** kartında h
 
 **Code.gs v7-yə keçid.** `apps-script/Code.gs`-i yapışdırın → `setup()` işə salın (ilk dəfə Drive/Sheets üçün əlavə icazə istəyə bilər; **Allow**; eyni zamanda 26 sütunluq vərəqlərin boş sütun və sətirlərini kəsir: xana sayı ~340 mindən ~35 minə düşür) → Deploy → Manage deployments → ✏️ → **New version**. Köhnə v6 skript işləməyə davam edir, amma Arxiv kartı "Skript köhnədir" göstərir.
 
+## İş məlumatını silmək (sınaqdan sonra təmiz başlamaq)
+**Ayarlar → «İş məlumatını sil…»** (Admin; `Code.gs` rev `2026.11.07-reset` yerləşdirilməlidir). ADMIN_KEY və təsdiq sözü **SIL** lazımdır.
+- **Silinir:** məhsullar, təchizatçılar və borclar, satışlar/çeklər, qaytarmalar, növbələr, kassa hərəkətləri, stok və partiyalar, alış qaimələri, təsdiq sorğuları — yəni bütün iş hadisələri (arxiv fayllarındakılar da sistemdən çıxır).
+- **Qalır:** istifadəçilər və PIN/şifrələr, icazələr, bölmə sırası, ayarlar, giriş jurnalı (`user.*`, `admin.*`, `auth.*` hadisələri), cihaz açarları, bildiriş abunələri. Çek nömrəsi və mağaza barkodu sayğacları **geri düşmür** (köhnə çap olunmuş etiket yeni məhsulla qarışmasın).
+- **Ehtiyat:** silmədən əvvəl bütün cədvəlin nüsxəsi Drive-da `7 BOX — Ehtiyat (sıfırlamadan əvvəl) …` adı ilə yaranır; nüsxə tam deyilsə heç nə silinmir. Geri qaytarmaq yalnız bu nüsxədən əl ilə mümkündür. Köhnə arxiv faylları Drive-da qalır (sistem onları artıq oxumur).
+- **Cihazlar:** server yeni «dövr» (`EPOCH`) yaradır. Hər cihaz növbəti sinxronda bunu görür, yerli iş məlumatını silir, göndərilməmiş **iş** qeydlərini atır (istifadəçi/icazə dəyişiklikləri qalır və gedir), hər şeyi serverdən yenidən yükləyir və səhifəni yeniləyir; sessiya qalır. Köhnə versiyalı tətbiq bu andan serverə yaza bilmir («tətbiqi yeniləyin», Ctrl+F5): köhnə satış təmizlənmiş cədvələ qayıtmasın.
+- Redaktordan da olar: `resetBusinessData()` (nəticə Execution log-da). Təkrar işə salmaq təhlükəsizdir.
+
 ## Testlər
 
 ```bash
@@ -197,6 +205,7 @@ npm install
 npm test                       # aşağıdakı node testləri birlikdə (brauzer testləri ayrıca: npm run test:e2e)
 node tests/run.js              # qaydalar, pul, barkod
 node tests/reports.test.js     # hesabatlar (məhsul üzrə satış, stok, gəlir-xərc), bölmə icazələri, bölmələrin sırası (2 cihaz), Excel idxalında təchizatçı
+node tests/reset.test.js       # iş məlumatının silinməsi: ehtiyat nüsxə, yalnız istifadəçi/icazə/ayar qalır, cihazlar özü təmizlənir, köhnə tətbiq yaza bilmir
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
 node tests/devices.test.js     # cihaz açarları (Code.gs v9): ADMIN_KEY, açar yaratma/yeniləmə (newKey, itmiş cavabda təkrar), bloklama/bərpa, ümumi açarın keçid pəncərəsi, kilidlənmədən qorunma

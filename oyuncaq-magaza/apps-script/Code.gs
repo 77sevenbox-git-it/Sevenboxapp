@@ -30,7 +30,7 @@
 // ayrıca script.google.com-da yaradılıbsa, fayl bu ID ilə açılır.
 var SPREADSHEET_ID = '1NTzVrx9ioe9elwn3c85RwU64e9NWuylaKT8uyLoe67g';
 var VERSION = 9;
-var REV = '2026.10.11-keyfix';   // dəqiq buraxılış: /exec ünvanını brauzerdə açanda görünür (Deploy-un yeniləndiyini yoxlamaq üçün)
+var REV = '2026.11.07-reset';   // dəqiq buraxılış: /exec ünvanını brauzerdə açanda görünür (Deploy-un yeniləndiyini yoxlamaq üçün)
 var SEEN_WINDOW = 1500;   // təkrar yoxlaması üçün son neçə hadisəyə baxılır (köhnə hadisə gəlsə dəqiq axtarış edilir)
 var MAX_ITEMS = 300;      // bir sorğuda ən çox hadisə
 var BLOCK_MAX = 1000;     // bir dəfəyə verilən ən böyük nömrə aralığı
@@ -490,6 +490,94 @@ function handleAdmin(body, auth) {
   }
 }
 
+/* ---------- İş məlumatının sıfırlanması (Ayarlar → «İş məlumatını sil») ----------
+   Silinir: məhsullar, təchizatçılar, satış/çek, qaytarma, növbə, kassa, stok, borc, təsdiq sorğuları (yəni bütün iş hadisələri).
+   Qalır: istifadəçilər və PIN-lər, icazələr, ayarlar, giriş jurnalı (user.*, admin.*, auth.* hadisələri), cihaz açarları, bildirişlər, nömrə sayğacları
+   (çek nömrəsi və barkod təkrarlanmasın: köhnə etiketlər yeni məhsulla qarışmasın).
+   Ardıcıllıq: 1) bütün faylın nüsxəsi (Drive, "Ehtiyat") — nüsxə tam deyilsə heç nə silinmir; 2) EPOCH dəyişir: bu andan köhnə məlumatlı cihazın
+   göndərdiyi hadisə qəbul olunmur, cihaz "reset" cavabı alıb yerli iş məlumatını silir və serverdən yenidən yükləyir; 3) Events-də yalnız saxlanan
+   hadisələr qalır (arxiv fayllarındakılar da toplanır, id üzrə təkrarsız), arxiv vəziyyəti sıfırlanır; 4) törəmə vərəqlər təmizlənir.
+   Yarımçıq qalsa təkrar işə salmaq təhlükəsizdir (nəticə eynidir). */
+var RESET_KEEP = /^(user|admin|auth)\./;
+var RESET_CLEAR = ['Sales', 'SaleLines', 'Returns', 'Products', 'StockReceipts', 'Suppliers', 'SupplierPayments', 'Shifts', 'CashMoves'];
+function epochNow(props) { return cprop(props || PropertiesService.getScriptProperties(), 'EPOCH') || ''; }
+
+// Vərəqin məlumat sətirlərini "rows" ilə əvəz edir (başlıq qalır). Sheets bütün dondurulmamış sətirləri silməyə icazə vermir: biri boş saxlanılır.
+function replaceRows(sh, rows, width) {
+  var last = sh.getLastRow();
+  if (rows.length) { ensureRows(sh, rows.length + 1); sh.getRange(2, 1, rows.length, width).setValues(rows.map(function (r) { return fit(r, width); })); }
+  var extra = last - 1 - rows.length;                          // köhnədən artıq qalan sətirlər
+  if (extra <= 0) return;
+  var from = rows.length + 2;
+  if (rows.length) { sh.deleteRows(from, extra); return; }
+  sh.getRange(2, 1, 1, width).setValues([fit([], width)]);
+  if (extra > 1) sh.deleteRows(3, extra - 1);
+}
+
+function resetData(by) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(25000)) return fail('busy', 'Server məşğuldur, bir az sonra təkrar edin');
+  try {
+    var ss = db(), st = archFix(), props = PropertiesService.getScriptProperties(), at = new Date().toISOString();
+    // 1) Saxlanılacaq hadisələr: arxiv faylları (köhnədən yeniyə) + canlı Events
+    var keep = [], seen = {}, total = 0;
+    function take(rows) {
+      rows.forEach(function (r) {
+        var id = rid(r[0]); if (!id) return;
+        total++;
+        if (seen[id] || !RESET_KEEP.test(String(r[2]))) return;
+        seen[id] = true; keep.push(r);
+      });
+    }
+    st.segs.forEach(function (seg, k) {
+      var end = Math.min(k + 1 < st.segs.length ? st.segs[k + 1].f : st.base, seg.t), n = end - seg.f;
+      if (n <= 0) return;
+      var sh = SpreadsheetApp.openById(seg.i).getSheetByName('Events');
+      if (!sh) throw new Error('Arxiv faylında "Events" vərəqi yoxdur (' + seg.i + '): sıfırlama dayandırıldı');
+      take(sh.getRange(2, 1, n, 7).getValues());
+    });
+    var ev = sheet(ss, 'Events'), live = Math.max(ev.getLastRow() - 1, 0);
+    if (live) take(ev.getRange(2, 1, live, 7).getValues());
+    // Nömrə sayğacları silinən cədvəllərdən geri düşməsin
+    ['productSeq', 'receiptSeq'].forEach(function (key) {
+      var m = Math.max(parseInt(props.getProperty(key), 10) || 0, derivedMax(ss, key));
+      if (m) props.setProperty(key, String(m));
+    });
+    var maxReceipt = Math.max(st.maxReceipt || 0, derivedMax(ss, 'receiptSeq'));
+
+    // 2) Ehtiyat nüsxə
+    var name = '7 BOX — Ehtiyat (sıfırlamadan əvvəl) ' + at.slice(0, 16).replace('T', ' ');
+    var copy = ss.copy(name);
+    ['Events', 'Sales', 'Products'].forEach(function (n) {
+      var a = sheet(ss, n).getLastRow(), cs = copy.getSheetByName(n), b = cs ? cs.getLastRow() : -1;
+      if (a !== b) throw new Error('Ehtiyat nüsxəsi tam deyil (' + n + ': ' + b + '/' + a + '). Heç nə silinmədi');
+    });
+
+    // 3) Yeni dövr: köhnə məlumatlı cihazlar bu andan heç nə yaza bilmir
+    var epoch = Utilities.getUuid();
+    props.setProperty('EPOCH', epoch); cdrop('EPOCH');
+    replaceRows(ev, keep, 7);
+    archSave({ base: 0, segs: [], last: st.last || '', maxReceipt: maxReceipt, trim: null });
+    cacheTotal(keep.length);
+
+    // 4) Törəmə vərəqlər
+    var warnings = [];
+    RESET_CLEAR.forEach(function (n) {
+      try { var sh = ss.getSheetByName(n); if (sh) { replaceRows(sh, [], SHEETS[n].length); trimGrid(sh, SHEETS[n].length); } } catch (e) { warnings.push(n + ': ' + e); }
+    });
+    try { trimGrid(ev, 7); } catch (e) { warnings.push('Events (şəbəkə): ' + e); }
+    var audit = new Table(ss, 'Audit');
+    audit.add([at, 'server.data_reset', by || '', JSON.stringify({ backup: copy.getId(), name: name, events: total, kept: keep.length, epoch: epoch, warnings: warnings })]);
+    audit.flush();
+    return { ok: true, epoch: epoch, kept: keep.length, removed: total - keep.length, backup: { id: copy.getId(), url: copy.getUrl(), name: name }, warnings: warnings };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// Redaktordan da işə salmaq olar (Run): nəticə Execution log-da
+function resetBusinessData() { var r = resetData('editor'); Logger.log(JSON.stringify(r)); return r; }
+
 // Redaktorda bir dəfə işə salın: Admin açarı yaranır və jurnalda göstərilir (təkrar işə salmaq mövcud açarı dəyişmir).
 // Bu açar yalnız cihazları idarə edəndə (tətbiqdə "Cihazlar" kartı) lazımdır; cihazda saxlanmır, hər dəfə əl ilə yazılır.
 function setupAdminKey() {
@@ -519,6 +607,10 @@ function doPost(e) {
       case 'sync': var sr = handleSync(body); sr.kind = auth.kind; return json(sr);
       case 'devices.list': case 'devices.create': case 'devices.rotate': case 'devices.revoke': case 'devices.restore': case 'devices.rename': case 'legacy.set':
         return json(handleAdmin(body, auth));
+      case 'data.reset':
+        if (body.confirm !== 'SIL') return json(fail('bad', 'Təsdiq lazımdır'));
+        var rc = adminCheck(body); if (!rc.ok) return json(rc);
+        return json(resetData(cleanName(body.by, auth.device)));
       case 'allocate': return json(handleAllocate(body));
       case 'archive.status': return json(archiveStatus());
       case 'archive.run':
@@ -540,6 +632,13 @@ function handleSync(body) {
   var device = String(body.device || '');
   var wantAlloc = body.alloc && body.alloc.length ? body.alloc : null;
   if (items.length > MAX_ITEMS) return { ok: false, error: 'Bir sorğuda ən çox ' + MAX_ITEMS + ' hadisə' };
+  // İş məlumatı sıfırlanıbsa: köhnə dövrün cihazı heç nə yaza bilmir. Yeni tətbiq "reset" alıb yerli məlumatı silir və 0-dan yükləyir;
+  // köhnə tətbiq (epoch göndərmir) yenilənməyə yönləndirilir (onun göndərdiyi köhnə satış/məhsul təmizlənmiş cədvələ qayıtmasın).
+  var epoch = epochNow();
+  if (epoch && body.epoch !== epoch) {
+    if (typeof body.epoch !== 'string') return { ok: false, code: 'update', error: 'Məlumatlar sıfırlanıb: tətbiqi yeniləyin (Ctrl+F5)' };
+    return { ok: true, reset: true, epoch: epoch, acked: [], events: [], next: 0, more: false, now: new Date().toISOString() };
+  }
 
   var acked = [], blocks = [], fresh = [];
   var total, ss, st;
