@@ -274,15 +274,82 @@
     } }, _t('Sınaq üçün nümunə məhsullar əlavə et'));
     var seedBox = h('div', { style: 'margin-top:12px;display:none' }, seedBtn);
 
+    /* Süzgəc və sıralama. Seçim bu cihazda yadda qalır (localStorage; açılmasa standart). */
+    var VKEY = 'mag.productsView', NONE = '\u0000';
+    var view = { sort: 'name', status: 'all', stock: 'all', cat: '', brand: '', sup: '', other: '' };
+    try { Object.assign(view, JSON.parse(root.localStorage.getItem(VKEY) || '{}')); } catch (e) { /* yaddaş bağlıdır */ }
+    function opt(v, t) { return h('option', { value: v }, t); }
+    function sel(id, label, opts, key) {
+      var e = h('select', { class: 'input', id: id }, opts);
+      e.addEventListener('change', function () { view[key] = e.value; try { root.localStorage.setItem(VKEY, JSON.stringify(view)); } catch (x) { /* */ } draw(); });
+      return { el: h('div', { class: 'field', style: 'flex:1 1 150px;min-width:140px' }, h('label', { for: id }, label), e), input: e, key: key };
+    }
+    var fSort = sel('p-sort', _t('Sıralama'), [opt('name', _t('Ad: A → Z')), opt('name-desc', _t('Ad: Z → A')), opt('new', _t('Əvvəl yeni əlavə olunanlar')), opt('old', _t('Əvvəl köhnələr')),
+      opt('stock-desc', _t('Qalıq: çoxdan aza')), opt('stock-asc', _t('Qalıq: azdan çoxa')), opt('price-desc', _t('Qiymət: bahadan ucuza')), opt('price-asc', _t('Qiymət: ucuzdan bahaya'))], 'sort');
+    var fStatus = sel('p-status', _t('Status'), [opt('all', _t('Hamısı')), opt('active', _t('Aktiv')), opt('inactive', _t('Passiv'))], 'status');
+    var fStock = sel('p-stock', _t('Qalıq'), [opt('all', _t('Hamısı')), opt('in', _t('Qalığı var')), opt('low', _t('Az qalıb (minimuma çatıb)')), opt('zero', _t('Bitib (0)')), opt('neg', _t('Mənfi qalıq'))], 'stock');
+    var fCat = sel('p-cat', _t('Kateqoriya'), [], 'cat'), fBrand = sel('p-brand', _t('Brend'), [], 'brand'), fSup = sel('p-sup', _t('Təchizatçı (qalıq)'), [], 'sup');
+    var fOther = sel('p-other', _t('Digər'), [opt('', _t('Hamısı')), opt('noimg', _t('Şəkli yoxdur')), opt('nomfr', _t('İstehsalçı barkodu yoxdur')), opt('disc', _t('Endirim icazəli'))], 'other');
+    var FILTERS = [fSort, fStatus, fStock, fCat, fBrand].concat(can('supplier.view') ? [fSup] : [], [fOther]);
+    var count = h('span', { class: 'muted', id: 'p-count', style: 'font-size:14px' });
+    var resetBtn = h('button', { class: 'btn small', type: 'button', id: 'p-reset', onclick: function () {
+      view = { sort: 'name', status: 'all', stock: 'all', cat: '', brand: '', sup: '', other: '' }; q.value = '';
+      try { root.localStorage.removeItem(VKEY); } catch (e) { /* */ }
+      fillLists(); draw();
+    } }, _t('Süzgəci sıfırla'));
+    // Kateqoriya, brend, təchizatçı siyahıları mövcud məhsullardan qurulur
+    function fillLists() {
+      function uniq(arr) { var m = {}; arr.forEach(function (x) { if (x) m[x] = true; }); return Object.keys(m).sort(function (a, b) { return a.localeCompare(b, 'az'); }); }
+      var sups = []; Object.keys(bySup).forEach(function (id) { (bySup[id] || []).forEach(function (x) { if (x.name) sups.push(x.name); }); });
+      [[fCat, uniq(all.map(function (p) { return p.category; })), _t('Kateqoriyasız')], [fBrand, uniq(all.map(function (p) { return p.brand; })), _t('Brendsiz')], [fSup, uniq(sups), _t('Təchizatçısız')]].forEach(function (x) {
+        var e = x[0].input; UI.clear(e);
+        e.appendChild(opt('', _t('Hamısı'))); x[1].forEach(function (v) { e.appendChild(opt(v, v)); }); e.appendChild(opt(NONE, '— ' + x[2]));
+        if (view[x[0].key] && view[x[0].key] !== NONE && x[1].indexOf(view[x[0].key]) === -1) view[x[0].key] = '';
+      });
+      if (!can('supplier.view')) view.sup = '';
+      FILTERS.forEach(function (f) { f.input.value = view[f.key] || ''; if (f.input.selectedIndex < 0) f.input.selectedIndex = 0; });
+    }
+    function passes(p) {
+      if (view.status === 'active' && !p.active) return false;
+      if (view.status === 'inactive' && p.active) return false;
+      if (view.stock === 'in' && !(p.stock > 0)) return false;
+      if (view.stock === 'low' && !(p.stock > 0 && p.stock <= (p.minStock || 0))) return false;
+      if (view.stock === 'zero' && p.stock !== 0) return false;
+      if (view.stock === 'neg' && !(p.stock < 0)) return false;
+      if (view.cat && (view.cat === NONE ? !!p.category : p.category !== view.cat)) return false;
+      if (view.brand && (view.brand === NONE ? !!p.brand : p.brand !== view.brand)) return false;
+      if (view.sup) {
+        var ss = (bySup[p.id] || []).filter(function (x) { return x.qty > 0; });
+        if (view.sup === NONE ? ss.some(function (x) { return x.name; }) : !ss.some(function (x) { return x.name === view.sup; })) return false;
+      }
+      if (view.other === 'noimg' && R.safeImage(p.image)) return false;
+      if (view.other === 'nomfr' && p.mfrBarcode) return false;
+      if (view.other === 'disc' && !(p.maxDiscount > 0)) return false;
+      return true;
+    }
+    function added(p) { return p.createdAt || p.storeBarcode || ''; }
+    var SORTS = {
+      'name': function (a, b) { return a.name.localeCompare(b.name, 'az'); },
+      'name-desc': function (a, b) { return b.name.localeCompare(a.name, 'az'); },
+      'new': function (a, b) { return added(a) < added(b) ? 1 : added(a) > added(b) ? -1 : 0; },
+      'old': function (a, b) { return added(a) < added(b) ? -1 : added(a) > added(b) ? 1 : 0; },
+      'stock-desc': function (a, b) { return b.stock - a.stock; }, 'stock-asc': function (a, b) { return a.stock - b.stock; },
+      'price-desc': function (a, b) { return b.price - a.price; }, 'price-asc': function (a, b) { return a.price - b.price; }
+    };
+
     function draw() {
       seedBox.style.display = all.length ? 'none' : '';
       var toks = R.foldAz(q.value).split(/\s+/).filter(Boolean);       // hərf fərqi və Azərbaycan hərfləri nəzərə alınmır; hər söz tapılmalıdır
       UI.clear(body);
       var list = all.filter(function (p) {
+        if (!passes(p)) return false;
         if (!toks.length) return true;
         var hay = R.foldAz([p.name, p.brand, p.category, p.ageGroup, p.storeBarcode, p.mfrBarcode].join(' '));
         return toks.every(function (t) { return hay.indexOf(t) !== -1; });
       });
+      var cmp = SORTS[view.sort] || SORTS.name;
+      list.sort(function (a, b) { return cmp(a, b) || a.name.localeCompare(b.name, 'az'); });
+      count.textContent = list.length === all.length ? _t('{0} məhsul', [all.length]) : _t('{0} / {1} məhsul', [list.length, all.length]);
       if (!list.length) body.appendChild(h('tr', null, h('td', { colspan: showCost ? '9' : '8', class: 'empty' }, all.length ? _t('Uyğun məhsul yoxdur') : _t('Hələ məhsul yoxdur'))));
       list.forEach(function (p) {
         var low = p.stock <= (p.minStock || 0);
@@ -326,7 +393,7 @@
     }
     function load() {
       return Promise.all([S.listProducts(), S.stockBySupplier().catch(function () { return {}; }), canAsk ? S.listMyStockRequests() : Promise.resolve([])]).then(function (r) {
-        all = r[0].map(function (p) { return S.sanitizeForRole(p, showCost); }); bySup = r[1]; draw(); drawMine(r[2]);
+        all = r[0].map(function (p) { return S.sanitizeForRole(p, showCost); }); bySup = r[1]; fillLists(); draw(); drawMine(r[2]);
       });
     }
     root.Screens._refresh = load;     // başqa cihazdan dəyişiklik gələndə siyahı yenilənir
@@ -339,6 +406,9 @@
           h('label', { class: 'sr-only', for: 'pq' }, _t('Axtarış')), q,
           canImport ? h('button', { class: 'btn', id: 'imp-open', type: 'button', onclick: function () { importModal(load); } }, _t('Excel-dən yüklə')) : null,
           can('product.edit') ? h('button', { class: 'btn primary', onclick: function () { productForm(null, load); } }, _t('Yeni məhsul')) : null)),
+      h('div', { class: 'card', id: 'p-filters', style: 'padding:12px 16px;margin-bottom:12px;display:flex;flex-direction:column;gap:10px' },
+        h('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap;align-items:flex-end' }, FILTERS.map(function (f) { return f.el; })),
+        h('div', { class: 'row', style: 'justify-content:space-between' }, count, resetBtn)),
       h('div', { class: 'card table-wrap', tabindex: '0' }, h('table', { class: 'cards' },
         h('thead', null, h('tr', null, h('th', null, _t('Məhsul')), h('th', null, _t('Mağaza barkodu')), h('th', null, _t('İstehsalçı barkodu')), h('th', { class: 'num' }, _t('Satış ₼')),
           showCost ? h('th', { class: 'num' }, _t('Orta maya ₼')) : null, h('th', { class: 'num' }, _t('Qalıq')), h('th', null, _t('Təchizatçı (qalıq)')), h('th', null, _t('Status')), h('th', null, ''))),
@@ -654,8 +724,15 @@
     }).catch(function (e) { box.appendChild(h('p', { class: 'warn-text' }, e.message)); });
   }
 
+  // Etiket sayı: mal qəbulundan sonra qəbul olunan say, əks halda məhsulun qalığı (qalıq 0 və ya mənfidirsə 1). Dəyişmək olar; ən çox 500.
   function labelForm(p, count) {
-    var n = h('input', { class: 'input', id: 'l-n', type: 'number', min: '1', max: '500', value: String(count || 1) });
+    var stock = p.stock > 0 ? Math.min(500, p.stock) : 0;
+    var n = h('input', { class: 'input', id: 'l-n', type: 'number', min: '1', max: '500', value: String(count || stock || 1) });
+    function setN(v) { n.value = String(v); n.focus(); n.select(); }
+    var quick = h('div', { class: 'row', style: 'gap:8px;flex-wrap:wrap' },
+      h('button', { class: 'btn small', type: 'button', id: 'l-one', onclick: function () { setN(1); } }, _t('1 ədəd')),
+      stock ? h('button', { class: 'btn small', type: 'button', id: 'l-stock', onclick: function () { setN(stock); } }, _t('Qalıq qədər ({0})', [stock])) : null,
+      count && count !== stock ? h('button', { class: 'btn small', type: 'button', id: 'l-recv', onclick: function () { setN(count); } }, _t('Qəbul olunan ({0})', [count])) : null);
     var preview = h('div', { style: 'display:flex;justify-content:center;padding:8px;background:var(--ground);border-radius:8px;overflow:auto' });
     var info = h('div', { class: 'muted', style: 'font-size:13px', id: 'l-info' });
     function draw() {
@@ -668,7 +745,8 @@
     UI.modal({
       title: _t('Etiket çapı'),
       body: h('div', { style: 'display:flex;flex-direction:column;gap:12px' }, preview, info,
-        h('div', { class: 'field' }, h('label', { for: 'l-n' }, _t('Etiket sayı')), n),
+        h('div', { class: 'field' }, h('label', { for: 'l-n' }, _t('Etiket sayı')), n), quick,
+        p.stock > 500 ? h('p', { class: 'muted', style: 'margin:0;font-size:13px' }, _t('Bir dəfəyə ən çox 500 etiket çap olunur.')) : null,
         h('div', null, h('button', { class: 'btn small', type: 'button', id: 'l-settings', onclick: function () {
           root.Print.settingsModal(draw);
         } }, _t('Çap ayarları')))),

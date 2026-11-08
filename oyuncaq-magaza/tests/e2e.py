@@ -174,7 +174,7 @@ try:
         # Kassada istehsalçı barkodu (FR-103): tək məhsula uyğundursa çeke düşür, mağaza barkodu kimi işləyir
         pg.evaluate("""() => DB.getAll('products').then(ps => { const p = ps.find(x => x.name.startsWith('Puzzl')); p.mfrBarcode = '4006381333931'; return DB.put('products', p); })""")
         pg.fill('#scan', '4006381333931'); pg.keyboard.press('Enter')
-        pg.wait_for_selector('tbody tr')
+        wf(pg, "[...document.querySelectorAll('tbody tr')].some(r => r.innerText.includes('Puzzl'))")
         check(pg.locator('tbody tr').count() == 1 and 'Puzzl' in pg.inner_text('tbody tr'), 'istehsalçı barkodu kassada çeke məhsul əlavə edir (FR-103)')
 
         # Qaytarma
