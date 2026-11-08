@@ -318,6 +318,20 @@ async function t(name, fn) {
     assert.strictEqual(lots[0].supplier, 'Alfa MMC');
   });
 
+  await t('idxal: "2" ilə başlayan istehsalçı barkodu (mağaza/çek barkodu ilə üst-üstə düşsə də) qəbul olunur', async () => {
+    await loginAs(A, 'Admin', '1234');
+    const own = (await A.Services.listProducts())[0].storeBarcode;
+    const rc = A.Barcode.receiptBarcode(4242);
+    const rows = A.Import.classify([Object.assign(mk(2, 'Mfr 20', '', 0), { mfrBarcode: own }), Object.assign(mk(3, 'Mfr 29', '', 0), { mfrBarcode: rc }), Object.assign(mk(4, 'Mfr 2x', '', 0), { mfrBarcode: '2345678901234' })], [], false, { list: [], create: false });
+    assert.ok(rows.every(r => r.status === 'new'), JSON.stringify(rows.map(r => [r.status, r.errors])));
+    const r = await A.Services.importProducts(rows);
+    assert.strictEqual(r.created, 3);
+    const ps = await A.Services.listProducts();
+    assert.strictEqual(ps.find(p => p.name === 'Mfr 29').mfrBarcode, rc);
+    assert.strictEqual((await A.Services.lookupForPos(rc)).product.name, 'Mfr 29');
+    assert.strictEqual((await A.Services.lookupForPos(own)).kind, 'choose');
+  });
+
   await t('idxal: yeni təchizatçı yaratmaq üçün supplier.manage lazımdır (Menecer-də var; icazəsiz rol idxal edə bilmir)', async () => {
     const m = J(await A.Services.getMatrix()); const keep = m.menecer.slice();
     m.menecer = m.menecer.filter(p => p !== 'supplier.manage'); await A.Services.setMatrix(m); await sync(A, B);

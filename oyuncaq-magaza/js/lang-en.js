@@ -476,7 +476,6 @@
     "Məhsulun adı boşdur": "The product name is empty",
     "Satış qiyməti 0-dan böyük olmalıdır": "The sale price must be greater than 0",
     "İstehsalçı barkodunda boşluq ola bilməz": "A manufacturer barcode cannot contain spaces",
-    "Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil": "This is a store or receipt barcode, not a manufacturer barcode",
     "Satış qiymətini yalnız Menecer və Admin təyin edir": "Only Manager and Admin set the sale price",
     "Bu istehsalçı barkodu artıq var: {0}": "This manufacturer barcode already exists: {0}",
     "Məhsul tapılmadı": "Product not found",

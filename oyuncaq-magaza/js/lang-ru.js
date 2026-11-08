@@ -476,7 +476,6 @@
     "Məhsulun adı boşdur": "Название товара пустое",
     "Satış qiyməti 0-dan böyük olmalıdır": "Цена продажи должна быть больше 0",
     "İstehsalçı barkodunda boşluq ola bilməz": "В штрихкоде производителя не может быть пробелов",
-    "Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil": "Это штрихкод магазина или чека, а не производителя",
     "Satış qiymətini yalnız Menecer və Admin təyin edir": "Цену продажи назначают только Менеджер и Админ",
     "Bu istehsalçı barkodu artıq var: {0}": "Такой штрихкод производителя уже есть: {0}",
     "Məhsul tapılmadı": "Товар не найден",

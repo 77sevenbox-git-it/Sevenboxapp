@@ -651,9 +651,9 @@
     if (['category', 'brand', 'ageGroup'].some(function (k) { return String(d[k] || '').length > 200; })) return _t('Kateqoriya, marka və yaş qrupu 200 simvoldan uzun ola bilməz');
     if (String(d.mfrBarcode || '').length > 500) return _t('İstehsalçı barkodu 500 simvoldan uzun ola bilməz');
     if (d.mfrBarcode) {
-      // İstehsalçı barkodunun uzunluğu/formatı məhdudlaşdırılmır (EAN, UPC, Code128, hərf-rəqəm). Yalnız öz barkodlarımızla qarışmasın.
+      // İstehsalçı barkodunun uzunluğu/formatı məhdudlaşdırılmır (EAN, UPC, Code128, hərf-rəqəm; "2" ilə başlayan da olar).
+      // Mağaza və ya çek barkodu ilə üst-üstə düşsə də qəbul olunur: kassada axtarış hər ikisini yoxlayır (lookupForPos).
       if (/\s/.test(d.mfrBarcode)) return _t('İstehsalçı barkodunda boşluq ola bilməz');
-      if (Barcode.isStoreBarcode(d.mfrBarcode) || Barcode.isReceiptBarcode(d.mfrBarcode)) return _t('Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil');
     }
     return null;
   }
@@ -1550,20 +1550,20 @@
     });
   }
 
-  // Kassada barkod axtarışı (FR-103). Mağaza barkodu unikaldır və həmişə qalib gəlir (AS-25). İstehsalçı barkodu da qəbul olunur:
-  // bir aktiv məhsula bağlıdırsa o əlavə olunur ({kind:'product', via:'mfr'}), ikiyə və daha çoxuna bağlıdırsa seçim pəncərəsi üçün {kind:'choose', products}.
+  // Kassada barkod axtarışı (FR-103). Kod həm mağaza barkodu, həm istehsalçı barkodu kimi axtarılır (istehsalçı barkodu "2" ilə başlaya və
+  // başqa məhsulun mağaza barkodu ilə üst-üstə düşə bilər). Bir aktiv məhsul tapılırsa o əlavə olunur ({kind:'product', via:'store'|'mfr'}),
+  // bir neçəsi tapılırsa seçim pəncərəsi ({kind:'choose', products}). Heç bir məhsul tapılmayıbsa və kod çek barkodudursa {kind:'receipt'}.
   function lookupForPos(code) {
     code = String(code || '').trim();
     if (!code) return Promise.resolve({ kind: 'empty' });
-    return DB.byIndex('products', 'storeBarcode', code).then(function (r) {
-      if (r.length) return r[0].active ? { kind: 'product', product: r[0] } : { kind: 'inactive', product: r[0] };
-      if (Barcode.isReceiptBarcode(code)) return { kind: 'receipt' };
-      return DB.byIndex('products', 'mfrBarcode', code).then(function (m) {
-        if (!m.length) return { kind: 'notfound' };
-        var act = m.filter(function (p) { return p.active; }).sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
-        if (!act.length) return { kind: 'inactive', product: m[0] };
-        return act.length === 1 ? { kind: 'product', product: act[0], via: 'mfr' } : { kind: 'choose', products: act };
-      });
+    return Promise.all([DB.byIndex('products', 'storeBarcode', code), DB.byIndex('products', 'mfrBarcode', code)]).then(function (r) {
+      var seen = {}, all = [];
+      r[0].concat(r[1]).forEach(function (p) { if (!seen[p.id]) { seen[p.id] = true; all.push(p); } });
+      if (!all.length) return Barcode.isReceiptBarcode(code) ? { kind: 'receipt' } : { kind: 'notfound' };
+      var act = all.filter(function (p) { return p.active; }).sort(function (a, b) { return a.name.localeCompare(b.name, 'az'); });
+      if (!act.length) return { kind: 'inactive', product: all[0] };
+      if (act.length === 1) return { kind: 'product', product: act[0], via: r[0].some(function (p) { return p.id === act[0].id; }) ? undefined : 'mfr' };
+      return { kind: 'choose', products: act };
     });
   }
 

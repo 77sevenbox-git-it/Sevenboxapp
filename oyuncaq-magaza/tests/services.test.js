@@ -57,8 +57,18 @@ async function loginAs(role) {
     assert.strictEqual(own.kind, 'product'); assert.strictEqual(own.product.id, lego.id);
   });
 
-  await t('mağaza barkodu istehsalçı barkodu kimi yazıla bilməz', async () => {
-    await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: lego.storeBarcode }), /mağaza və ya çek barkodudur/);
+  await t('istehsalçı barkodu "2" ilə başlaya və mağaza/çek barkodu ilə üst-üstə düşə bilər: kassada seçim pəncərəsi', async () => {
+    const y = (await S.createProduct({ name: 'Y üst-üstə', price: 100, mfrBarcode: lego.storeBarcode })).product;
+    const c = await S.lookupForPos(lego.storeBarcode);
+    assert.strictEqual(c.kind, 'choose'); assert.deepStrictEqual(c.products.map(p => p.id).sort(), [lego.id, y.id].sort());
+    const rc = Barcode.receiptBarcode(987654);
+    const z = (await S.createProduct({ name: 'Z çek kodlu', price: 100, mfrBarcode: rc })).product;
+    const f = await S.lookupForPos(rc);
+    assert.strictEqual(f.kind, 'product'); assert.strictEqual(f.product.id, z.id, '29 ilə başlayan istehsalçı barkodu məhsulu tapır');
+    assert.strictEqual((await S.lookupForPos(Barcode.receiptBarcode(987655))).kind, 'receipt', 'məhsula bağlı olmayan çek barkodu çek kimi qalır');
+    await S.updateProduct(y.id, { active: false }); await S.updateProduct(z.id, { active: false });
+    const own = await S.lookupForPos(lego.storeBarcode);
+    assert.strictEqual(own.kind, 'product'); assert.strictEqual(own.product.id, lego.id);
   });
 
   await t('mal qəbulu: qalıq və orta maya', async () => {
@@ -316,7 +326,7 @@ async function loginAs(role) {
     }
     await rejects(S.createProduct({ name: 'X', price: 100, mfrBarcode: 'a b' }), /boşluq/);
     const own = (await S.listProducts())[0].storeBarcode;
-    await rejects(S.createProduct({ name: 'Y', price: 100, mfrBarcode: own }), /mağaza və ya çek barkodudur/);
+    assert.strictEqual((await S.createProduct({ name: 'Y2', price: 100, mfrBarcode: own })).product.mfrBarcode, own, '2 ilə başlayan istehsalçı barkodu qəbul olunur');
     const p = (await S.listProducts()).find(x => x.mfrBarcode === 'ABC-123_xyz');
     const found = await S.lookupForPos('ABC-123_xyz');
     assert.strictEqual(found.kind, 'product'); assert.strictEqual(found.via, 'mfr'); assert.strictEqual(found.product.id, p.id);

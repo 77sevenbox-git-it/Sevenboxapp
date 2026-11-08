@@ -96,7 +96,7 @@ Yoxlama: URL-i **gizli pəncərədə** açın, `{"ok":true,...}` görünməlidir
 
 ## Kassada axtarış və istehsalçı barkodu (FR-102/103)
 - **Ada görə axtarış:** barkod sahəsinin yanındakı **«+»** (və ya `F8`) ad, marka, kateqoriya və barkodla axtarır (Azərbaycan hərfləri və böyük/kiçik hərf fərqsizdir). Qalığı sıfır olan məhsul solğun göstərilir; mənfi çek limiti dolubsa əlavə olunmur.
-- **İstehsalçı barkodu:** skan olunanda məhsul tapılır, ekranda və çekdə **mağaza barkodu** görünür. Barkod bir məhsula aiddirsə birbaşa əlavə olunur; 2 və daha çox məhsula aiddirsə seçim pəncərəsi çıxır (şəkil, ad, mağaza barkodu, qiymət, qalıq). Seçim yadda saxlanmır: hər skanda yenidən soruşulur. Mağaza barkodu eyni nömrəli istehsalçı barkodundan üstündür.
+- **İstehsalçı barkodu:** skan olunanda məhsul tapılır, ekranda və çekdə **mağaza barkodu** görünür. Barkod bir məhsula aiddirsə birbaşa əlavə olunur; 2 və daha çox məhsula aiddirsə seçim pəncərəsi çıxır (şəkil, ad, mağaza barkodu, qiymət, qalıq). Seçim yadda saxlanmır: hər skanda yenidən soruşulur. İstehsalçı barkodu **«2» ilə başlaya** və mağaza və ya çek barkodu ilə üst-üstə düşə bilər (yoxlanmır): skan olunan kod həm mağaza, həm istehsalçı barkodu kimi axtarılır; bir neçə məhsul tapılırsa seçim pəncərəsi çıxır. Heç bir məhsula bağlı olmayan «29…» kodu çek barkodu sayılır.
 
 ## Alış qaimələri və təchizatçıya qaytarma (FR-104/105)
 **Təchizatçılar** bölməsində:

@@ -476,7 +476,6 @@
     "Məhsulun adı boşdur": "Ürün adı boş",
     "Satış qiyməti 0-dan böyük olmalıdır": "Satış fiyatı 0'dan büyük olmalıdır",
     "İstehsalçı barkodunda boşluq ola bilməz": "Üretici barkodunda boşluk olamaz",
-    "Bu, mağaza və ya çek barkodudur, istehsalçı barkodu deyil": "Bu mağaza veya fiş barkodu, üretici barkodu değil",
     "Satış qiymətini yalnız Menecer və Admin təyin edir": "Satış fiyatını yalnızca Yönetici ve Admin belirler",
     "Bu istehsalçı barkodu artıq var: {0}": "Bu üretici barkodu zaten var: {0}",
     "Məhsul tapılmadı": "Ürün bulunamadı",
