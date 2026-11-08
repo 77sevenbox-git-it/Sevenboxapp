@@ -206,6 +206,7 @@ npm test                       # aşağıdakı node testləri birlikdə (brauzer
 node tests/run.js              # qaydalar, pul, barkod
 node tests/reports.test.js     # hesabatlar (məhsul üzrə satış, stok, gəlir-xərc), bölmə icazələri, bölmələrin sırası (2 cihaz), Excel idxalında təchizatçı
 node tests/reset.test.js       # iş məlumatının silinməsi: ehtiyat nüsxə, yalnız istifadəçi/icazə/ayar qalır, cihazlar özü təmizlənir, köhnə tətbiq yaza bilmir
+node tests/repair.test.js      # Excel açılış qalığı digər cihazlarda: hadisə sırası, səhv sırada gələn qəbulun gözlədilməsi, zədəli cihazın təmiri (schema 9)
 node tests/services.test.js    # satış/qaytarma/növbə/PIN/təsdiq axınları (tək cihaz)
 node tests/sync.test.js        # 2+ cihaz + Code.gs təqlidi: PIN, məhsul, qalıq, çek, təsdiq, oflayn, təkrar, səhifələmə
 node tests/devices.test.js     # cihaz açarları (Code.gs v9): ADMIN_KEY, açar yaratma/yeniləmə (newKey, itmiş cavabda təkrar), bloklama/bərpa, ümumi açarın keçid pəncərəsi, kilidlənmədən qorunma

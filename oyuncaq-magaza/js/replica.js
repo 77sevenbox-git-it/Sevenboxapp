@@ -103,7 +103,7 @@
           return note(t, { kind: 'barcode', message: _t('Eyni mağaza barkodu iki məhsulda: "{0}" və "{1}" ({2})', [p.name, dups[0].name, p.storeBarcode]), productId: p.id });
         }
         sum.touched.products = true;
-        return t.put('products', p);
+        return t.put('products', p).then(function () { return adoptOrphans(t, p.id, sum); });
       });
     });
   };
@@ -121,6 +121,40 @@
   };
 
   // Mal qəbulu partiyası (FIFO üçün): bütün cihazlarda eyni id, eyni vaxt, eyni təchizatçı. Təkrar tətbiqdə dəyişmir.
+  // Məhsuldan ƏVVƏL gələn qəbul (köhnə versiyada Excel idxalı hadisələri bu sırada yazırdı): atılmır, məhsul gələndə tətbiq olunur.
+  function parkOrphan(t, ev) {
+    var key = 'orphan:' + ev.data.productId;
+    return t.get('meta', key).then(function (m) {
+      var list = m && Array.isArray(m.value) ? m.value : [];
+      if (list.some(function (x) { return x.id === ev.id; }) || list.length >= 200) return;
+      list.push({ id: ev.id, at: ev.at, type: ev.type, userId: ev.userId, data: ev.data });
+      return t.put('meta', { key: key, value: list });
+    });
+  }
+  function adoptOrphans(t, productId, sum) {
+    var key = 'orphan:' + productId;
+    return t.get('meta', key).then(function (m) {
+      if (!m || !Array.isArray(m.value) || !m.value.length) return;
+      return t.del('meta', key).then(function () { return each(m.value, function (ev) { return H['stock.received'](t, ev, ev.data || {}, sum); }); });
+    });
+  }
+  // Doldurma (təmir): bu cihazda tətbiq olunmamış qəbulu tapıb tətbiq edir. Partiya varsa — artıq tətbiq olunub (öz cihazı və ya replika).
+  // "sm_<hadisə>" hərəkəti varsa qalıq köhnə versiyada artıb, yalnız partiya çatışmır. Heç biri yoxdursa və məhsul varsa — qəbul atılıbmış: tam tətbiq.
+  function repairReceipt(t, ev, d, sum) {
+    if (!d.lotId || !d.productId) return Promise.resolve();
+    return t.get('lots', d.lotId).then(function (lot) {
+      if (lot) return;
+      return t.get('stockMoves', 'sm_' + ev.id).then(function (sm) {
+        if (sm) return putLot(t, ev, d, sum);
+        return t.get('products', d.productId).then(function (p) {
+          if (!p) return;
+          sum.repaired = (sum.repaired || 0) + 1;
+          return H['stock.received'](t, ev, d, sum);
+        });
+      });
+    });
+  }
+
   function putLot(t, ev, d, sum) {
     if (!d.lotId) return Promise.resolve();            // köhnə versiyalı cihazdan gələn qəbul: partiyası yoxdur, qalıq "açılış partiyasında" sayılır
     return t.get('lots', d.lotId).then(function (cur) {
@@ -159,7 +193,7 @@
     return existing.then(function (cur) {
       if (cur) return receivedFromApproval(t, ev, d, sum, cur);
       return t.get('products', d.productId).then(function (p) {
-        if (!p) return;
+        if (!p) return parkOrphan(t, ev);
         var before = p.stock;
         Object.assign(p, Rules.applyReceipt(p, d.qty, d.unitCost));
         sum.touched.products = true;
@@ -219,13 +253,13 @@
     'supplier.upserted': function (t, ev, d, sum) { return putSupplier(t, d, sum); },
     'supplier.paid': function (t, ev, d, sum) { return putPay(t, ev, d, sum); },
     'supplier.pay_voided': function (t, ev, d, sum) { return voidPay(t, ev, d, sum); },
-    'stock.received': function (t, ev, d, sum) { return putLot(t, ev, d, sum); },
+    'stock.received': function (t, ev, d, sum) { return repairReceipt(t, ev, d, sum); },
     'purchase.created': function (t, ev, d, sum) { return H['purchase.created'](t, ev, d, sum); },
     'supplier.returned': function (t, ev, d, sum) { return H['supplier.returned'](t, ev, d, sum); }
   };
   function backfill(events) {
     var sum = { applied: 0, touched: {} };
-    return DB.atomic(['suppliers', 'lots', 'supplierPays', 'purchases', 'supplierReturns', 'products', 'stockMoves'], function (t) {
+    return DB.atomic(['suppliers', 'lots', 'supplierPays', 'purchases', 'supplierReturns', 'products', 'stockMoves', 'meta'], function (t) {
       return each(events, function (ev) {
         var fn = BACKFILL[ev.type]; if (!fn) return;
         sum.applied++;

@@ -337,7 +337,8 @@
           return post(c.url, { action: 'sync', token: c.token, device: c.device, epoch: c.epoch, since: b.next, items: [], limit: 500 }).then(function (res) {
             if (res.reset) return;
             var events = res.events || [];
-            return Replica.backfill(events).then(function (sum) {
+            // Yalnız artıq tətbiq olunmuş hissə (upTo-ya qədər): sonrakılar adi qaydada tətbiq olunur, təmir onları ikinci dəfə saymasın
+            return Replica.backfill(events.filter(function (ev) { return !(ev.seq > b.upTo); })).then(function (sum) {
               var next = res.next || b.next;
               var done = !events.length || !res.more || next >= b.upTo;
               return DB.put('meta', { key: 'backfill', value: { upTo: b.upTo, next: next, done: done } }).then(function () {

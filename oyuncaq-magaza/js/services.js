@@ -145,7 +145,24 @@
 
   // Köhnə (v1) bazanı yeni sxemə keçirir: təsadüfi istifadəçi id-ləri sabit id-lərlə əvəzlənir və serverə göndərilir
   function migrate() {
-    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6).then(migrateV7).then(migrateV8);
+    return migrateV2().then(migrateV3).then(migrateV4).then(migrateV5).then(migrateV6).then(migrateV7).then(migrateV8).then(migrateV9);
+  }
+
+  // v8 → v9: təmir. Excel idxalında "məhsul yaradıldı" hadisəsi açılış qalığından SONRA vaxtla yazılırdı; digər cihazlar qalığı (stock.received)
+  // məhsuldan əvvəl alıb atırdı (qalıq orada 0 görünürdü). Bir dəfəlik doldurma bu qəbulları serverdən yenidən oxuyur: partiyası olmayan qəbul
+  // qalığa əlavə olunur (replica.js, BACKFILL['stock.received']: artıq tətbiq olunmuşa toxunmur).
+  function migrateV9() {
+    return DB.get('meta', 'schema').then(function (m) {
+      if (m && m.value >= 9) return;
+      return DB.get('meta', 'syncCursor').then(function (c) {
+        var cur = c ? c.value : 0;
+        return DB.atomic(['meta'], function (t) {
+          return t.get('meta', 'backfill').then(function (b) {
+            return t.put('meta', { key: 'backfill', value: { upTo: Math.max(cur, b && b.value ? b.value.upTo || 0 : 0), next: 0, done: cur === 0 } });
+          }).then(function () { return t.put('meta', { key: 'schema', value: 9 }); });
+        });
+      });
+    });
   }
 
   // v7 → v8: bölmə (tab) icazələri. Köhnə matrisdə rolun bölmə icazəsi yoxdursa, əvvəl açdığı bölmələr verilir (Rules.upgradeMatrix): heç kimin görünən bölməsi dəyişmir.
@@ -282,7 +299,7 @@
               t.put('meta', { key: 'matrixAt', value: EPOCH }),
               t.put('meta', { key: 'store', value: { name: '[Mağaza adı]', voen: '[VÖEN]', address: '[Ünvan]', registerName: 'Kassa 1' } }),
               t.put('meta', { key: 'storeAt', value: EPOCH }),
-              t.put('meta', { key: 'schema', value: 8 }),
+              t.put('meta', { key: 'schema', value: 9 }),
               t.put('meta', { key: 'setup', value: 'pending' }),            // yeni cihaz: istifadəçi adları serverə qoşulana (və ya "serversiz" seçilənə) qədər göstərilmir
               t.put('meta', { key: 'initialized', value: now() })
             ]);
@@ -679,7 +696,7 @@
   }
 
   // Yeni məhsulun yazılması (tranzaksiya daxilində): tək yaratma və toplu yükləmə eyni kodu işlədir
-  function putNewProduct(t, user, d, seq) {
+  function putNewProduct(t, user, d, seq, at) {
     var p = {
       id: DB.uid('p'), name: String(d.name).trim(), category: d.category || '', brand: d.brand || '', ageGroup: d.ageGroup || '',
       storeBarcode: Barcode.storeBarcode(seq), mfrBarcode: d.mfrBarcode || '',
@@ -690,7 +707,7 @@
     p.updatedAt = EPOCH; p.updatedDev = '';       // yaradılma "son yazan qalib" müqayisəsində iştirak etmir: istənilən dəyişiklik ondan sonra gəlir (cihaz saatları fərqli olsa da)
     return t.put('products', p)
       .then(function () { return t.put('priceHistory', { id: DB.uid('ph'), productId: p.id, type: 'sale', old: null, new: p.price, userId: user.id, at: now() }); })
-      .then(function () { return log(t, 'product.created', { product: p }, user); })
+      .then(function () { return log(t, 'product.created', { product: p }, user, at); })
       .then(function () { return p; });
   }
 
@@ -741,7 +758,7 @@
               return chain.then(function () {
                 return nextSeq(t, 'productSeq').then(function (seq) {
                   var row = Object.assign({}, d, { cost: canCost ? (d.cost || 0) : 0 });
-                  return putNewProduct(t, user, row, seq);
+                  return putNewProduct(t, user, row, seq, at);       // eyni vaxt: hadisələr sırası məhsul → qəbul qalır (bax: migrateV9)
                 }).then(function (p) {
                   created++;
                   if (!(d.opening > 0)) return null;
